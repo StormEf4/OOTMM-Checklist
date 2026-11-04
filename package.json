@@ -1,0 +1,19 @@
+{
+  "name": "ootmm-checklist",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Settings-aware check list for the OoTMM combo randomizer. Windows app and phone web app from one codebase.",
+  "scripts": {
+    "build": "node tools/build-data.mjs && node tools/audit.mjs && node tools/build.mjs",
+    "verify": "node tools/verify.mjs",
+    "package:win": "node tools/package-windows.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "lodash-es": "^4.17.21",
+    "pako": "^2.1.0",
+    "yaml": "^2.8.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,25 @@
+const { _electron } = require('playwright');
+const path = require('path'), fs = require('fs');
+const exe = path.resolve('.cache/pack/linux/electron');
+const data = path.resolve('.cache/e-data'); fs.rmSync(data, { recursive: true, force: true });
+const launch = () => _electron.launch({ executablePath: exe, args: ['--no-sandbox', `--user-data-dir=${data}`], timeout: 30000 });
+(async () => {
+  let app = await launch();
+  let w = await app.firstWindow();
+  const errs = []; w.on('pageerror', e => errs.push(String(e)));
+  await w.waitForSelector('.row', { timeout: 20000 });
+  console.log('title', await w.title(), '| target url scheme', (await w.url()).split(':')[0]);
+  console.log('first open:', await w.textContent('#remain'));
+  await w.click('.row .tick-btn'); await w.click('.row:nth-child(2) .tick-btn');
+  await w.click('.rail .tab[data-tab=settings]');
+  await w.fill('#setSearch', 'cow'); await w.waitForTimeout(300);
+  await w.click('[data-bool=cowShuffleMm]'); await w.waitForTimeout(800);
+  await w.screenshot({ path: '.cache/shots/electron.png' });
+  await app.close();
+  app = await launch(); w = await app.firstWindow();
+  await w.waitForSelector('.row', { timeout: 20000 });
+  console.log('after reopen:', await w.textContent('#remain'), '| errors', errs.length);
+  const uses = await w.evaluate(() => ({ workers: typeof Worker, ls: !!localStorage.getItem('ootmm-checklist-v1') }));
+  console.log(JSON.stringify(uses));
+  await app.close();
+})().catch(e => { console.error(String(e).slice(0, 600)); process.exit(1); });

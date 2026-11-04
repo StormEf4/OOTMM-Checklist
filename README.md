@@ -1,0 +1,114 @@
+# OoTMM Checklist
+
+A checklist for the OoTMM combo randomizer that shows only the checks your settings put on a seed.
+One codebase builds the Windows app and the phone web app.
+
+The checklist runs OoTMM's own world code, the same steps as its internal `locationList()`: every location
+in the built world, minus the ones locked to their vanilla item. The app doesn't keep its own copy of the
+rules, so a rebuild picks up changes in the randomizer.
+
+## Edit mode
+
+Press **Edit mode** and anything in the app can be changed. Press it again to finish. The button itself is the
+one thing that can't be edited.
+
+- Tap any words to reword or hide them. The change applies everywhere that wording appears.
+- Tap a check, entrance or area to rename, move, reorder, hide or add notes.
+- Tabs and areas keep working, so use their pencil to edit them.
+- Tap empty background for colors, fonts, check mark shape and pattern.
+- Add your own checks, entrances and areas. A custom check can be limited to a setting value.
+
+Numbers in text show as `{1}`, `{2}`, so live counts keep working in your wording. Hidden things stay visible
+but dimmed while Edit mode is on, so they can always be restored. **Settings > Your edits** lists every change.
+Edits apply to all seeds, except notes, which belong to one seed. Transfer codes and backup files carry them.
+
+The code is in `src/textlayer.ts` (any on-screen text) and the Windows and Edit mode sections of `src/main.ts`.
+Themes live in `src/skins.ts`. Add an entry to `SKINS` and it appears in Settings.
+
+## Adding your fork
+
+Most fork changes come through automatically, because settings and checks are read from the OoTMM source.
+
+Point the build at your fork, then build:
+
+```
+npm install
+set OOTMM_SRC=C:\path\to\your\OoTMM-fork
+npm run build
+npm run verify
+npm run package:win
+```
+
+In PowerShell, use `$env:OOTMM_SRC="C:\path\to\your\OoTMM-fork"`. In WSL or Linux, use `export OOTMM_SRC=/path/to/fork`.
+The first build spends about 4 minutes working out which settings change checks. That result is cached until the
+randomizer source changes. Run `npm run verify` from the same shell; `FUZZ_N=50` sets how many random settings it tries.
+
+What each kind of fork change needs:
+
+| You added | What to do |
+| --- | --- |
+| A setting in `packages/core/src/settings/data.ts` | Nothing. It appears in Settings. |
+| A check in `data/checks/**.xml` and `data/world/**` | Nothing. It appears on the list. |
+| Rules in `packages/logic/src/world/transform.ts` or `misc/fixer.ts` | Nothing. The app runs that code. |
+| Entrances, entrance types or `er*` settings | Nothing for most changes. The Entrances tab reads OoTMM's own pool code. A new entrance type shows a plain name until you add it to `entranceKind` in `src/engine/entrances.ts`. |
+| A new check type | Add its name to `TYPE_NAMES` and `TYPE_ONE` in `src/main.ts`. Until then it shows its raw type name. |
+| A new settings category | Optional: add a nicer name to `CATEGORY_NAMES` in `src/main.ts`. |
+| Something with no data in the source | Add it to `custom-checks.json`, or use Seeds > Your own checks in the app. |
+
+`custom-checks.json` entries look like this. `when` is optional and limits a check to certain settings:
+
+```json
+{
+  "checks": [
+    { "id": "my-check-1", "name": "Hidden Grotto Chest", "region": "Kokiri Forest", "game": "oot", "when": { "myNewSetting": true } }
+  ]
+}
+```
+
+Transfer codes only work between devices running the same build, because they're tied to the list of
+locations. After rebuilding for your fork, update the Windows app and the phone version together.
+
+The build reaches OoTMM's private `WorldShuffler` class through a small plugin in `tools/paths.mjs`. If you rename that
+class or its `placePools`, `poolEntrancesForTypes`, `isAssignableConstraints` or `reverseEntrance` methods, update
+`src/engine/entrances.ts` to match. The build stops with a clear message if the class is gone.
+
+`npm run verify` compares the checklist with OoTMM's own `locationList()` on random settings. Run it after
+changing anything in `src/engine`. If your fork makes a setting change a check's existence through an access
+rule rather than through the world data, verify will report it, and you can remove the
+`enableFastMode()` calls in `src/main.ts` at the cost of slower updates.
+
+## Project layout
+
+- `src/engine/` runs OoTMM's pipeline and reads spoiler log headers
+- `src/main.ts`, `src/style.css`, `src/skins.ts`, `src/textlayer.ts` are the app, shared by PC and phone
+- `desktop/` is the Windows window wrapper (Electron)
+- `tools/` holds the build, audit, verify and packaging scripts
+- `dist/web/` is the phone version, ready for any static host
+- `dist/OoTMM-Checklist-Setup.exe` is the Windows installer
+
+## Putting the phone version online
+
+`dist/web` is a plain static site, and it works offline after the first visit. Upload that folder's contents
+to any HTTPS host. GitHub Pages works: make a repository, add the files, and turn on Pages in the repository
+settings. Then add it to your Home Screen from Safari or Chrome.
+
+## Packaging notes
+
+The installer is about 104 MB, which is over GitHub's 100 MB file limit, so it isn't stored in this repository.
+Build it with `npm run package:win`, or keep it as a file on a GitHub Release.
+
+
+`npm run package:win` needs `unzip` and the NSIS compiler. On Linux, the `nsis-bundle` from
+electron-builder-binaries goes in `.cache/pack/nsis`. On Windows, install NSIS and set `MAKENSIS` to
+`makensis.exe` and `NSIS_HOME` to the NSIS folder.
+
+The installer isn't code-signed, so Windows SmartScreen warns on first run. The installed `.exe` file keeps
+Electron's default file icon; the shortcuts, the window and the taskbar use the app's icon.
+
+## Credits
+
+License details are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+
+Built on [OoTMM](https://github.com/OoTMM/OoTMM) by Nax and contributors (MIT license). Typefaces: Almendra and
+Alegreya Sans, Cinzel Decorative, Marcellus, Metamorphous and Pirata One (SIL Open Font License). Fan-made and not affiliated with Nintendo.

@@ -1,0 +1,4 @@
+{
+  "_about": "Checks that aren't in OoTMM's data files. Add one object per check. See README.md.",
+  "checks": []
+}
