@@ -94,8 +94,8 @@ settings. Then add it to your Home Screen from Safari or Chrome.
 
 ## Packaging notes
 
-The installer is about 104 MB, which is over GitHub's 100 MB file limit, so it isn't stored in this repository.
-Build it with `npm run package:win`, or keep it as a file on a GitHub Release.
+The installer is about 104 MB, which is over GitHub's 100 MB file limit, so it's attached to each GitHub Release
+instead of stored in the repository. Download it from Releases, or build it with `npm run package:win`.
 
 
 `npm run package:win` needs `unzip` and the NSIS compiler. On Linux, the `nsis-bundle` from
