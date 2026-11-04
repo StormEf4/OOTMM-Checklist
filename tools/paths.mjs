@@ -28,6 +28,7 @@ export const aliases = {
   '@ootmm/logic': path.join(OOTMM, 'packages/logic/src/index.ts'),
   '@ootmm/data': path.join(OOTMM, 'packages/data/lib/index.ts'),
   '@ootmm/regions': path.join(OOTMM, 'packages/generator/lib/combo/regions.ts'),
+  '@ootmm/names': path.join(OOTMM, 'packages/generator/lib/combo/names.ts'),
   'fast-xml-parser': path.join(ROOT, 'tools/shims/fast-xml-parser.mjs'),
   'csv/sync': path.join(ROOT, 'tools/shims/csv-sync.mjs'),
   'uint8array-extras': path.join(ROOT, 'tools/shims/uint8array-extras.mjs'),
@@ -45,7 +46,8 @@ export const plugins = [{
     build.onLoad({ filter: /solver[\\/]entrances\.ts$/ }, args => {
       const text = readFileSync(args.path, 'utf8');
       if (!/class WorldShuffler\b/.test(text)) throw new Error('OoTMM no longer has a WorldShuffler class. Update src/engine/entrances.ts to match.');
-      return { contents: `${text}\nexport { WorldShuffler as ChecklistWorldShuffler };\n`, loader: 'ts' };
+      if (!/class LogicPassEntrances\b/.test(text)) throw new Error('OoTMM no longer has a LogicPassEntrances class. Update src/engine/entrances.ts to match.');
+      return { contents: `${text}\nexport { WorldShuffler as ChecklistWorldShuffler, LogicPassEntrances as ChecklistLogicPassEntrances };\n`, loader: 'ts' };
     });
   },
 }];

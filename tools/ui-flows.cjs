@@ -58,8 +58,9 @@ const ok = (name, cond, extra = '') => { console.log(`${cond ? 'PASS' : 'FAIL'} 
   await ph.screenshot({ path: '.cache/shots/phone-dark.png' });
   // phone progress comes back to the same seed on PC
   await ph.tap('.reg[data-region="OOT_HYRULE_FIELD"]'); await ph.waitForTimeout(200);
+  const fieldTotal = (await ph.textContent('[data-count="OOT_HYRULE_FIELD"]')).split('/')[1];
   await ph.tap('.row .tick-btn'); await ph.waitForTimeout(150);
-  ok('area count updates on tick', (await ph.textContent('[data-count="OOT_HYRULE_FIELD"]')) === '1/2', await ph.textContent('[data-count="OOT_HYRULE_FIELD"]'));
+  ok('area count updates on tick', (await ph.textContent('[data-count="OOT_HYRULE_FIELD"]')) === `1/${fieldTotal}`, await ph.textContent('[data-count="OOT_HYRULE_FIELD"]'));
   await ph.waitForTimeout(350);
   await ph.tap('.bottom .tab[data-tab=seeds]'); await ph.waitForSelector('[data-copycode]');
   await ph.evaluate(() => { navigator.clipboard.writeText = () => Promise.reject(new Error('blocked')); });

@@ -63,7 +63,7 @@ const KEY = 'ootmm-checklist-v1';
   await p.fill('#edName', 'Files'); await p.fill('#edIcon', '★'); await p.click('[data-act=save]'); await wait();
   ok('tab renamed with a new icon', (await p.textContent('.rail .tab[data-tab=seeds]')).includes('Files') && (await p.textContent('.rail .tab[data-tab=seeds] .tab-ic')).includes('★'));
   await p.click('.rail .tab[data-tab=seeds] .pen'); await p.waitForSelector('[data-act=left]'); await p.click('[data-act=left]'); await wait();
-  ok('tab moved', (await p.$$eval('.rail .tab', e => e.map(x => x.dataset.tab))).join() === 'list,entrances,seeds,settings');
+  ok('tab moved', (await p.$$eval('.rail .tab', e => e.map(x => x.dataset.tab))).join() === 'list,entrances,items,hints,seeds,settings');
 
   // settings: name, description, dropdown choices
   await p.click('.rail .tab[data-tab=settings]'); await p.waitForSelector('#setScroll');
@@ -152,7 +152,7 @@ const KEY = 'ootmm-checklist-v1';
 
   // transfer carries edits
   await p.evaluate(() => { navigator.clipboard.writeText = () => Promise.reject(new Error('x')); });
-  await p.click('[data-copycode]'); await wait(200);
+  await p.click('[data-copycode]'); await p.waitForFunction(() => document.querySelector('#codeBox').value.startsWith('OOTMM1.'), null, { timeout: 10000 });
   const code = await p.inputValue('#codeBox');
   const c3 = await b.newContext({ viewport: { width: 1280, height: 800 } }); const r = await c3.newPage();
   await r.goto('http://localhost:8934/'); await r.waitForSelector('.row');

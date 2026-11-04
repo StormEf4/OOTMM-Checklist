@@ -8,6 +8,8 @@ a hosted page. This repository is the source of truth: start all work here, from
 - The checklist comes from OoTMM's own code. Never hand-copy check or settings rules.
 - The Entrances tab is filled in by the player. Never run a real shuffle, and never read destinations from a spoiler
   log. The spoiler importer stops before the log's Entrances section.
+- Reachable checks use only the items and entrances the player logged. An unlogged shuffled entrance stays closed.
+  Hints and found items are typed or picked by the player, never read from a spoiler log.
 - In Edit mode, everything is editable. The Edit mode button is the only exception: keep `data-locked` on it.
 - New screens and controls must work with Edit mode. Text is editable automatically. Always-working controls need the
   `keep` class, and list items need a `data-edit` target.
@@ -34,6 +36,8 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 ## Where things are
 
 - `src/engine/`: runs OoTMM's pipeline, entrance pools and spoiler header reading
+- `src/engine/logic.ts`: reachable checks and the item list, from OoTMM's pathfinder. It runs in its own worker
+- `src/mapspots.ts`: where each area sits on the Map view
 - `src/main.ts`: the app and Edit mode
 - `src/textlayer.ts`: makes any on-screen text editable
 - `src/skins.ts`: themes
@@ -46,7 +50,8 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `npm run verify`: compares the checklist with OoTMM's `locationList()` on random settings. Runs where OoTMM reports
   `Expression is not allowed at runtime` are combinations OoTMM refuses, not list errors.
 - `node tools/seed-test.mjs` and `node tools/er-test.mjs`: compare against real seeds from the full solver.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`: browser tests. Run with
+- `node tools/logic-test.mjs`: reachable checks must match OoTMM's own pathfinder on solved seeds.
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 

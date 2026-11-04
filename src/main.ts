@@ -2,9 +2,12 @@ import { CHECKS, REGIONS } from '@ootmm/data';
 import { deflateRaw, inflateRaw } from 'pako';
 import { uint8ArrayToBase64, base64ToUint8Array } from 'uint8array-extras';
 
-import type { CheckEntry, ComputeResult } from './engine/engine';
+import type { CheckEntry, ComputeResult, GossipEntry } from './engine/engine';
 import type { EntranceData, EntranceEntry } from './engine/entrances';
-import { DEFAULT_SETTINGS, SETTINGS, compute, enableFastMode, exportSettings, importSettings, makeSettings } from './engine/engine';
+import type { CatalogItem, LogicOutput } from './engine/logic';
+import { DEFAULT_SETTINGS, SETTINGS, compute, enableFastMode, exportSettings, importSettings, makeSettings, serial } from './engine/engine';
+import { computeLogic } from './engine/logic';
+import { MAP_SPOTS } from './mapspots';
 import { ROLLABLE, parseSpoilerHeader } from './engine/spoiler';
 import audit from './generated/audit.json';
 import shippedCustom from '../custom-checks.json';
@@ -20,9 +23,9 @@ const isWorker = typeof document === 'undefined';
 if (isWorker) {
   enableFastMode();
   self.onmessage = async (e: MessageEvent) => {
-    const { job, settings } = e.data;
+    const { job, kind, payload } = e.data;
     try {
-      (self as any).postMessage({ job, result: await compute(settings) });
+      (self as any).postMessage({ job, result: await runJobHere(kind, payload) });
     } catch (err: any) {
       (self as any).postMessage({ job, error: String(err?.message ?? err) });
     }
@@ -31,7 +34,15 @@ if (isWorker) {
   boot();
 }
 
+function runJobHere(kind: 'checks' | 'logic', payload: any): Promise<any> {
+  enableFastMode();
+  return serial(() => kind === 'logic' ? computeLogic(payload) : compute(payload));
+}
+
 /* ---------- Types and state ---------- */
+
+type HintKind = '' | 'woth' | 'foolish' | 'item' | 'other';
+type Hint = { text: string; kind?: HintKind; area?: string; check?: string; item?: string; from?: string };
 
 type CustomCheck = { id: string; name: string; region: string; game: 'oot' | 'mm'; type?: string; when?: Record<string, unknown> };
 type CustomEntrance = { id: string; title: string; sub: string; area: string; game: 'oot' | 'mm' };
@@ -47,9 +58,15 @@ type Seed = {
   entrances: Record<string, string>;
   notes: Record<string, string>;
   pad: string;
+  /** Item the player found at a check: check id to item id, or text: for their own words. */
+  found: Record<string, string>;
+  /** Items the player added or took away by hand, on top of what they logged at checks. */
+  have: Record<string, number>;
+  /** What each gossip stone (or other hint source) said, as the player typed it. */
+  hints: Record<string, Hint>;
   updated: number;
 };
-type ItemEdit = { name?: string; sub?: string; area?: string; game?: 'oot' | 'mm'; hidden?: boolean; order?: number };
+type ItemEdit = { name?: string; sub?: string; area?: string; game?: 'oot' | 'mm'; hidden?: boolean; order?: number; map?: [number, number] };
 type Edits = {
   text: Record<string, string>;
   hide: Record<string, 'self' | 'group'>;
@@ -62,13 +79,19 @@ type Edits = {
   icons: Record<string, string>;
   colors: Record<string, Record<string, string>>;
   customEntrances: CustomEntrance[];
+  items: Record<string, ItemEdit>;
+  stones: Record<string, ItemEdit>;
 };
 type Saved = {
   v: 1; seeds: Seed[]; current: string; custom: CustomCheck[]; edits: Edits;
-  ui: { skin?: string; theme?: string; meter?: string; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean; showLocked?: boolean; changesOnly?: boolean; collapsed?: string[] };
+  ui: {
+    skin?: string; theme?: string; meter?: string; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
+    showLocked?: boolean; changesOnly?: boolean; collapsed?: string[];
+    logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; haveOnly?: boolean; hideWritten?: boolean;
+  };
 };
 
-const blankEdits = (): Edits => ({ text: {}, hide: {}, checks: {}, entrances: {}, dests: {}, areas: {}, order: {}, tabs: [], icons: {}, colors: {}, customEntrances: [] });
+const blankEdits = (): Edits => ({ text: {}, hide: {}, checks: {}, entrances: {}, dests: {}, areas: {}, order: {}, tabs: [], icons: {}, colors: {}, customEntrances: [], items: {}, stones: {} });
 
 const AFFECTS = new Set<string>(audit.affects);
 const TYPE_NAMES: Record<string, string> = {
@@ -107,7 +130,7 @@ let checks: CheckEntry[] = [];
 let lastResult: ComputeResult | null = null;
 let doneSet = new Set<string>();
 let skipSet = new Set<string>();
-let tab: 'list' | 'entrances' | 'settings' | 'seeds' = 'list';
+let tab: 'list' | 'entrances' | 'items' | 'hints' | 'settings' | 'seeds' = 'list';
 let region: string | null = null;
 let phoneView: 'rail' | 'pane' = 'rail';
 let query = '';
@@ -127,11 +150,21 @@ let settingsView: 'game' | 'look' | 'edits' = 'game';
 let entr: EntranceData = { list: [], dests: [], sets: [], rev: {} };
 let pickAll = false;
 let remoteSave: ((s: string) => void) | null = null;
+let logicOut: LogicOutput | null = null;
+let reachSet = new Set<string>();
+let stoneSet = new Set<string>();
+let logicBusy = false;
+let logicError = '';
+let itemQuery = '';
+let itemGame: 'all' | 'oot' | 'mm' = 'all';
+let hintQuery = '';
+let pickingItemFor: string | null = null;
+let itemPickQuery = '';
 
 /* ---------- Saving ---------- */
 
 function newSeed(name: string, settings?: string): Seed {
-  return { id: uid(), name, settings: settings ?? exportSettings(DEFAULT_SETTINGS), done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, notes: {}, pad: '', updated: Date.now() };
+  return { id: uid(), name, settings: settings ?? exportSettings(DEFAULT_SETTINGS), done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, notes: {}, pad: '', found: {}, have: {}, hints: {}, updated: Date.now() };
 }
 
 function load(raw?: string | null): Saved {
@@ -144,7 +177,7 @@ function load(raw?: string | null): Saved {
       if (v.seeds?.length) {
         const ui = v.ui ?? {};
         ui.skin ??= ui.theme === 'dark' ? 'termina' : ui.theme === 'light' ? 'day' : 'hero';
-        for (const s of v.seeds) { s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; }
+        for (const s of v.seeds) { s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
         return { ...v, custom: v.custom ?? [], edits: { ...blankEdits(), ...v.edits }, ui };
       }
     } catch { /* falls through to a fresh start */ }
@@ -213,49 +246,53 @@ async function connectHostedStore() {
 
 /* ---------- Engine calls ---------- */
 
-let worker: Worker | null = null;
+/* Two background workers: one keeps the checklist quick, the other reads the full logic,
+   so a slow logic run never holds up a settings change. */
+type JobKind = 'checks' | 'logic';
+const workers: Record<JobKind, Worker | null> = { checks: null, logic: null };
 let job = 0;
-const pending = new Map<number, { settings: any; res: (r: ComputeResult) => void; rej: (e: Error) => void; timer: number }>();
+type Pending = { kind: JobKind; payload: any; res: (r: any) => void; rej: (e: Error) => void; timer: number };
+const pending = new Map<number, Pending>();
 
-function runOnPage(settings: any) {
-  enableFastMode();
-  return compute(settings);
-}
-
-/* If the background worker can't run here, the page does the work itself. */
-function dropWorker() {
-  worker?.terminate();
-  worker = null;
+/* If a background worker can't run here, the page does the work itself. */
+function dropWorker(kind: JobKind) {
+  workers[kind]?.terminate();
+  workers[kind] = null;
   for (const [id, p] of pending) {
+    if (p.kind !== kind) continue;
     clearTimeout(p.timer);
     pending.delete(id);
-    runOnPage(p.settings).then(p.res, p.rej);
+    runJobHere(p.kind, p.payload).then(p.res, p.rej);
   }
 }
 
-function startWorker(source: string) {
+function startWorker(source: string, kind: JobKind) {
   try {
-    worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
-    worker.onerror = dropWorker;
-    worker.onmessage = e => {
+    const w = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+    workers[kind] = w;
+    w.onerror = () => dropWorker(kind);
+    w.onmessage = e => {
       const p = pending.get(e.data.job);
       if (!p) return;
       pending.delete(e.data.job);
       clearTimeout(p.timer);
       if (e.data.result) p.res(e.data.result); else p.rej(new Error(e.data.error));
     };
-  } catch { worker = null; }
+  } catch { workers[kind] = null; }
 }
 
-function runEngine(settings: any): Promise<ComputeResult> {
-  if (!worker) return runOnPage(settings);
+/* The first logic run on a slow phone reads every access rule, so it gets longer before the page takes over. */
+function runJob<T>(kind: JobKind, payload: any): Promise<T> {
+  const w = workers[kind];
+  if (!w) return runJobHere(kind, payload);
   const id = ++job;
-  const copy = JSON.parse(JSON.stringify(settings));
+  const copy = JSON.parse(JSON.stringify(payload));
   return new Promise((res, rej) => {
-    pending.set(id, { settings: copy, res, rej, timer: window.setTimeout(dropWorker, 15000) });
-    worker!.postMessage({ job: id, settings: copy });
+    pending.set(id, { kind, payload: copy, res, rej, timer: window.setTimeout(() => dropWorker(kind), kind === 'logic' ? 120000 : 15000) });
+    w.postMessage({ job: id, kind, payload: copy });
   });
 }
+const runEngine = (settings: any) => runJob<ComputeResult>('checks', settings);
 
 /** Random rolls can't be known ahead of time, so the player's answers stand in for them. */
 function settingsForEngine() {
@@ -282,6 +319,7 @@ async function recompute() {
     if (mine !== computeSeq) return;
     lastResult = result;
     rebuild();
+    scheduleLogic();
   } catch (e: any) {
     if (mine !== computeSeq) return;
     toast(`These settings can't be combined: ${e?.message ?? e}`);
@@ -289,6 +327,54 @@ async function recompute() {
   computing = false;
   rebuild();
   renderAll();
+}
+
+/* ---------- Reachable checks ---------- */
+
+const catalog = (): CatalogItem[] => logicOut?.catalog ?? [];
+const catalogById = () => new Map(catalog().map(i => [i.id, i]));
+const itemLabel = (id: string) => id.startsWith('text:') ? id.slice(5) : saved.edits.items[id]?.name ?? catalogById().get(id)?.name ?? id;
+
+/** How many of each item the player has: what they logged at checks, plus their own changes. Starting items come from the settings. */
+function owned(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const v of Object.values(seed.found)) if (!v.startsWith('text:')) out[v] = (out[v] ?? 0) + 1;
+  for (const [k, n] of Object.entries(seed.have)) out[k] = Math.max(0, (out[k] ?? 0) + n);
+  return out;
+}
+const countOf = (i: CatalogItem, have = owned()) => Math.min(i.max, i.start + (have[i.id] ?? 0));
+const logicOn = () => !saved.ui.logicOff;
+const logicReady = () => logicOn() && !!logicOut && !logicError;
+const inLogic = (c: CheckEntry) => reachSet.has(c.id);
+
+let logicTimer = 0;
+let logicSeq = 0;
+function scheduleLogic() {
+  clearTimeout(logicTimer);
+  if (!logicOn() || !lastResult) return;
+  logicTimer = window.setTimeout(async () => {
+    const mine = ++logicSeq;
+    logicBusy = true;
+    renderLogicStatus();
+    try {
+      const out = await runJob<LogicOutput>('logic', { settings: settingsForEngine(), entrances: seed.entrances, items: owned() });
+      if (mine !== logicSeq) return;
+      logicOut = out;
+      logicError = '';
+      reachSet = new Set(out.reach);
+      stoneSet = new Set(out.stones);
+    } catch (e: any) {
+      if (mine !== logicSeq) return;
+      logicError = String(e?.message ?? e);
+    }
+    logicBusy = false;
+    renderRail();
+    renderPane();
+  }, 150);
+}
+function renderLogicStatus() {
+  const el = document.getElementById('logicPill');
+  if (el) el.textContent = logicBusy ? 'Working out logic' : '';
 }
 
 function customEntries(): CheckEntry[] {
@@ -353,23 +439,25 @@ const regionRank = (id: string, game: string, dungeon: boolean) =>
   (id === 'NONE' || id === 'POCKET' ? 4e5 : game === 'oot' ? 0 : 2e5) + (dungeon ? 1e5 : 0) + (saved.edits.areas[id]?.order ?? REGION_ORDER.get(id) ?? 5e4);
 
 function regionStats() {
-  const map = new Map<string, { id: string; name: string; game: string; dungeon: boolean; total: number; done: number; skipped: boolean }>();
+  const map = new Map<string, { id: string; name: string; game: string; dungeon: boolean; total: number; done: number; reach: number; skipped: boolean }>();
+  const logic = logicReady();
   for (const c of checks) {
     if (!shown(c)) continue;
     let r = map.get(c.region);
-    if (!r) { r = { id: c.region, name: regionLabel(c), game: c.game, dungeon: c.dungeon, total: 0, done: 0, skipped: seed.skippedRegions.includes(c.region) }; map.set(c.region, r); }
+    if (!r) { r = { id: c.region, name: regionLabel(c), game: c.game, dungeon: c.dungeon, total: 0, done: 0, reach: 0, skipped: seed.skippedRegions.includes(c.region) }; map.set(c.region, r); }
     r.dungeon ||= c.dungeon;
-    if (counted(c)) { r.total++; if (doneSet.has(c.id)) r.done++; }
+    if (counted(c)) { r.total++; if (doneSet.has(c.id)) r.done++; else if (logic && inLogic(c)) r.reach++; }
   }
   return [...map.values()].sort((a, b) => regionRank(a.id, a.game, a.dungeon) - regionRank(b.id, b.game, b.dungeon));
 }
 
 function totals() {
-  const t = { all: 0, done: 0, oot: 0, ootDone: 0, mm: 0, mmDone: 0 };
+  const t = { all: 0, done: 0, oot: 0, ootDone: 0, mm: 0, mmDone: 0, reach: 0 };
+  const logic = logicReady();
   for (const c of checks) {
     if (!counted(c)) continue;
     const d = doneSet.has(c.id);
-    t.all++; if (d) t.done++;
+    t.all++; if (d) t.done++; else if (logic && inLogic(c)) t.reach++;
     if (c.game === 'oot') { t.oot++; if (d) t.ootDone++; } else { t.mm++; if (d) t.mmDone++; }
   }
   return t;
@@ -382,6 +470,7 @@ function filtered() {
     if (gameFilter !== 'all' && c.game !== gameFilter) return false;
     if (typeFilter.size && !typeFilter.has(c.type)) return false;
     if (saved.ui.hideDone && doneSet.has(c.id)) return false;
+    if (saved.ui.logicOnly && logicReady() && !doneSet.has(c.id) && !inLogic(c)) return false;
     if (region && !q.length && c.region !== region) return false;
     if (q.length) {
       const hay = `${c.id} ${c.name} ${regionLabel(c)} ${seed.notes[c.id] ?? ''}`.toLowerCase();
@@ -398,11 +487,14 @@ const ICON = {
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>',
   seeds: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M9 4v5h6V4M9 20v-6h6v6"/></svg>',
   entrances: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 21V6a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v15M3 21h18"/><circle cx="14.5" cy="12.5" r=".9" fill="currentColor" stroke="none"/></svg>',
+  items: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9h14l-1.2 11H6.2z"/><path d="M9 9V7a3 3 0 0 1 6 0v2"/></svg>',
+  hints: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 21V9a5 5 0 0 1 10 0v12M4.5 21h15"/><path d="M10 11.5h4M10 15h4"/></svg>',
+  bag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9h14l-1.2 11H6.2z"/><path d="M9 9V7a3 3 0 0 1 6 0v2"/></svg>',
   pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg>',
   tick: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>',
 };
 
-const TAB_LABELS: Record<string, string> = { list: 'Checks', entrances: 'Entrances', settings: 'Settings', seeds: 'Seeds' };
+const TAB_LABELS: Record<string, string> = { list: 'Checks', entrances: 'Entrances', items: 'Items', hints: 'Hints', settings: 'Settings', seeds: 'Seeds' };
 const pen = (edit: string) => `<span class="pen" data-edit="${esc(edit)}" role="button" aria-label="Edit">${ICON.pen}</span>`;
 function tabs() {
   return Object.entries(TAB_LABELS).map(([k, label]) =>
@@ -525,14 +617,15 @@ function renderRail() {
     ['Other', '', stats.filter(r => !r.dungeon && ['NONE', 'POCKET'].includes(r.id))],
   ];
   const t = totals();
-  const row = (id: string, name: string, done: number, total: number, cur: boolean, skipped = false) =>
+  const hinted = areaHints();
+  const row = (id: string, name: string, done: number, total: number, cur: boolean, skipped = false, reach = 0) =>
     `<button class="reg keep${total && done === total ? ' complete' : ''}${saved.edits.areas[id]?.hidden ? ' ghost' : ''}" data-region="${esc(id)}" aria-current="${cur}">
-      <span class="n">${esc(name)}</span><span class="c">${skipped ? 'Skipped' : `${done}/${total}`}</span>${id ? pen('area:' + id) : ''}
+      <span class="n">${esc(name)}${areaTags(hinted.get(id))}${reach && !skipped ? `<i class="lg" title="Checks you can get now">${reach}</i>` : ''}</span><span class="c">${skipped ? 'Skipped' : `${done}/${total}`}</span>${id ? pen('area:' + id) : ''}
       <span class="bar"><i style="width:${total ? (done / total) * 100 : 0}%"></i></span></button>`;
-  let html = row('', 'All areas', t.done, t.all, region === null);
+  let html = row('', 'All areas', t.done, t.all, region === null, false, t.reach);
   for (const [name, cls, rows] of groups) {
     if (!rows.length) continue;
-    html += `<div class="group ${cls}">${name}</div>` + rows.map(r => row(r.id, r.name, r.done, r.total, region === r.id, r.skipped)).join('');
+    html += `<div class="group ${cls}">${name}</div>` + rows.map(r => row(r.id, r.name, r.done, r.total, region === r.id, r.skipped, r.reach)).join('');
   }
   html += '<button class="linkish edit-only keep add-area" data-add-check="">Add an area</button>';
   const box = $('#regions');
@@ -549,8 +642,13 @@ const rowHtml = (c: CheckEntry) => {
   const isSkip = skipSet.has(c.id) || seed.skippedRegions.includes(c.region);
   const hid = !!saved.edits.checks[c.id]?.hidden;
   const tag = hid ? '<span class="tag" data-text>Hidden</span>' : c.fixed ? '<span class="tag" data-text>Vanilla</span>' : c.junk ? '<span class="tag" data-text>Junk</span>' : isSkip ? '<span class="tag" data-text>Skipped</span>' : '';
-  return `<div class="row ${c.game}${isDone ? ' done' : ''}${hid ? ' ghost' : ''}" data-id="${esc(c.id)}">
-    <button class="tick-btn" aria-pressed="${isDone}" data-edit="check:${esc(c.id)}"><span class="seal">${ICON.tick}</span><span class="nm"><span class="t">${esc(c.name)}</span>${noteHtml(c.id)}</span>${tag}<span class="ty" data-text>${esc(TYPE_ONE[c.type] ?? c.type)}</span></button>
+  const logic = logicReady() && !isDone && !isSkip && !c.fixed && !c.junk && !c.id.startsWith('custom:') ? (inLogic(c) ? ' inlogic' : ' outlogic') : '';
+  const found = seed.found[c.id];
+  const hint = !found ? itemHintFor(c.id) : undefined;
+  const itemLine = found ? `<span class="found"><span>Found:</span> <b>${esc(itemLabel(found))}</b></span>` : hint ? `<span class="hinted"><span>Hint:</span> <b>${esc(itemLabel(hint))}</b></span>` : '';
+  return `<div class="row ${c.game}${isDone ? ' done' : ''}${hid ? ' ghost' : ''}${logic}" data-id="${esc(c.id)}">
+    <button class="tick-btn" aria-pressed="${isDone}" data-edit="check:${esc(c.id)}"><span class="seal">${ICON.tick}</span><span class="nm"><span class="t">${esc(c.name)}</span>${itemLine}${noteHtml(c.id)}</span>${tag}${logic === ' inlogic' ? '<span class="lgdot" title="In logic now" aria-label="In logic now"></span>' : ''}<span class="ty" data-text>${esc(TYPE_ONE[c.type] ?? c.type)}</span></button>
+    <button class="bag${found ? ' has' : ''}" data-found="${esc(c.id)}" aria-label="What was here" title="Log the item you found here">${ICON.bag}</button>
     <button class="skip" aria-label="${isSkip ? 'Restore' : 'Skip'} ${esc(c.name)}" title="${isSkip ? 'Put back on the list' : 'Not on this seed: skip it'}">${isSkip ? '+' : '×'}</button>
   </div>`;
 };
@@ -563,7 +661,9 @@ const sortIn = <T,>(key: string, rows: T[], idOf: (x: T) => string) => {
 const collapsed = (id: string) => (saved.ui.collapsed ?? []).includes(id);
 
 function renderChecks() {
+  if (saved.ui.checksView === 'map') return renderMap();
   const pane = $('#pane');
+  const hinted = areaHints();
   const had = $('#search', pane) as HTMLInputElement | null;
   const hadFocus = had && document.activeElement === had;
   const caret = had?.selectionStart ?? null;
@@ -591,7 +691,7 @@ function renderChecks() {
     const shut = collapsed(id);
     body += `<section><div class="section-head">
       <button class="caret keep" data-collapse="${esc(id)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
-      <h2 data-edit="area:${esc(id)}">${esc(regionLabel(rows[0]))}</h2><span class="c" data-count="${esc(id)}">${doneHere}/${inRegion.length}</span>
+      <h2 data-edit="area:${esc(id)}">${esc(regionLabel(rows[0]))}</h2>${areaTags(hinted.get(id))}<span class="c" data-count="${esc(id)}">${doneHere}/${inRegion.length}</span>
       <span class="head-acts">
         <button class="linkish" data-mark-area="${esc(id)}">${allDone ? 'Clear this area' : 'Mark all done'}</button>
         <button class="linkish" data-skip-region="${esc(id)}">${isSkipped ? 'Bring this area back' : 'Skip this area'}</button>
@@ -614,17 +714,425 @@ function renderChecks() {
         <div class="seg" role="group" aria-label="Game">
           ${(['all', 'oot', 'mm'] as const).map(g => `<button data-game="${g}" aria-pressed="${gameFilter === g}">${{ all: 'Both', oot: 'OoT', mm: 'MM' }[g]}</button>`).join('')}
         </div>
-        <div class="seg"><button data-hidedone aria-pressed="${!!saved.ui.hideDone}">Hide done</button></div>
+        <div class="seg"><button data-hidedone aria-pressed="${!!saved.ui.hideDone}">Hide done</button>${logicOn() ? `<button data-logiconly aria-pressed="${!!saved.ui.logicOnly}">In logic</button>` : ''}</div>
+        ${viewSeg()}
+        ${logicPill()}
       </div>
       <div class="chips" role="group" aria-label="Filter by type">${chips}</div>
     </div>
-    <div class="scroll" id="listScroll">${banner}${body}${empty}</div>`;
+    <div class="scroll" id="listScroll">${banner}${logicBanner()}${body}${empty}</div>`;
   $('#listScroll').scrollTop = scrollTop;
   if (hadFocus) {
     const s = $('#search', pane) as HTMLInputElement;
     s.focus();
     if (caret !== null) s.setSelectionRange(caret, caret);
   }
+}
+
+/* ---------- Logic, hints and the map, shared by several pages ---------- */
+
+function areaHints() {
+  const out = new Map<string, Set<'woth' | 'foolish'>>();
+  for (const h of Object.values(seed.hints)) {
+    if ((h.kind !== 'woth' && h.kind !== 'foolish') || !h.area) continue;
+    const id = resolveArea(h.area).id;
+    (out.get(id) ?? out.set(id, new Set()).get(id)!).add(h.kind);
+  }
+  return out;
+}
+const areaTags = (set?: Set<string>) => !set ? '' : [...set].map(k => k === 'woth' ? '<span class="htag woth" data-text>Path</span>' : '<span class="htag foolish" data-text>Foolish</span>').join('');
+function itemHintFor(checkId: string) {
+  for (const h of Object.values(seed.hints)) if (h.kind === 'item' && h.check === checkId && h.item) return h.item;
+  return undefined;
+}
+const viewSeg = () => `<div class="seg" role="group" aria-label="View">
+  <button class="keep" data-checks-view="list" aria-pressed="${saved.ui.checksView !== 'map'}">List</button><button class="keep" data-checks-view="map" aria-pressed="${saved.ui.checksView === 'map'}">Map</button></div>`;
+function logicPill() {
+  if (!logicOn()) return '';
+  if (logicError) return '<span class="pill" id="logicPill">Logic unavailable</span>';
+  if (!logicOut) return '<span class="pill" id="logicPill">Working out logic</span>';
+  return `<span class="pill" id="logicPill"><b>${totals().reach.toLocaleString()}</b> in logic now</span>`;
+}
+function logicBanner() {
+  if (!logicReady() || !logicOut) return '';
+  const notes: string[] = [];
+  if (!logicOut.spawnsOpen) notes.push('Your spawn is shuffled. Log where you start on the Entrances tab and the rest opens up from there.');
+  else if (logicOut.shuffled && logicOut.logged < logicOut.shuffled) notes.push(`Shuffled entrances count once you log them. ${logicOut.logged} of ${logicOut.shuffled} logged so far.`);
+  if (!Object.keys(owned()).length && !catalog().some(i => i.start)) notes.push('Add the items you have on the Items tab, or log them at checks with the bag button, and more checks open up.');
+  if (!notes.length) return '';
+  return `<div class="banner logic-note"><div>${notes.map(n => `<p>${esc(n)}</p>`).join('')}</div>
+    <div class="btns">${!logicOut.spawnsOpen || logicOut.logged < logicOut.shuffled ? '<button class="btn alt" data-goto="entrances">Open Entrances</button>' : ''}<button class="btn alt" data-goto="items">Open Items</button></div></div>`;
+}
+
+/* ---------- Map view ---------- */
+
+/** Where an area sits on the map. The player can move it in Edit mode; -1 takes it off the map. */
+function mapSpot(id: string): [number, number] | undefined {
+  const at = saved.edits.areas[id]?.map ?? MAP_SPOTS[id];
+  return at && at[0] >= 0 ? [at[0], at[1]] : undefined;
+}
+
+function renderMap() {
+  const pane = $('#pane');
+  const scrollTop = $('#mapScroll', pane)?.scrollTop ?? 0;
+  const stats = regionStats();
+  const hinted = areaHints();
+  const spot = mapSpot;
+  const tile = (r: typeof stats[number], style = '') => {
+    const pct = r.total ? r.done / r.total : 0;
+    const state = r.skipped ? ' skipped' : r.total && r.done === r.total ? ' complete' : r.reach ? ' open' : '';
+    return `<button class="tile ${r.game}${state}${saved.edits.areas[r.id]?.hidden ? ' ghost' : ''}" data-region="${esc(r.id)}" data-edit="area:${esc(r.id)}"${style ? ` style="${style}"` : ''}>
+      <span class="tn">${esc(r.name)}</span>
+      <span class="tc">${r.skipped ? '<span>Skipped</span>' : `${r.done}/${r.total}`}${r.reach && !r.skipped ? ` <i class="lg">${r.reach}</i>` : ''}</span>${areaTags(hinted.get(r.id))}
+      <span class="bar"><i style="width:${pct * 100}%"></i></span></button>`;
+  };
+  const board = (title: string, cls: string, game: string) => {
+    const over = stats.filter(r => r.game === game && !r.dungeon && !['NONE', 'POCKET'].includes(r.id));
+    const placed = over.filter(r => spot(r.id));
+    const loose = over.filter(r => !spot(r.id));
+    const dungeons = stats.filter(r => r.game === game && r.dungeon);
+    if (!over.length && !dungeons.length) return '';
+    const width = (id: string) => saved.edits.areas[id]?.map ? 1 : MAP_SPOTS[id]?.[2] ?? 1;
+    const cols = Math.max(4, ...placed.map(r => spot(r.id)![0] + width(r.id)));
+    const grid = placed.map(r => {
+      const [x, y] = spot(r.id)!;
+      return tile(r, `grid-column:${x + 1} / span ${width(r.id)};grid-row:${y + 1}`);
+    }).join('');
+    return `<section class="board ${cls}"><div class="section-head"><h2>${title}</h2></div>
+      ${placed.length ? `<div class="map-grid" style="--cols:${cols}">${grid}</div>` : ''}
+      ${loose.length ? `<div class="group">Not placed on the map</div><div class="tile-row">${loose.map(r => tile(r)).join('')}</div>` : ''}
+      ${dungeons.length ? `<div class="group">Dungeons</div><div class="tile-row">${dungeons.map(r => tile(r)).join('')}</div>` : ''}</section>`;
+  };
+  const other = stats.filter(r => ['NONE', 'POCKET'].includes(r.id) || (r.game !== 'oot' && r.game !== 'mm'));
+  const t = totals();
+  pane.innerHTML = `<div class="toolbar"><div class="toolrow">
+      <button class="back" data-back>Areas</button>
+      <h2 style="font-size:1.42rem">Map</h2>
+      ${viewSeg()}
+      <span class="pill"><b>${(t.all - t.done).toLocaleString()}</b> left</span>
+      ${logicPill()}
+    </div></div>
+    <div class="scroll" id="mapScroll">${logicBanner()}
+      <p class="fine map-help">Tap an area to see its checks. Gold areas have checks you can get now. In Edit mode, tap an area to move it on the map.</p>
+      ${board('Hyrule', 'oot', 'oot')}${board('Termina', 'mm', 'mm')}
+      ${other.length ? `<section class="board"><div class="section-head"><h2>Other</h2></div><div class="tile-row">${other.map(r => tile(r)).join('')}</div></section>` : ''}
+      ${!stats.length ? `<div class="empty"><h3>${computing ? 'Reading your settings' : 'No checks yet'}</h3></div>` : ''}
+    </div>`;
+  $('#mapScroll').scrollTop = scrollTop;
+}
+
+/* ---------- Items page ----------
+   The player's own item tracker. Logging an item at a check counts it here too. */
+
+const ITEM_GROUP_ORDER = ['Equipment', 'Ammo and shields', 'Songs', 'Masks', 'Medallions, stones and remains', 'Trade and quest items', 'Bottles and their contents', 'Owls and maps', 'Skulltula tokens', 'Keys and dungeon items'];
+
+function foundAt(itemId: string) {
+  return Object.entries(seed.found).filter(([, v]) => v === itemId).map(([k]) => k);
+}
+const checkLabel = (id: string) => {
+  const c = checks.find(x => x.id === id);
+  return c ? `${regionLabel(c)}: ${c.name}` : id.replace(/^(OOT|MM) /, '');
+};
+
+function renderItems() {
+  const pane = $('#pane');
+  const had = $('#itemSearch', pane) as HTMLInputElement | null;
+  const hadFocus = had && document.activeElement === had;
+  const caret = had?.selectionStart ?? null;
+  const scrollTop = $('#itemScroll', pane)?.scrollTop ?? 0;
+  const have = owned();
+  const words = itemQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const list = catalog().filter(i => {
+    const hid = !!saved.edits.items[i.id]?.hidden;
+    if (hid && !editMode) return false;
+    if (itemGame !== 'all' && i.game !== itemGame && i.game !== 'shared') return false;
+    if (saved.ui.haveOnly && !countOf(i, have)) return false;
+    if (words.length && !words.every(w => `${itemLabel(i.id)} ${i.group}`.toLowerCase().includes(w))) return false;
+    return true;
+  });
+  const sections: string[] = [];
+  for (const game of ['oot', 'mm', 'shared'] as const) {
+    const mine = list.filter(i => i.game === game);
+    if (!mine.length) continue;
+    const groups = new Map<string, CatalogItem[]>();
+    for (const i of mine) (groups.get(i.group) ?? groups.set(i.group, []).get(i.group)!).push(i);
+    const body = [...groups].sort((a, b) => ITEM_GROUP_ORDER.indexOf(a[0]) - ITEM_GROUP_ORDER.indexOf(b[0])).map(([g, rows]) => {
+      const shut = collapsed(`i:${game}:${g}`);
+      return `<div class="item-group"><div class="section-head"><button class="caret keep" data-collapse="i:${esc(game)}:${esc(g)}" aria-expanded="${!shut}" aria-label="Show or hide these items"></button><h3>${esc(g)}</h3></div>
+        ${shut ? '' : `<div class="item-grid">${sortIn(`i:${game}:${g}`, rows, i => i.id).map(i => itemTile(i, have)).join('')}</div>`}</div>`;
+    }).join('');
+    sections.push(`<section class="items ${game}"><div class="section-head"><h2>${{ oot: 'Hyrule', mm: 'Termina', shared: 'Shared' }[game]}</h2></div>${body}</section>`);
+  }
+  const loggedCount = Object.keys(seed.found).length;
+  const status = !logicOn() ? '' : logicError ? `<p>OoTMM couldn't work out logic for these settings: ${esc(logicError)}</p>`
+    : !logicOut ? '<p>Working out logic for these settings. The first time takes a few seconds.</p>'
+    : `<p><b>${totals().reach.toLocaleString()}</b> checks are in logic with what you have.${logicOut.shuffled ? ` Shuffled entrances count once you log them: ${logicOut.logged} of ${logicOut.shuffled} logged.` : ''}</p>${logicOut.pricesShuffled ? '<p class="fine">Prices are random on this seed, so shops are treated as their normal price.</p>' : ''}`;
+  pane.innerHTML = `<div class="toolbar">
+      <div class="toolrow">
+        <input class="search" id="itemSearch" type="search" placeholder="Search items" aria-label="Search items" value="${esc(itemQuery)}">
+        <div class="seg" role="group" aria-label="Game">
+          ${(['all', 'oot', 'mm'] as const).map(g => `<button data-item-game="${g}" aria-pressed="${itemGame === g}">${{ all: 'Both', oot: 'OoT', mm: 'MM' }[g]}</button>`).join('')}
+        </div>
+        <div class="seg"><button data-haveonly aria-pressed="${!!saved.ui.haveOnly}">Have only</button></div>
+      </div>
+    </div>
+    <div class="scroll" id="itemScroll"><div class="page wide">
+      <div class="box">
+        <div class="set" style="border:0;padding:0"><div class="lab"><b>Show what's in logic</b></div>
+        <div class="ctl"><button class="switch" role="switch" aria-checked="${logicOn()}" aria-label="Show what's in logic" data-logic-toggle></button></div>
+        <div class="desc">Uses OoTMM's own logic to mark the checks you can get with the items below. Tap an item to add one. Logging what you find at a check with the bag button counts it here too.${loggedCount ? ` You've logged ${loggedCount} at checks.` : ''}</div></div>
+        ${status}
+        ${Object.keys(seed.have).length || loggedCount ? '<div class="btns"><button class="btn danger" data-clear-items>Clear items on this seed</button></div>' : ''}
+      </div>
+      ${sections.join('') || `<div class="empty"><h3>${!logicOn() ? 'Turn on logic to load the item list' : !logicOut ? 'Loading items' : 'No items match'}</h3></div>`}
+    </div></div>`;
+  $('#itemScroll').scrollTop = scrollTop;
+  if (hadFocus) {
+    const i = $('#itemSearch', pane) as HTMLInputElement;
+    i.focus();
+    if (caret !== null) i.setSelectionRange(caret, caret);
+  }
+}
+
+function itemTile(i: CatalogItem, have: Record<string, number>) {
+  const n = countOf(i, have);
+  const at = foundAt(i.id);
+  const hid = !!saved.edits.items[i.id]?.hidden;
+  const counter = i.max > 4
+    ? `<input type="number" class="item-num" min="0" max="${i.max}" value="${n}" data-item-num="${esc(i.id)}" aria-label="How many ${esc(itemLabel(i.id))}">`
+    : i.max > 1 ? `<span class="item-n">${n}/${i.max}</span>` : '';
+  return `<div class="item ${i.game}${n ? ' on' : ''}${hid ? ' ghost' : ''}">
+    <button class="item-btn" data-item="${esc(i.id)}" data-edit="item:${esc(i.id)}" aria-pressed="${n > 0}">
+      <span class="seal">${ICON.tick}</span>
+      <span class="nm"><span class="t">${esc(itemLabel(i.id))}</span>${at.length ? `<span class="s"><span>at</span> ${esc(at.map(checkLabel).join(', '))}</span>` : i.start ? '<span class="s">Starting item</span>' : ''}</span>
+    </button>${counter}${n > i.start && i.max <= 4 ? `<button class="item-minus" data-item-minus="${esc(i.id)}" aria-label="Take one away">−</button>` : ''}</div>`;
+}
+
+function setItemCount(id: string, n: number) {
+  const i = catalogById().get(id);
+  if (!i) return;
+  const target = Math.max(0, Math.min(i.max, n));
+  const fromChecks = foundAt(id).length;
+  const delta = target - i.start - fromChecks;
+  if (delta) seed.have[id] = delta; else delete seed.have[id];
+}
+function afterItemChange() {
+  save();
+  if (tab === 'items') renderItems(); else renderPane();
+  scheduleLogic();
+}
+
+/* The bag button on a check: what was there. */
+function openItemPicker(checkId: string) {
+  pickingItemFor = checkId;
+  itemPickQuery = '';
+  const cur = seed.found[checkId];
+  openSheet('What was here?', checkLabel(checkId), `
+    <input class="search" id="itemPickSearch" type="search" placeholder="Search items" aria-label="Search items">
+    <div class="pick-list" id="itemPickList"></div>
+    <div class="free-row"><input type="text" id="itemPickFree" aria-label="Type what you found" placeholder="Not listed? Type what you found"${cur?.startsWith('text:') ? ` value="${esc(cur.slice(5))}"` : ''}><button class="btn alt" data-act="free">Save</button></div>
+    <div class="btns">${cur ? '<button class="btn danger" data-act="clear">Clear this item</button>' : ''}</div>`, {
+    clear() { snap(); delete seed.found[pickingItemFor!]; closeSheet(); afterItemChange(); },
+    free() {
+      const v = ($('#itemPickFree') as HTMLInputElement).value.trim();
+      if (!v) return toast('Type what you found first.');
+      logFound(pickingItemFor!, 'text:' + v);
+    },
+  }, () => { pickingItemFor = null; });
+  renderItemPickList();
+  if (!matchMedia('(max-width: 760px)').matches) $('#itemPickSearch').focus();
+}
+function renderItemPickList() {
+  const box = document.getElementById('itemPickList');
+  if (!box || !pickingItemFor) return;
+  const c = checks.find(x => x.id === pickingItemFor);
+  const words = itemPickQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const have = owned();
+  const rows = catalog()
+    .filter(i => !saved.edits.items[i.id]?.hidden)
+    .filter(i => words.every(w => `${itemLabel(i.id)} ${i.group}`.toLowerCase().includes(w)))
+    .sort((a, b) => Number(b.game === c?.game) - Number(a.game === c?.game) || ITEM_GROUP_ORDER.indexOf(a.group) - ITEM_GROUP_ORDER.indexOf(b.group) || itemLabel(a.id).localeCompare(itemLabel(b.id)));
+  const groups = new Map<string, CatalogItem[]>();
+  for (const i of rows) {
+    const g = `${{ oot: 'Hyrule', mm: 'Termina', shared: 'Shared' }[i.game]}: ${i.group}`;
+    (groups.get(g) ?? groups.set(g, []).get(g)!).push(i);
+  }
+  box.innerHTML = [...groups].map(([g, list]) => `<div class="group">${esc(g)}</div>${list.map(i =>
+    `<button class="pick ${i.game === 'shared' ? '' : i.game}" data-pick-item="${esc(i.id)}" aria-pressed="${seed.found[pickingItemFor!] === i.id}"><span class="t">${esc(itemLabel(i.id))}</span>${i.max > 1 ? `<span class="s">You have ${countOf(i, have)} of ${i.max}</span>` : ''}</button>`).join('')}`).join('')
+    || `<div class="empty">${logicOut ? 'No items match. Type your own below.' : 'The item list loads with logic. Type what you found below.'}</div>`;
+}
+function logFound(checkId: string, itemId: string) {
+  snap();
+  seed.found[checkId] = itemId;
+  doneSet.add(checkId);
+  closeSheet();
+  save();
+  renderDial();
+  renderRail();
+  renderPane();
+  scheduleLogic();
+  toast(`Logged ${itemLabel(itemId)}. The check is marked done.`, true);
+}
+
+function editItem(id: string) {
+  const i = catalogById().get(id);
+  if (!i) return;
+  const E = saved.edits;
+  const o = E.items[id] ?? {};
+  const peers = catalog().filter(x => x.game === i.game && x.group === i.group).map(x => x.id);
+  openSheet('Edit this item', id, `
+    ${field('edName', 'Name', itemLabel(id))}
+    <div class="btns">
+      <button class="btn" data-act="save">Save</button>
+      <button class="btn alt" data-act="up">Move up</button><button class="btn alt" data-act="down">Move down</button>
+      <button class="btn alt" data-act="hide">${o.hidden ? 'Show on every seed' : 'Hide on every seed'}</button>
+      ${Object.keys(o).length ? '<button class="btn danger" data-act="reset">Put back original</button>' : ''}
+    </div>`, {
+    save() { snap(); const v = inputValue('edName'); E.items[id] = { ...E.items[id], name: v && v !== i.name ? v : undefined }; commit(); },
+    up() { snap(); moveInList(`i:${i.game}:${i.group}`, peers, id, -1); commit(); },
+    down() { snap(); moveInList(`i:${i.game}:${i.group}`, peers, id, 1); commit(); },
+    hide() { snap(); E.items[id] = { ...o, hidden: !o.hidden }; commit(); },
+    reset() { snap(); delete E.items[id]; commit(); },
+  });
+}
+
+/* ---------- Hints page ----------
+   The player types in what each gossip stone says. Nothing is read from a spoiler log. */
+
+const stoneList = (): GossipEntry[] => lastResult?.gossips ?? [];
+const stoneName = (g: GossipEntry) => saved.edits.stones[g.id]?.name ?? g.name;
+const hintKindLabel: Record<string, string> = { woth: 'Path', foolish: 'Foolish', item: 'Item', other: 'Other' };
+
+function renderHints() {
+  const pane = $('#pane');
+  const had = $('#hintSearch', pane) as HTMLInputElement | null;
+  const hadFocus = had && document.activeElement === had;
+  const caret = had?.selectionStart ?? null;
+  const scrollTop = $('#hintScroll', pane)?.scrollTop ?? 0;
+  const words = hintQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const logic = logicReady();
+  const match = (hay: string) => !words.length || words.every(w => hay.toLowerCase().includes(w));
+  const stones = stoneList().filter(g => (editMode || !saved.edits.stones[g.id]?.hidden)
+    && (!saved.ui.hideWritten || !seed.hints[g.id]?.text)
+    && match(`${stoneName(g)} ${areaName(g.region, g.regionName)} ${seed.hints[g.id]?.text ?? ''}`));
+  const byArea = new Map<string, GossipEntry[]>();
+  for (const g of stones) (byArea.get(g.region) ?? byArea.set(g.region, []).get(g.region)!).push(g);
+  const hintRow = (id: string, title: string, sub: string, game: string, reach: boolean | null, edit: string) => {
+    const h = seed.hints[id];
+    const hid = !!saved.edits.stones[id]?.hidden;
+    return `<div class="row entr hint ${game}${h?.text ? ' done' : ''}${hid ? ' ghost' : ''}">
+      <button class="entr-btn" data-hint="${esc(id)}" data-edit="${esc(edit)}">
+        <span class="seal">${ICON.tick}</span>
+        <span class="nm"><span class="t">${esc(title)}</span>${sub ? `<span class="s">${esc(sub)}</span>` : ''}
+          ${h?.text ? `<span class="leads">${esc(h.text)}</span>` : ''}</span>
+        ${h?.kind && hintKindLabel[h.kind] ? `<span class="htag ${h.kind}" data-text>${hintKindLabel[h.kind]}</span>` : ''}
+        ${hid ? '<span class="tag" data-text>Hidden</span>' : reach === true && !h?.text ? '<span class="lgdot" title="You can reach this stone now"></span>' : ''}
+        ${h?.text ? '' : '<span class="ty" data-text>Add</span>'}
+      </button></div>`;
+  };
+  const body = [...byArea.values()].sort((a, b) => regionRank(a[0].region, a[0].game, a[0].dungeon) - regionRank(b[0].region, b[0].game, b[0].dungeon)).map(rows => {
+    const gid = rows[0].region;
+    const shut = collapsed('h:' + gid);
+    return `<section><div class="section-head">
+      <button class="caret keep" data-collapse="h:${esc(gid)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
+      <h2>${esc(areaName(gid, rows[0].regionName))}</h2><span class="c">${rows.filter(g => seed.hints[g.id]?.text).length}/${rows.length}</span></div>
+      ${shut ? '' : `<div class="rows">${sortIn('h:' + gid, rows, g => g.id).map(g => hintRow(g.id, stoneName(g), '', g.game, logic ? stoneSet.has(g.id) : null, 'stone:' + g.id)).join('')}</div>`}</section>`;
+  }).join('');
+  const own = Object.entries(seed.hints).filter(([k, h]) => k.startsWith('own:') && match(`${h.from ?? ''} ${h.text}`));
+  const ownBody = `<section><div class="section-head"><h2>Other hints</h2><span class="head-acts"><button class="linkish" data-add-hint>Add a hint</button></span></div>
+    ${own.length ? `<div class="rows">${own.map(([k, h]) => hintRow(k, h.from || 'A hint', '', '', null, 'hint:' + k)).join('')}</div>` : '<p class="fine">For hints from anywhere else, like a shop sign or a fairy.</p>'}</section>`;
+  const all = stoneList().filter(g => !saved.edits.stones[g.id]?.hidden);
+  const written = all.filter(g => seed.hints[g.id]?.text).length;
+  pane.innerHTML = `<div class="toolbar">
+      <div class="toolrow">
+        <input class="search" id="hintSearch" type="search" placeholder="Search stones or what they said" aria-label="Search hints" value="${esc(hintQuery)}">
+        <div class="seg"><button data-hidewritten aria-pressed="${!!saved.ui.hideWritten}">Hide written</button></div>
+        <span class="pill"><b>${written}</b> of ${all.length} stones written</span>
+      </div>
+    </div>
+    <div class="scroll" id="hintScroll">
+      <p class="fine map-help">Tap a gossip stone to write what it said. Mark a hint as a path or foolish area and that area gets tagged everywhere. Mark an item hint and the check shows it.</p>
+      ${body || (stoneList().length ? '<div class="empty"><h3>Nothing matches</h3>Clear the search to see every stone.</div>' : `<div class="empty"><h3>${computing ? 'Reading your settings' : 'No gossip stones on these settings'}</h3></div>`)}
+      ${ownBody}
+    </div>`;
+  $('#hintScroll').scrollTop = scrollTop;
+  if (hadFocus) {
+    const i = $('#hintSearch', pane) as HTMLInputElement;
+    i.focus();
+    if (caret !== null) i.setSelectionRange(caret, caret);
+  }
+}
+
+/** Fills in what a hint is about from its wording, when the player hasn't said. */
+function readHint(text: string): { kind: HintKind; area?: string } {
+  const t = text.toLowerCase();
+  const kind: HintKind = /foolish|barren/.test(t) ? 'foolish' : /way of the hero|path (of|to)|on the path/.test(t) ? 'woth' : '';
+  const names = regionList().map(r => r.name).filter(n => t.includes(n.toLowerCase())).sort((a, b) => b.length - a.length);
+  return { kind, area: names[0] };
+}
+
+function openHint(id: string) {
+  const isOwn = id.startsWith('own:');
+  const g = stoneList().find(x => x.id === id);
+  const h: Hint = seed.hints[id] ?? { text: '' };
+  const checkOptions = checks.filter(c => !c.id.startsWith('custom:')).map(c => `<option value="${esc(checkLabel(c.id))}">`).join('');
+  const itemOptions = catalog().map(i => `<option value="${esc(itemLabel(i.id))}">`).join('');
+  openSheet(isOwn ? 'A hint' : 'What did this stone say?', g ? `${stoneName(g)}, ${areaName(g.region, g.regionName)}` : '', `
+    ${isOwn ? field('hintFrom', 'Where it came from', h.from ?? '', 'placeholder="A sign, a fairy, a shop"') : ''}
+    <label class="field"><span>What it said</span><textarea id="hintText" placeholder="Type the hint">${esc(h.text)}</textarea></label>
+    <label class="field"><span>What kind of hint</span><select id="hintKind">
+      ${([['', 'Work it out from the wording'], ['woth', 'Path: this area has something you need'], ['foolish', 'Foolish: nothing you need here'], ['item', 'Item: says what is at a spot'], ['other', 'Something else']] as const)
+        .map(([v, l]) => `<option value="${v}"${(h.kind ?? '') === v ? ' selected' : ''}>${l}</option>`).join('')}
+    </select></label>
+    ${field('hintArea', 'Area it is about', h.area ?? '', 'list="areaNames"')}<datalist id="areaNames">${regionList().map(r => `<option value="${esc(r.name)}">`).join('')}</datalist>
+    ${field('hintCheck', 'For an item hint: the spot', h.check ? checkLabel(h.check) : '', 'list="hintChecks"')}<datalist id="hintChecks">${checkOptions}</datalist>
+    ${field('hintItem', 'For an item hint: the item', h.item ? itemLabel(h.item) : '', 'list="hintItems"')}<datalist id="hintItems">${itemOptions}</datalist>
+    <div class="btns"><button class="btn" data-act="save">Save</button>${seed.hints[id] ? `<button class="btn danger" data-act="clear">${isOwn ? 'Delete this hint' : 'Clear this stone'}</button>` : ''}</div>`, {
+    save() {
+      const text = ($('#hintText') as HTMLTextAreaElement).value.trim();
+      const from = isOwn ? inputValue('hintFrom') : undefined;
+      let kind = ($('#hintKind') as HTMLSelectElement).value as HintKind;
+      let area = inputValue('hintArea');
+      const guess = readHint(text);
+      if (!kind) kind = guess.kind;
+      if (!area && (kind === 'woth' || kind === 'foolish')) area = guess.area ?? '';
+      const checkText = inputValue('hintCheck').toLowerCase();
+      const check = checkText ? checks.find(c => checkLabel(c.id).toLowerCase() === checkText || c.name.toLowerCase() === checkText)?.id : undefined;
+      const itemText = inputValue('hintItem');
+      const item = itemText ? catalog().find(i => itemLabel(i.id).toLowerCase() === itemText.toLowerCase())?.id ?? 'text:' + itemText : undefined;
+      if (check || item) kind ||= 'item';
+      if (!text && !check && !item && !area && !from) { closeSheet(); return; }
+      snap();
+      seed.hints[id] = { text, kind: kind || undefined, area: area || undefined, check, item, from: from || undefined };
+      if (checkText && !check) toast("That spot isn't on the list. Pick one from the suggestions.");
+      closeSheet(); save(); renderAll();
+    },
+    clear() { snap(); delete seed.hints[id]; closeSheet(); save(); renderAll(); },
+  });
+}
+
+function editStone(id: string) {
+  const g = stoneList().find(x => x.id === id);
+  if (!g) return;
+  const E = saved.edits;
+  const o = E.stones[id] ?? {};
+  const peers = stoneList().filter(x => x.region === g.region).map(x => x.id);
+  openSheet('Edit this stone', id, `
+    ${field('edName', 'Name', stoneName(g))}
+    <div class="btns">
+      <button class="btn" data-act="save">Save</button>
+      <button class="btn alt" data-act="write">Write its hint</button>
+      <button class="btn alt" data-act="up">Move up</button><button class="btn alt" data-act="down">Move down</button>
+      <button class="btn alt" data-act="hide">${o.hidden ? 'Show on every seed' : 'Hide on every seed'}</button>
+      ${Object.keys(o).length ? '<button class="btn danger" data-act="reset">Put back original</button>' : ''}
+    </div>`, {
+    save() { snap(); const v = inputValue('edName'); E.stones[id] = { ...E.stones[id], name: v && v !== g.name ? v : undefined }; commit(); },
+    write() { closeSheet(); openHint(id); },
+    up() { snap(); moveInList('h:' + g.region, peers, id, -1); commit(); },
+    down() { snap(); moveInList('h:' + g.region, peers, id, 1); commit(); },
+    hide() { snap(); E.stones[id] = { ...o, hidden: !o.hidden }; commit(); },
+    reset() { snap(); delete E.stones[id]; commit(); },
+  });
 }
 
 /* ---------- Entrances page ----------
@@ -793,6 +1301,7 @@ function setEntrance(src: string, dst: string) {
 
 function afterEntranceChange() {
   save();
+  scheduleLogic();
   renderEntranceRail();
   renderEntrances();
   renderTabs();
@@ -1027,7 +1536,7 @@ function unpackIds(p: { b: string; x: string[] }) {
 }
 
 export function makeTransferCode(s: Seed) {
-  const body = JSON.stringify({ h: dataHash, o: s.origin ?? s.id, n: s.name, s: s.settings, d: packIds(s.done), k: packIds(s.skipped), r: s.rolled, g: s.skippedRegions, c: saved.custom, e: s.entrances, t: s.notes, p: s.pad, x: saved.edits });
+  const body = JSON.stringify({ h: dataHash, o: s.origin ?? s.id, n: s.name, s: s.settings, d: packIds(s.done), k: packIds(s.skipped), r: s.rolled, g: s.skippedRegions, c: saved.custom, e: s.entrances, t: s.notes, p: s.pad, f: s.found, v: s.have, i: s.hints, x: saved.edits });
   return 'OOTMM1.' + uint8ArrayToBase64(deflateRaw(new TextEncoder().encode(body), { level: 9 }), { urlSafe: true });
 }
 export function readTransferCode(code: string): Seed {
@@ -1037,7 +1546,7 @@ export function readTransferCode(code: string): Seed {
   if (body.h !== dataHash) throw new Error('This code came from a different build of the checklist. Use the same version on both devices.');
   for (const c of (body.c ?? []) as CustomCheck[]) if (!saved.custom.some(x => x.id === c.id)) saved.custom.push(c);
   if (body.x) saved.edits = { ...blankEdits(), ...body.x };
-  return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, entrances: body.e ?? {}, notes: body.t ?? {}, pad: body.p ?? '', updated: Date.now() };
+  return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, entrances: body.e ?? {}, notes: body.t ?? {}, pad: body.p ?? '', found: body.f ?? {}, have: body.v ?? {}, hints: body.i ?? {}, updated: Date.now() };
 }
 
 /* ---------- Seeds page ---------- */
@@ -1224,15 +1733,32 @@ function editArea(id: string) {
   const stats = tab === 'entrances' ? entranceStats().groups : regionStats();
   const me = stats.find(x => x.id === id);
   const fallback = me?.name ?? id.replace(/^custom:/, '');
+  const spotNow = mapSpot(id);
+  const onMap = !me?.dungeon && !['NONE', 'POCKET'].includes(id);
   openSheet('Edit this area', '', `
     ${field('edName', 'Name', fallback)}
+    ${onMap ? field('edSpot', 'Spot on the map: column, row (counting from 1). Leave empty to keep it off the map.', spotNow ? `${spotNow[0] + 1}, ${spotNow[1] + 1}` : '', 'inputmode="numeric"') : ''}
     <div class="btns">
       <button class="btn" data-act="save">Save</button>
       <button class="btn alt" data-act="up">Move up</button><button class="btn alt" data-act="down">Move down</button>
       <button class="btn alt" data-act="hide">${o.hidden ? 'Show on every seed' : 'Hide on every seed'}</button>
       ${Object.keys(o).length ? '<button class="btn danger" data-act="reset">Put back original</button>' : ''}
     </div>`, {
-    save() { snap(); E.areas[id] = { ...E.areas[id], name: inputValue('edName') || undefined }; commit(); },
+    save() {
+      snap();
+      const next: ItemEdit = { ...E.areas[id], name: inputValue('edName') || undefined };
+      if (onMap) {
+        const nums = inputValue('edSpot').split(/[^\d]+/).filter(Boolean).map(Number);
+        const def = MAP_SPOTS[id];
+        if (nums.length >= 2 && nums[0] > 0 && nums[1] > 0) {
+          const at: [number, number] = [nums[0] - 1, nums[1] - 1];
+          next.map = def && def[0] === at[0] && def[1] === at[1] ? undefined : at;
+        } else if (!nums.length && def) next.map = [-1, -1];
+        else if (!nums.length) next.map = undefined;
+      }
+      E.areas[id] = next;
+      commit();
+    },
     up() { moveArea(-1); },
     down() { moveArea(1); },
     hide() { snap(); E.areas[id] = { ...o, hidden: !o.hidden }; commit(); },
@@ -1395,6 +1921,9 @@ function openEditor(target: string) {
   else if (kind === 'seed') editSeed(id);
   else if (kind === 'tab') editTab(id);
   else if (kind === 'meter') editMeter();
+  else if (kind === 'item') editItem(id);
+  else if (kind === 'stone') editStone(id);
+  else if (kind === 'hint') openHint(id);
   else if (kind === 'text') openTextEditor(id, null);
 }
 
@@ -1460,13 +1989,15 @@ function setEditMode(on: boolean) {
 function editList() {
   const E = saved.edits;
   const out: { label: string; what: string; undo: () => void }[] = [];
-  const rename = (o: ItemEdit) => [o.name && `renamed to ${o.name}`, o.area && `moved to ${o.area}`, o.hidden && 'hidden', o.order !== undefined && 'reordered'].filter(Boolean).join(', ') || 'changed';
+  const rename = (o: ItemEdit) => [o.name && `renamed to ${o.name}`, o.area && `moved to ${o.area}`, o.hidden && 'hidden', o.order !== undefined && 'reordered', o.map && 'moved on the map'].filter(Boolean).join(', ') || 'changed';
   for (const [k, v] of Object.entries(E.text)) out.push({ label: k, what: `reads ${v}`, undo: () => { delete E.text[k]; } });
   for (const k of Object.keys(E.hide)) out.push({ label: k, what: 'hidden', undo: () => { delete E.hide[k]; } });
   for (const [k, o] of Object.entries(E.checks)) out.push({ label: k.replace(/^(OOT|MM) /, ''), what: rename(o), undo: () => { delete E.checks[k]; } });
   for (const [k, o] of Object.entries(E.entrances)) out.push({ label: k, what: rename(o), undo: () => { delete E.entrances[k]; } });
   for (const [k, o] of Object.entries(E.dests)) out.push({ label: k, what: rename(o), undo: () => { delete E.dests[k]; } });
   for (const [k, o] of Object.entries(E.areas)) out.push({ label: `Area ${k.replace(/^custom:/, '')}`, what: rename(o), undo: () => { delete E.areas[k]; } });
+  for (const [k, o] of Object.entries(E.items)) out.push({ label: `Item ${k}`, what: rename(o), undo: () => { delete E.items[k]; } });
+  for (const [k, o] of Object.entries(E.stones)) out.push({ label: k.replace(/^(OOT|MM) /, ''), what: rename(o), undo: () => { delete E.stones[k]; } });
   for (const c of saved.custom) out.push({ label: c.name, what: `your check in ${c.region}`, undo: () => { saved.custom = saved.custom.filter(x => x.id !== c.id); } });
   for (const c of E.customEntrances) out.push({ label: c.title, what: `your entrance in ${c.area}`, undo: () => { E.customEntrances = E.customEntrances.filter(x => x.id !== c.id); } });
   for (const k of Object.keys(E.order)) out.push({ label: 'Order within an area', what: 'rearranged', undo: () => { delete E.order[k]; } });
@@ -1520,6 +2051,8 @@ function loadBackup(text: string) {
 function renderPane() {
   if (tab === 'list') renderChecks();
   else if (tab === 'entrances') renderEntrances();
+  else if (tab === 'items') renderItems();
+  else if (tab === 'hints') renderHints();
   else if (tab === 'settings') renderSettings();
   else renderSeeds();
 }
@@ -1548,6 +2081,9 @@ function openSeed(id: string) {
   try { S = importSettings(seed.settings); } catch { S = makeSettings({}); }
   checks = [];
   region = null;
+  logicOut = null;
+  reachSet = new Set();
+  stoneSet = new Set();
   recompute();
 }
 
@@ -1620,7 +2156,7 @@ function events() {
     if (e.key === 'Escape' && layers.length) { closeSheet(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); undo(); return; }
     if (e.key === '/' && !typing && !layers.length) {
-      const box = document.querySelector<HTMLInputElement>('#search, #entrSearch, #setSearch');
+      const box = document.querySelector<HTMLInputElement>('#search, #entrSearch, #setSearch, #itemSearch, #hintSearch');
       if (box) { e.preventDefault(); box.focus(); }
     }
   });
@@ -1639,6 +2175,18 @@ function events() {
       pickQuery = t.value;
       clearTimeout(searchTimer);
       searchTimer = window.setTimeout(renderPickList, 100);
+    } else if (t.id === 'itemSearch') {
+      itemQuery = t.value;
+      clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(renderItems, 120);
+    } else if (t.id === 'itemPickSearch') {
+      itemPickQuery = t.value;
+      clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(renderItemPickList, 100);
+    } else if (t.id === 'hintSearch') {
+      hintQuery = t.value;
+      clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(renderHints, 120);
     } else if (t.id === 'seedPad') {
       seed.pad = t.value;
       save();
@@ -1656,6 +2204,7 @@ function events() {
 
   app.addEventListener('change', e => {
     const t = e.target as HTMLInputElement;
+    if (t.dataset.itemNum) { snap(); setItemCount(t.dataset.itemNum, Number(t.value) || 0); afterItemChange(); return; }
     if (t.dataset.enum) setSetting(t.dataset.enum, t.value);
     else if (t.dataset.num) setSetting(t.dataset.num, Number(t.value));
     else if (t.id === 'importFile' && t.files?.[0]) t.files[0].text().then(applyImport);
@@ -1725,6 +2274,7 @@ function events() {
     if ('openEntrSettings' in d) { openCats.add('entrances'); saved.ui.changesOnly = true; tab = 'settings'; renderRail(); renderTabs(); renderPane(); return; }
     if ('region' in d) {
       region = d.region || null; query = ''; typeFilter.clear(); phoneView = 'pane'; tab = 'list';
+      if (saved.ui.checksView === 'map') { saved.ui.checksView = 'list'; save(); }
       renderRail(); renderTabs(); renderChecks();
       $('#listScroll')?.scrollTo(0, 0);
       return;
@@ -1734,6 +2284,36 @@ function events() {
     if ('hidedone' in d) { saved.ui.hideDone = !saved.ui.hideDone; save(); renderChecks(); return; }
     if (d.type) { if (typeFilter.has(d.type)) typeFilter.delete(d.type); else typeFilter.add(d.type); renderChecks(); return; }
     if (d.goto) { tab = d.goto as typeof tab; renderRail(); renderTabs(); renderPane(); return; }
+    if (d.checksView) { saved.ui.checksView = d.checksView as 'list' | 'map'; save(); renderChecks(); return; }
+    if ('logiconly' in d) { saved.ui.logicOnly = !saved.ui.logicOnly; save(); renderChecks(); return; }
+    if ('logicToggle' in d) {
+      saved.ui.logicOff = !saved.ui.logicOff;
+      if (saved.ui.logicOff) { saved.ui.logicOnly = false; logicSeq++; logicBusy = false; } else scheduleLogic();
+      save(); renderAll();
+      return;
+    }
+    if (d.found) { openItemPicker(d.found); return; }
+    if (d.pickItem) { logFound(pickingItemFor!, d.pickItem); return; }
+    if (d.itemGame) { itemGame = d.itemGame as typeof itemGame; renderItems(); return; }
+    if ('haveonly' in d) { saved.ui.haveOnly = !saved.ui.haveOnly; save(); renderItems(); return; }
+    if (d.item) {
+      const i = catalogById().get(d.item);
+      if (!i) return;
+      snap();
+      const n = countOf(i);
+      setItemCount(i.id, n >= i.max ? i.start : n + 1);
+      afterItemChange();
+      return;
+    }
+    if (d.itemMinus) { const i = catalogById().get(d.itemMinus); if (i) { snap(); setItemCount(i.id, countOf(i) - 1); afterItemChange(); } return; }
+    if ('clearItems' in d) {
+      if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Tap again to clear'; return; }
+      snap(); seed.have = {}; seed.found = {}; afterItemChange(); toast('Items cleared on this seed.', true);
+      return;
+    }
+    if (d.hint) { openHint(d.hint); return; }
+    if ('addHint' in d) { openHint('own:' + uid()); return; }
+    if ('hidewritten' in d) { saved.ui.hideWritten = !saved.ui.hideWritten; save(); renderHints(); return; }
 
     if (el.classList.contains('tick-btn')) {
       const row = el.closest<HTMLElement>('.row')!;
@@ -1832,7 +2412,7 @@ function events() {
     if ('reset' in d) {
       if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Tap again to clear'; return; }
       snap();
-      doneSet.clear(); skipSet.clear(); seed.skippedRegions = []; seed.entrances = {}; seed.notes = {};
+      doneSet.clear(); skipSet.clear(); seed.skippedRegions = []; seed.entrances = {}; seed.notes = {}; seed.found = {}; seed.have = {}; seed.hints = {};
       save(); renderAll(); toast('Progress cleared on this seed.', true);
       return;
     }
@@ -1846,7 +2426,7 @@ function events() {
         const n = readTransferCode(($('#codeBox') as HTMLTextAreaElement).value);
         const mine = saved.seeds.find(x => (x.origin ?? x.id) === n.origin);
         save();
-        if (mine) Object.assign(mine, { settings: n.settings, done: n.done, skipped: n.skipped, skippedRegions: n.skippedRegions, rolled: n.rolled, entrances: n.entrances, notes: n.notes, pad: n.pad, updated: n.updated });
+        if (mine) Object.assign(mine, { settings: n.settings, done: n.done, skipped: n.skipped, skippedRegions: n.skippedRegions, rolled: n.rolled, entrances: n.entrances, notes: n.notes, pad: n.pad, found: n.found, have: n.have, hints: n.hints, updated: n.updated });
         else saved.seeds.push(n);
         openSeed((mine ?? n).id);
         save();
@@ -1865,7 +2445,7 @@ function boot() {
     shell();
     applyText();
     events();
-    if (source) startWorker(source);
+    if (source) { startWorker(source, 'checks'); startWorker(source, 'logic'); }
     openSeed(saved.current);
     connectHostedStore();
     if (__TARGET__ === 'web' && 'serviceWorker' in navigator && location.protocol === 'https:') {
