@@ -7,6 +7,20 @@ The checklist runs OoTMM's own world code, the same steps as its internal `locat
 in the built world, minus the ones locked to their vanilla item. The app doesn't keep its own copy of the
 rules, so a rebuild picks up changes in the randomizer.
 
+## Reachable checks, items, hints and the map
+
+- **In logic.** Checks you can get right now are marked with a gold dot, and each area shows how many. The **In logic**
+  button hides the rest. It uses OoTMM's own logic and pathfinder with two things you give it: the items on the
+  **Items** tab, and the entrances you've logged. A shuffled entrance you haven't logged counts as closed, so nothing
+  about your seed's layout is worked out for you. Random shop prices can't be known, so shops count at their normal price.
+  Turn it off on the Items tab.
+- **Items.** Tap an item to add one. The list comes from your settings. The bag button on any check logs what you found
+  there, marks the check done and counts the item. Item hints and found items show on the check.
+- **Hints.** Every gossip stone on your settings, ready for you to type what it said. A hint marked Path or Foolish
+  (or worded that way) tags its area in the list and on the map. **Add a hint** covers anything that isn't a stone.
+- **Map.** Switch the Checks tab to Map for a sketch of Hyrule and Termina with each area's progress. Gold areas have
+  checks in logic. In Edit mode, tap an area to move it.
+
 ## Edit mode
 
 Press **Edit mode** and anything in the app can be changed. Press it again to finish. The button itself is the
@@ -68,9 +82,15 @@ What each kind of fork change needs:
 Transfer codes only work between devices running the same build, because they're tied to the list of
 locations. After rebuilding for your fork, update the Windows app and the phone version together.
 
-The build reaches OoTMM's private `WorldShuffler` class through a small plugin in `tools/paths.mjs`. If you rename that
-class or its `placePools`, `poolEntrancesForTypes`, `isAssignableConstraints` or `reverseEntrance` methods, update
-`src/engine/entrances.ts` to match. The build stops with a clear message if the class is gone.
+The build reaches OoTMM's private `WorldShuffler` and `LogicPassEntrances` classes through a small plugin in
+`tools/paths.mjs`. If you rename those classes or the `placePools`, `poolEntrancesForTypes`, `isAssignableConstraints`,
+`reverseEntrance`, `changedWorld`, `placeSingle` or `processRegions` methods, update `src/engine/entrances.ts` and
+`src/engine/logic.ts` to match. The build stops with a clear message if a class is gone.
+
+New items from a fork appear on the Items tab by themselves. Their section comes from `itemGroup` in
+`src/engine/logic.ts`, and anything it doesn't recognize goes under Equipment. New overworld areas show on the map
+under "Not placed on the map" until you add them to `src/mapspots.ts` or move them in Edit mode.
+`node tools/logic-test.mjs` checks reachable checks against OoTMM's own pathfinder on real seeds.
 
 `npm run verify` compares the checklist with OoTMM's own `locationList()` on random settings. Run it after
 changing anything in `src/engine`. If your fork makes a setting change a check's existence through an access
@@ -79,7 +99,7 @@ rule rather than through the world data, verify will report it, and you can remo
 
 ## Project layout
 
-- `src/engine/` runs OoTMM's pipeline and reads spoiler log headers
+- `src/engine/` runs OoTMM's pipeline and logic, and reads spoiler log headers
 - `src/main.ts`, `src/style.css`, `src/skins.ts`, `src/textlayer.ts` are the app, shared by PC and phone
 - `desktop/` is the Windows window wrapper (Electron)
 - `tools/` holds the build, audit, verify and packaging scripts

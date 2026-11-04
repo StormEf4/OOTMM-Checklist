@@ -4,7 +4,7 @@
  * randomized, so no seed's real connections are ever computed or stored here.
  */
 import { ENTRANCES } from '@ootmm/data';
-import { ChecklistWorldShuffler, DUNGEONS_REGIONS } from '@ootmm/logic';
+import { ChecklistLogicPassEntrances, ChecklistWorldShuffler, DUNGEONS_REGIONS } from '@ootmm/logic';
 import { regionName } from '@ootmm/regions';
 
 export type EntranceEntry = {
@@ -140,4 +140,24 @@ export function shuffledEntrances(state: any): EntranceData {
     });
   }
   return { list, dests, sets, rev };
+}
+
+/**
+ * Grottos, fairy fountains and shops have no area of their own in OoTMM's data. OoTMM
+ * names them after the area their door is in, once entrances are placed. This runs
+ * that same step on the normal layout, so they're listed where they usually are.
+ * It never looks at a shuffled layout.
+ */
+export function normalRegions(state: any): { regions: Record<string, string>; areas: Record<string, { region: string }> } {
+  const { random, worlds, settings, startingItems, allItems } = state;
+  const shuffler: any = new ChecklistWorldShuffler(random, 0, worlds, settings, startingItems, allItems);
+  const stop = {};
+  shuffler.placePools = () => { throw stop; };
+  try { shuffler.run(); } catch (e) { if (e !== stop) throw e; }
+  /* Only the links between the two games and plando are applied: nothing is shuffled. */
+  const world = shuffler.changedWorld(shuffler.overrides);
+  const pass: any = new ChecklistLogicPassEntrances(state);
+  pass.worlds = [world];
+  pass.processRegions();
+  return { regions: world.regions, areas: world.areas };
 }

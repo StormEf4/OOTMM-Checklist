@@ -9,15 +9,37 @@ import { DEFAULT_SETTINGS, Monitor, SETTINGS, exportSettings, importSettings, ma
 import { CHECKS_BY_LOCATION, type CheckData } from '@ootmm/data';
 import { ExprParser, exprTrue, makeLocation, worldState } from '@ootmm/logic';
 import { regionName } from '@ootmm/regions';
-import { shuffledEntrances, type EntranceData } from './entrances';
+import { normalRegions, shuffledEntrances, type EntranceData } from './entrances';
 
 /*
  * Access rules decide when a check is reachable, never whether it exists, so
  * the checklist can skip parsing them. That takes a settings change from about
  * 3 seconds to about 0.2. tools/verify.mjs proves the results stay identical.
  */
+let fast = false;
 export function enableFastMode() {
-  ExprParser.prototype.parse = function fastParse() { return exprTrue(); } as typeof ExprParser.prototype.parse;
+  fast = true;
+  if ((ExprParser.prototype.parse as any).__checklist) return;
+  const real = ExprParser.prototype.parse;
+  const parse = function (this: ExprParser, ...args: unknown[]) { return fast ? exprTrue() : (real as any).apply(this, args); };
+  (parse as any).__checklist = true;
+  ExprParser.prototype.parse = parse as typeof ExprParser.prototype.parse;
+}
+
+/*
+ * The reachable-checks view needs the real access rules. Jobs run one at a time,
+ * so a fast checklist run and a logic run never share the parser at once.
+ */
+let queue: Promise<unknown> = Promise.resolve();
+export function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const run = queue.then(fn, fn);
+  queue = run.catch(() => {});
+  return run;
+}
+export async function withRealLogic<T>(fn: () => Promise<T>): Promise<T> {
+  const was = fast;
+  fast = false;
+  try { return await fn(); } finally { fast = was; }
 }
 
 export type CheckEntry = {
@@ -33,8 +55,11 @@ export type CheckEntry = {
   junk: boolean;
 };
 
+export type GossipEntry = { id: string; name: string; game: 'oot' | 'mm'; region: string; regionName: string; dungeon: boolean };
+
 export type ComputeResult = {
   checks: CheckEntry[];
+  gossips: GossipEntry[];
   mq: string[];
   entrances: EntranceData;
   ms: number;
@@ -66,9 +91,12 @@ export async function compute(input: Partial<Settings>, seed = 'checklist'): Pro
   const world = worlds[0];
   const junk = new Set(opts.settings.junkLocations);
   const checks: CheckEntry[] = [];
+  let regions: Record<string, string> = world.regions;
+  let areaRegions: Record<string, { region: string }> = world.areas;
+  try { ({ regions, areas: areaRegions } = normalRegions(state)); } catch { /* keeps OoTMM's unplaced names */ }
   for (const id of world.locations) {
     const data = CHECKS_BY_LOCATION[id] as CheckData;
-    const region = world.regions[id] ?? 'NONE';
+    const region = regions[id] ?? world.regions[id] ?? 'NONE';
     const dungeonKey = Object.entries(world.dungeons).find(([, d]) => d.has(id))?.[0];
     checks.push({
       id,
@@ -83,6 +111,16 @@ export async function compute(input: Partial<Settings>, seed = 'checklist'): Pro
       junk: junk.has(id),
     });
   }
+  /* Gossip stones, for the Hints tab. The player types in what each one says. */
+  const gossips: GossipEntry[] = [];
+  const dungeonRegions = new Set(checks.filter(c => c.dungeon).map(c => c.region));
+  for (const [name, area] of Object.entries(world.areas) as [string, any][]) {
+    for (const id of Object.keys(area.gossip ?? {})) {
+      if (gossips.some(g => g.id === id)) continue;
+      const r = areaRegions[name]?.region ?? area.region ?? 'NONE';
+      gossips.push({ id, name: prettify(id, r), game: world.gossip[id]?.game ?? area.game, region: r, regionName: regionName(r), dungeon: dungeonRegions.has(r) });
+    }
+  }
   const mqSetting = (SETTINGS as readonly any[]).find(s => s.key === 'mqDungeons');
   const mq = mqSetting.values.map((v: any) => v.value).filter((v: string) => world.resolvedFlags.mqDungeons.has(v));
   /* A problem with entrance settings should never take the check list down with it. */
@@ -92,7 +130,7 @@ export async function compute(input: Partial<Settings>, seed = 'checklist'): Pro
   } catch (e) {
     entrances = { list: [], dests: [], sets: [], rev: {}, error: String((e as Error)?.message ?? e) };
   }
-  return { checks, mq, entrances, ms: Math.round(performance.now() - t0) };
+  return { checks, gossips, mq, entrances, ms: Math.round(performance.now() - t0) };
 }
 
 export { DEFAULT_SETTINGS, SETTINGS, exportSettings, importSettings, makeSettings };
