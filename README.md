@@ -14,6 +14,14 @@ rules, so a rebuild picks up changes in the randomizer.
   **Items** tab, and the entrances you've logged. A shuffled entrance you haven't logged counts as closed, so nothing
   about your seed's layout is worked out for you. Random shop prices can't be known, so shops count at their normal price.
   Turn it off on the Items tab.
+- **What opens a check.** Once both ages can get something, OoT checks only one age can get right now are tagged Child or
+  Adult. A check out of logic says which missing item would put it in logic on its own, and the Items tab lists the
+  **Best items to find next**. Checks that need two new items together don't get a hint.
+- **Settings OoTMM rolls per seed.** When a setting such as Ganon's trials, key rings, open dungeons or Master Quest is
+  random, Settings asks what came up. Opening your spoiler log fills it in from the header. Until you answer, Ganon's
+  trials count as all on and the rest as off.
+- **Pre-completed dungeons.** Pick the dungeons your seed started as beaten on the Settings tab, or open your spoiler log.
+  Their areas are skipped, and logic counts what OoTMM gives you for them: cleared region states, boss souls and keys.
 - **Items.** Tap an item to add one. The list comes from your settings. The bag button on any check logs what you found
   there, marks the check done and counts the item. Item hints and found items show on the check.
 - **Hints.** Every gossip stone on your settings, ready for you to type what it said. A hint marked Path or Foolish
@@ -82,15 +90,17 @@ What each kind of fork change needs:
 Transfer codes only work between devices running the same build, because they're tied to the list of
 locations. After rebuilding for your fork, update the Windows app and the phone version together.
 
-The build reaches OoTMM's private `WorldShuffler` and `LogicPassEntrances` classes through a small plugin in
-`tools/paths.mjs`. If you rename those classes or the `placePools`, `poolEntrancesForTypes`, `isAssignableConstraints`,
+The build reaches OoTMM's private `WorldShuffler`, `LogicPassEntrances` and `LogicPassSolver` classes, and the
+`normalDungeons` function, through a small plugin in `tools/paths.mjs`. If you rename those, the solver's
+`preCompleteDungeons` method, the pathfinder's `evalExpr` method, or the `placePools`, `poolEntrancesForTypes`, `isAssignableConstraints`,
 `reverseEntrance`, `changedWorld`, `placeSingle` or `processRegions` methods, update `src/engine/entrances.ts` and
 `src/engine/logic.ts` to match. The build stops with a clear message if a class is gone.
 
 New items from a fork appear on the Items tab by themselves. Their section comes from `itemGroup` in
 `src/engine/logic.ts`, and anything it doesn't recognize goes under Equipment. New overworld areas show on the map
 under "Not placed on the map" until you add them to `src/mapspots.ts` or move them in Edit mode.
-`node tools/logic-test.mjs` checks reachable checks against OoTMM's own pathfinder on real seeds.
+`node tools/logic-test.mjs` checks reachable checks against OoTMM's own pathfinder on real seeds. `LOGIC_FUZZ=10` adds
+ten random settings, and `LOGIC_CASE=word` runs only the cases whose name has that word.
 
 `npm run verify` compares the checklist with OoTMM's own `locationList()` on random settings. Run it after
 changing anything in `src/engine`. If your fork makes a setting change a check's existence through an access

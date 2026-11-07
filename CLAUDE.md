@@ -36,7 +36,8 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 ## Where things are
 
 - `src/engine/`: runs OoTMM's pipeline, entrance pools and spoiler header reading
-- `src/engine/logic.ts`: reachable checks and the item list, from OoTMM's pathfinder. It runs in its own worker
+- `src/engine/logic.ts`: reachable checks, the item list, age tags, "opens with" and pre-completed dungeons, from
+  OoTMM's pathfinder and solver code. It runs in its own worker
 - `src/mapspots.ts`: where each area sits on the Map view
 - `src/main.ts`: the app and Edit mode
 - `src/textlayer.ts`: makes any on-screen text editable
@@ -50,7 +51,8 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `npm run verify`: compares the checklist with OoTMM's `locationList()` on random settings. Runs where OoTMM reports
   `Expression is not allowed at runtime` are combinations OoTMM refuses, not list errors.
 - `node tools/seed-test.mjs` and `node tools/er-test.mjs`: compare against real seeds from the full solver.
-- `node tools/logic-test.mjs`: reachable checks must match OoTMM's own pathfinder on solved seeds.
+- `node tools/logic-test.mjs`: reachable checks must match OoTMM's own pathfinder on solved seeds. `LOGIC_FUZZ=n` adds random
+  settings. Random settings that OoTMM can't generate are skipped and can take minutes each.
 - `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.

@@ -7,8 +7,9 @@ import type { EntranceData, EntranceEntry } from './engine/entrances';
 import type { CatalogItem, LogicOutput } from './engine/logic';
 import { DEFAULT_SETTINGS, SETTINGS, compute, enableFastMode, exportSettings, importSettings, makeSettings, serial } from './engine/engine';
 import { computeLogic } from './engine/logic';
+import { checklistNormalDungeons } from '@ootmm/logic';
 import { MAP_SPOTS } from './mapspots';
-import { ROLLABLE, parseSpoilerHeader } from './engine/spoiler';
+import { ROLLABLE, UNKNOWN_MEANS_ALL, parseSpoilerHeader } from './engine/spoiler';
 import audit from './generated/audit.json';
 import shippedCustom from '../custom-checks.json';
 import { COLOR_TOKENS, FONT_CHOICES, SEALS, SKINS, skinById } from './skins';
@@ -55,6 +56,8 @@ type Seed = {
   skipped: string[];
   skippedRegions: string[];
   rolled: Record<string, string[]>;
+  /** Dungeons OoTMM pre-completed on this seed, by OoTMM's short names (DT, Water, WF...). */
+  preCompleted?: string[];
   entrances: Record<string, string>;
   notes: Record<string, string>;
   pad: string;
@@ -153,6 +156,8 @@ let remoteSave: ((s: string) => void) | null = null;
 let logicOut: LogicOutput | null = null;
 let reachSet = new Set<string>();
 let stoneSet = new Set<string>();
+/** For each check out of logic: the missing items that would each put it in logic on their own. */
+let opensWith = new Map<string, string[]>();
 let logicBusy = false;
 let logicError = '';
 let itemQuery = '';
@@ -177,7 +182,7 @@ function load(raw?: string | null): Saved {
       if (v.seeds?.length) {
         const ui = v.ui ?? {};
         ui.skin ??= ui.theme === 'dark' ? 'termina' : ui.theme === 'light' ? 'day' : 'hero';
-        for (const s of v.seeds) { s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
+        for (const s of v.seeds) { s.preCompleted ??= []; s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
         return { ...v, custom: v.custom ?? [], edits: { ...blankEdits(), ...v.edits }, ui };
       }
     } catch { /* falls through to a fresh start */ }
@@ -300,13 +305,16 @@ function settingsForEngine() {
   for (const key of ROLLABLE) {
     const v = S[key];
     if (v?.type === 'random' || v?.type === 'random-mixed') {
-      const fixedOn = v.type === 'random-mixed' ? v.set ?? [] : [];
-      out[key] = { type: 'specific', values: [...new Set([...fixedOn, ...(seed.rolled[key] ?? [])])] };
+      const fixedOn: string[] = v.type === 'random-mixed' ? v.set ?? [] : [];
+      const fixedOff: string[] = v.type === 'random-mixed' ? v.unset ?? [] : [];
+      const known = seed.rolled[key] ?? (UNKNOWN_MEANS_ALL.has(key) ? settingDef(key).values.map((x: any) => x.value).filter((x: string) => !fixedOff.includes(x)) : []);
+      out[key] = { type: 'specific', values: [...new Set([...fixedOn, ...known])] };
     }
   }
   return out;
 }
 
+const settingDef = (key: string) => (SETTINGS as readonly any[]).find(s => s.key === key);
 const rolling = () => ROLLABLE.filter(k => ['random', 'random-mixed'].includes(S[k]?.type) && (SETTINGS as readonly any[]).find(s => s.key === k)?.cond?.(S) !== false);
 
 let computeSeq = 0;
@@ -357,12 +365,25 @@ function scheduleLogic() {
     logicBusy = true;
     renderLogicStatus();
     try {
-      const out = await runJob<LogicOutput>('logic', { settings: settingsForEngine(), entrances: seed.entrances, items: owned() });
+      const input = { settings: settingsForEngine(), entrances: seed.entrances, items: owned(), preCompleted: S.preCompletedDungeons ? seed.preCompleted ?? [] : [] };
+      const out = await runJob<LogicOutput>('logic', input);
       if (mine !== logicSeq) return;
       logicOut = out;
       logicError = '';
       reachSet = new Set(out.reach);
       stoneSet = new Set(out.stones);
+      opensWith = new Map();
+      logicBusy = false;
+      renderLogicStatus();
+      renderRail();
+      renderPane();
+      /* Then try each missing item on its own. It takes longer, so it waits until the player pauses. */
+      await new Promise(r => setTimeout(r, 700));
+      if (mine !== logicSeq) return;
+      const more = await runJob<LogicOutput>('logic', { ...input, next: true }).catch(() => null);
+      if (mine !== logicSeq || !more) return;
+      logicOut = more;
+      for (const n of more.next ?? []) for (const id of n.opens) (opensWith.get(id) ?? opensWith.set(id, []).get(id)!).push(n.id);
     } catch (e: any) {
       if (mine !== logicSeq) return;
       logicError = String(e?.message ?? e);
@@ -645,13 +666,40 @@ const rowHtml = (c: CheckEntry) => {
   const logic = logicReady() && !isDone && !isSkip && !c.fixed && !c.junk && !c.id.startsWith('custom:') ? (inLogic(c) ? ' inlogic' : ' outlogic') : '';
   const found = seed.found[c.id];
   const hint = !found ? itemHintFor(c.id) : undefined;
-  const itemLine = found ? `<span class="found"><span>Found:</span> <b>${esc(itemLabel(found))}</b></span>` : hint ? `<span class="hinted"><span>Hint:</span> <b>${esc(itemLabel(hint))}</b></span>` : '';
+  const itemLine = (found ? `<span class="found"><span>Found:</span> <b>${esc(itemLabel(found))}</b></span>` : hint ? `<span class="hinted"><span>Hint:</span> <b>${esc(itemLabel(hint))}</b></span>` : '')
+    + (logic === ' outlogic' ? opensHtml(c.id) : '');
+  const age = logic === ' inlogic' ? logicOut?.ages[c.id] : undefined;
   return `<div class="row ${c.game}${isDone ? ' done' : ''}${hid ? ' ghost' : ''}${logic}" data-id="${esc(c.id)}">
-    <button class="tick-btn" aria-pressed="${isDone}" data-edit="check:${esc(c.id)}"><span class="seal">${ICON.tick}</span><span class="nm"><span class="t">${esc(c.name)}</span>${itemLine}${noteHtml(c.id)}</span>${tag}${logic === ' inlogic' ? '<span class="lgdot" title="In logic now" aria-label="In logic now"></span>' : ''}<span class="ty" data-text>${esc(TYPE_ONE[c.type] ?? c.type)}</span></button>
+    <button class="tick-btn" aria-pressed="${isDone}" data-edit="check:${esc(c.id)}"><span class="seal">${ICON.tick}</span><span class="nm"><span class="t">${esc(c.name)}</span>${itemLine}${noteHtml(c.id)}</span>${tag}${age ? `<span class="tag age" data-text>${age === 'child' ? 'Child' : 'Adult'}</span>` : ''}${logic === ' inlogic' ? '<span class="lgdot" title="In logic now" aria-label="In logic now"></span>' : ''}<span class="ty" data-text>${esc(TYPE_ONE[c.type] ?? c.type)}</span></button>
     <button class="bag${found ? ' has' : ''}" data-found="${esc(c.id)}" aria-label="What was here" title="Log the item you found here">${ICON.bag}</button>
     <button class="skip" aria-label="${isSkip ? 'Restore' : 'Skip'} ${esc(c.name)}" title="${isSkip ? 'Put back on the list' : 'Not on this seed: skip it'}">${isSkip ? '+' : '×'}</button>
   </div>`;
 };
+/** Up to two items that would each open this check on their own. */
+function opensHtml(id: string) {
+  const items = opensWith.get(id);
+  if (!items?.length) return '';
+  const names = items.slice(0, 2).map(i => `<b>${esc(itemLabel(i))}</b>`).join(' or ');
+  return `<span class="opens"><span>Opens with:</span> ${names}${items.length > 2 ? ` <span>or ${items.length - 2} more</span>` : ''}</span>`;
+}
+
+/** Missing items that open the most checks still on the list, each on its own. */
+function nextItemsHtml() {
+  const next = logicOut?.next;
+  if (!next) return '';
+  const byId = new Map(checks.map(c => [c.id, c]));
+  const rows = next.map(n => {
+    const open = n.opens.map(id => byId.get(id)).filter((c): c is CheckEntry => !!c && counted(c) && !doneSet.has(c.id));
+    return { id: n.id, open };
+  }).filter(r => r.open.length).sort((a, b) => b.open.length - a.open.length).slice(0, 8);
+  if (!rows.length) return '<div class="box"><h3>Best items to find next</h3><p>No single item opens more checks right now. You may need two items together, or to log more entrances.</p></div>';
+  const li = rows.map(r => {
+    const areas = [...new Set(r.open.map(regionLabel))];
+    return `<li><b>${esc(itemLabel(r.id))}</b> opens ${r.open.length} ${r.open.length === 1 ? 'check' : 'checks'} <span class="fine">in ${esc(areas.slice(0, 3).join(', '))}${areas.length > 3 ? ` and ${areas.length - 3} more ${areas.length - 3 === 1 ? 'area' : 'areas'}` : ''}</span></li>`;
+  }).join('');
+  return `<div class="box"><h3>Best items to find next</h3><p>Each of these would put more checks in logic on its own.</p><ol class="next-items">${li}</ol></div>`;
+}
+
 const sortIn = <T,>(key: string, rows: T[], idOf: (x: T) => string) => {
   const order = saved.edits.order[key];
   if (!order) return rows;
@@ -701,7 +749,7 @@ function renderChecks() {
   }
 
   const rolls = rolling().filter(k => !seed.rolled[k]);
-  const banner = rolls.length ? `<div class="banner"><div><strong>This seed rolls some layouts at random.</strong> Tell the checklist what came up so it lists the right spots. Opening your spoiler log fills this in.</div>
+  const banner = rolls.length ? `<div class="banner"><div><strong>This seed rolls some settings at random.</strong> Tell the checklist what came up so its list and logic match your seed. Opening your spoiler log fills this in.</div>
     <div class="btns"><button class="btn alt" data-goto="settings">Set what this seed rolled</button><button class="btn alt" data-roll-none>All stayed normal</button></div></div>` : '';
 
   const empty = !checks.length ? `<div class="empty"><h3>${computing ? 'Reading your settings' : 'No checks yet'}</h3></div>`
@@ -884,6 +932,7 @@ function renderItems() {
         ${status}
         ${Object.keys(seed.have).length || loggedCount ? '<div class="btns"><button class="btn danger" data-clear-items>Clear items on this seed</button></div>' : ''}
       </div>
+      ${logicReady() ? nextItemsHtml() : ''}
       ${sections.join('') || `<div class="empty"><h3>${!logicOn() ? 'Turn on logic to load the item list' : !logicOut ? 'Loading items' : 'No items match'}</h3></div>`}
     </div></div>`;
   $('#itemScroll').scrollTop = scrollTop;
@@ -1400,8 +1449,33 @@ function rolledHtml() {
     const fixedOff: string[] = v.type === 'random-mixed' ? v.unset ?? [] : [];
     const chips = def.values.filter((x: any) => !fixedOn.includes(x.value) && !fixedOff.includes(x.value)).map((x: any) =>
       `<button class="chip" data-rolled="${esc(key)}" data-val="${esc(x.value)}" aria-pressed="${(seed.rolled[key] ?? []).includes(x.value)}">${esc(x.name)}</button>`).join('');
-    return `<div class="box"><h3>What this seed rolled: ${esc(def.name)}</h3><p>Turn on each one that came up on this seed. The rest stay on their normal layout.</p><div class="setvals">${chips}</div></div>`;
+    const note = seed.rolled[key] === undefined && UNKNOWN_MEANS_ALL.has(key) ? ' Until you set this, logic counts every one as on.' : '';
+    return `<div class="box"><h3>What this seed rolled: ${esc(def.name)}</h3><p>Turn on each one that came up on this seed. The rest are off.${note}</p><div class="setvals">${chips}</div></div>`;
   }).join('');
+}
+
+/** The dungeons OoTMM could pre-complete on these settings, named after their area in the list. */
+function preCompletable(): { key: string; name: string }[] {
+  if (!S.preCompletedDungeons || !lastResult) return [];
+  const regions = new Map<string, Map<string, number>>();
+  for (const c of lastResult.checks) {
+    if (!c.dungeonKey) continue;
+    const m = regions.get(c.dungeonKey) ?? regions.set(c.dungeonKey, new Map()).get(c.dungeonKey)!;
+    m.set(c.region, (m.get(c.region) ?? 0) + 1);
+  }
+  return (checklistNormalDungeons(S) as string[]).filter(k => regions.has(k)).map(key => {
+    const [region] = [...regions.get(key)!].sort((a, b) => b[1] - a[1])[0];
+    const c = lastResult!.checks.find(x => x.region === region)!;
+    return { key, name: regionLabel(c) };
+  });
+}
+
+function preCompletedHtml() {
+  const list = preCompletable();
+  if (!list.length) return '';
+  const mine = seed.preCompleted ?? [];
+  const chips = list.map(d => `<button class="chip" data-precomplete="${esc(d.key)}" aria-pressed="${mine.includes(d.key)}">${esc(d.name)}</button>`).join('');
+  return `<div class="box"><h3>Pre-completed dungeons</h3><p>Turn on each dungeon this seed started as beaten. Logic then counts what that gives you, like the region staying cleared, and the dungeon's area is skipped. Opening your spoiler log fills this in.</p><div class="setvals">${chips}</div></div>`;
 }
 
 const settingsNav = () => `<div class="seg subnav" role="group" aria-label="Settings sections">
@@ -1444,6 +1518,7 @@ function renderSettings() {
         </div>
       </details>
       ${rolledHtml()}
+      ${preCompletedHtml()}
       <div class="box">
         <div class="set" style="border:0;padding:0"><div class="lab"><b>Show vanilla spots too</b></div>
         <div class="ctl"><button class="switch" role="switch" aria-checked="${!!saved.ui.showLocked}" aria-label="Show vanilla spots too" data-showlocked></button></div>
@@ -1502,6 +1577,7 @@ function applyImport(text: string) {
     S = importSettings(parsed.settings);
     seed.settings = exportSettings(S);
     seed.rolled = { ...seed.rolled, ...parsed.rolled };
+    seed.preCompleted = parsed.preCompleted;
     pendingPreCompleted = parsed.preCompleted;
     save();
     toast(parsed.preCompleted.length ? `Settings loaded. ${parsed.preCompleted.length} pre-completed dungeons skipped.` : 'Settings loaded.');
@@ -1536,7 +1612,7 @@ function unpackIds(p: { b: string; x: string[] }) {
 }
 
 export function makeTransferCode(s: Seed) {
-  const body = JSON.stringify({ h: dataHash, o: s.origin ?? s.id, n: s.name, s: s.settings, d: packIds(s.done), k: packIds(s.skipped), r: s.rolled, g: s.skippedRegions, c: saved.custom, e: s.entrances, t: s.notes, p: s.pad, f: s.found, v: s.have, i: s.hints, x: saved.edits });
+  const body = JSON.stringify({ h: dataHash, o: s.origin ?? s.id, n: s.name, s: s.settings, d: packIds(s.done), k: packIds(s.skipped), r: s.rolled, q: s.preCompleted ?? [], g: s.skippedRegions, c: saved.custom, e: s.entrances, t: s.notes, p: s.pad, f: s.found, v: s.have, i: s.hints, x: saved.edits });
   return 'OOTMM1.' + uint8ArrayToBase64(deflateRaw(new TextEncoder().encode(body), { level: 9 }), { urlSafe: true });
 }
 export function readTransferCode(code: string): Seed {
@@ -1546,7 +1622,7 @@ export function readTransferCode(code: string): Seed {
   if (body.h !== dataHash) throw new Error('This code came from a different build of the checklist. Use the same version on both devices.');
   for (const c of (body.c ?? []) as CustomCheck[]) if (!saved.custom.some(x => x.id === c.id)) saved.custom.push(c);
   if (body.x) saved.edits = { ...blankEdits(), ...body.x };
-  return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, entrances: body.e ?? {}, notes: body.t ?? {}, pad: body.p ?? '', found: body.f ?? {}, have: body.v ?? {}, hints: body.i ?? {}, updated: Date.now() };
+  return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, preCompleted: body.q ?? [], entrances: body.e ?? {}, notes: body.t ?? {}, pad: body.p ?? '', found: body.f ?? {}, have: body.v ?? {}, hints: body.i ?? {}, updated: Date.now() };
 }
 
 /* ---------- Seeds page ---------- */
@@ -2367,13 +2443,23 @@ function events() {
       save(); renderSettings(); recompute();
       return;
     }
+    if (d.precomplete) {
+      const key = d.precomplete;
+      const mine = seed.preCompleted ?? [];
+      const on = !mine.includes(key);
+      seed.preCompleted = on ? [...mine, key] : mine.filter(x => x !== key);
+      const regions = new Set((lastResult?.checks ?? []).filter(c => c.dungeonKey === key).map(c => c.region));
+      seed.skippedRegions = on ? [...new Set([...seed.skippedRegions, ...regions])] : seed.skippedRegions.filter(r => !regions.has(r));
+      save(); renderSettings(); scheduleLogic();
+      return;
+    }
     if ('rollNone' in d) { for (const k of rolling()) seed.rolled[k] ??= []; save(); renderChecks(); return; }
     if (d.changes) { saved.ui.changesOnly = d.changes === '1'; save(); renderSettings(); return; }
     if ('showlocked' in d) { saved.ui.showLocked = !saved.ui.showLocked; save(); renderAll(); return; }
     if ('import' in d) return applyImport(($('#importText') as HTMLTextAreaElement).value);
     if ('copySettings' in d) { copyText(seed.settings, 'Settings string copied.', $('#importText') as HTMLTextAreaElement); return; }
     if ('defaults' in d) {
-      S = makeSettings({}); seed.settings = exportSettings(S); seed.rolled = {};
+      S = makeSettings({}); seed.settings = exportSettings(S); seed.rolled = {}; seed.preCompleted = [];
       save(); recompute(); toast('Settings are back to OoTMM defaults.');
       return;
     }
@@ -2381,7 +2467,7 @@ function events() {
     /* Seeds */
     if ('new' in d || 'dupe' in d) {
       const n = newSeed(`Seed ${saved.seeds.length + 1}`, 'dupe' in d ? seed.settings : undefined);
-      if ('dupe' in d) n.rolled = { ...seed.rolled };
+      if ('dupe' in d) { n.rolled = { ...seed.rolled }; n.preCompleted = [...seed.preCompleted ?? []]; }
       save();
       saved.seeds.push(n);
       openSeed(n.id);
@@ -2426,7 +2512,7 @@ function events() {
         const n = readTransferCode(($('#codeBox') as HTMLTextAreaElement).value);
         const mine = saved.seeds.find(x => (x.origin ?? x.id) === n.origin);
         save();
-        if (mine) Object.assign(mine, { settings: n.settings, done: n.done, skipped: n.skipped, skippedRegions: n.skippedRegions, rolled: n.rolled, entrances: n.entrances, notes: n.notes, pad: n.pad, found: n.found, have: n.have, hints: n.hints, updated: n.updated });
+        if (mine) Object.assign(mine, { settings: n.settings, done: n.done, skipped: n.skipped, skippedRegions: n.skippedRegions, rolled: n.rolled, preCompleted: n.preCompleted ?? [], entrances: n.entrances, notes: n.notes, pad: n.pad, found: n.found, have: n.have, hints: n.hints, updated: n.updated });
         else saved.seeds.push(n);
         openSeed((mine ?? n).id);
         save();
