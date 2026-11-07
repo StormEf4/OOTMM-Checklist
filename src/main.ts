@@ -1475,7 +1475,7 @@ function preCompletedHtml() {
   if (!list.length) return '';
   const mine = seed.preCompleted ?? [];
   const chips = list.map(d => `<button class="chip" data-precomplete="${esc(d.key)}" aria-pressed="${mine.includes(d.key)}">${esc(d.name)}</button>`).join('');
-  return `<div class="box"><h3>Pre-completed dungeons</h3><p>Turn on each dungeon this seed started as beaten. Logic then counts what that gives you, like the region staying cleared, and the dungeon's area is skipped. Opening your spoiler log fills this in.</p><div class="setvals">${chips}</div></div>`;
+  return `<div class="box"><h3>Pre-completed dungeons</h3><p>Turn on each dungeon this seed started as beaten. Logic then counts what that gives you, like the region staying cleared, and the dungeon's area is skipped. Add the rewards you started with, like stones or medallions, on the Items tab. Opening your spoiler log fills this in.</p><div class="setvals">${chips}</div></div>`;
 }
 
 const settingsNav = () => `<div class="seg subnav" role="group" aria-label="Settings sections">

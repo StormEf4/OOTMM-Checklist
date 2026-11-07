@@ -83,12 +83,17 @@ for (const [name, s] of cases) {
     if (['random', 'random-mixed'].includes(known[key]?.type)) known[key] = { type: 'specific', values: [...(world.resolvedFlags as any)[key].values] };
   }
   const input = { settings: known, entrances: Object.fromEntries(world.entranceOverrides) as Record<string, string>, preCompleted: [...world.preCompleted] as string[] };
-  if (input.preCompleted.length) console.log(`  ${name}: pre-completed ${input.preCompleted.join(' ')}`);
 
   let first: any;
   try { first = await computeLogic({ ...input, items: {} }); }
   catch (e: any) { fail++; console.log(`FAIL ${name}: checklist logic threw ${String(e?.message ?? e).slice(0, 160)}`); continue; }
   const catalog = first.catalog as { id: string; max: number }[];
+  /* Items a pre-completed dungeon handed over, like a stone found at its boss, are in the player's inventory from the start, so they log them. */
+  const gifts: Record<string, number> = {};
+  for (const [pi, n] of state.startingItems as Map<any, number>) {
+    const c = (first.catalog as { id: string; start: number }[]).find(x => x.id === pi.item.id);
+    if (c && n > c.start) gifts[c.id] = n - c.start;
+  }
   const sets: [string, Record<string, number>][] = [
     ['no items', {}],
     ['a third', Object.fromEntries(catalog.filter(() => rnd() < 0.33).map(i => [i.id, Math.ceil(i.max * rnd())]))],
@@ -98,7 +103,9 @@ for (const [name, s] of cases) {
   const lines: string[] = [];
   let caseFail = false;
   for (const [label, items] of sets) {
-    const mine = new Set((await computeLogic({ ...input, items })).reach);
+    const logged = { ...items };
+    for (const [id, n] of Object.entries(gifts)) logged[id] = (logged[id] ?? 0) + n;
+    const mine = new Set((await computeLogic({ ...input, items: logged })).reach);
     const assumed = new Map<any, number>();
     for (const [id, n] of Object.entries(items)) assumed.set(makePlayerItem((Items as any)[id], 0), n);
     const res = new Pathfinder(state.worlds, state.settings, state.startingItems).run(null, { recursive: true, assumedItems: assumed as any });
