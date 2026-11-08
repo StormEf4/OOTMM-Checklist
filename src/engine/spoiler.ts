@@ -1,6 +1,10 @@
 import { SETTINGS } from '@ootmm/core';
+import { WORLD_FLAGS } from '@ootmm/logic';
 
-export const ROLLABLE = ['mqDungeons', 'jpLayouts'];
+/** Settings OoTMM can roll at random per seed. MQ and JP layouts change the list; the rest change logic. */
+export const ROLLABLE: string[] = [...WORLD_FLAGS];
+/** Until the player says what rolled, these count as fully on, so logic never promises too much. */
+export const UNKNOWN_MEANS_ALL = new Set(['ganonTrials']);
 
 export type SpoilerHeader = { settings?: string; rolled: Record<string, string[]>; preCompleted: string[] };
 

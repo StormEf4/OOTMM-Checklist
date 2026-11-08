@@ -319,3 +319,8 @@ details.box[open] { display: grid; gap: 9px; }
   .row.stamp .seal { animation: none; }
   .dial .oot, .dial .mm, .switch::after { transition: none; }
 }
+.tag.age { background: transparent; border: 1px solid var(--faint); color: var(--muted); }
+.opens { font-size: .9rem; color: var(--muted); }
+.opens b { color: var(--ink); font-weight: 600; }
+.next-items { margin: 8px 0 0; padding-left: 1.4em; display: grid; gap: 6px; }
+.next-items .fine { color: var(--muted); }

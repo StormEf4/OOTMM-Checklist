@@ -38,8 +38,9 @@ export const aliases = {
   'yaml': resolvePkg('yaml'),
 };
 
-/* OoTMM keeps its entrance pool logic in a private class. This exposes it to the
-   checklist at build time, without changing the randomizer's source. */
+/* OoTMM keeps its entrance pool logic, and how pre-completed dungeons change the game,
+   in private classes. This exposes them to the checklist at build time, without
+   changing the randomizer's source. */
 export const plugins = [{
   name: 'expose-world-shuffler',
   setup(build) {
@@ -48,6 +49,11 @@ export const plugins = [{
       if (!/class WorldShuffler\b/.test(text)) throw new Error('OoTMM no longer has a WorldShuffler class. Update src/engine/entrances.ts to match.');
       if (!/class LogicPassEntrances\b/.test(text)) throw new Error('OoTMM no longer has a LogicPassEntrances class. Update src/engine/entrances.ts to match.');
       return { contents: `${text}\nexport { WorldShuffler as ChecklistWorldShuffler, LogicPassEntrances as ChecklistLogicPassEntrances };\n`, loader: 'ts' };
+    });
+    build.onLoad({ filter: /solver[\\/]solve\.ts$/ }, args => {
+      const text = readFileSync(args.path, 'utf8');
+      if (!/class LogicPassSolver\b/.test(text) || !/private preCompleteDungeons\(/.test(text)) throw new Error('OoTMM no longer has LogicPassSolver.preCompleteDungeons. Update preCompleteEffects in src/engine/logic.ts to match.');
+      return { contents: `${text}\nexport { LogicPassSolver as ChecklistLogicPassSolver, normalDungeons as checklistNormalDungeons };\n`, loader: 'ts' };
     });
   },
 }];

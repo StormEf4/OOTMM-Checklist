@@ -43,6 +43,20 @@ const shot = '.cache/shots/';
   await p.click('.rail .tab[data-tab=list]'); await waitLogic();
   const more = await reach();
   ok('adding items opens more checks', more > start, `${start} then ${more}`);
+  await p.waitForSelector('.row.outlogic .opens', { timeout: 60000 }).catch(() => {});
+  const opens = await p.$$eval('.row.outlogic .opens', e => e.map(x => x.textContent));
+  ok('out-of-logic checks say which item opens them', opens.length > 0 && opens.every(t => /^Opens with:/.test(t)), opens[0] ?? '');
+  ok('checks in logic never say what opens them', (await p.$$('.row.inlogic .opens')).length === 0);
+  await p.click('.rail .tab[data-tab=items]'); await p.waitForSelector('.next-items li', { timeout: 30000 }).catch(() => {});
+  const next = await p.$$eval('.next-items li', e => e.map(x => x.textContent));
+  ok('items tab lists the best items to find next', next.length > 0 && /opens \d+ check/.test(next[0]), next[0] ?? '');
+  await p.screenshot({ path: shot + 'next-items.png' });
+  for (const name of ['Master Sword', 'Song of Time', 'Emerald', 'Ruby', 'Sapphire']) await p.locator('.item-btn', { hasText: name }).first().click();
+  await p.click('.rail .tab[data-tab=list]'); await waitLogic();
+  const ages = await p.$$eval('.row.inlogic .tag.age', e => e.map(x => x.textContent));
+  ok('once both ages can play, one-age checks are tagged', ages.includes('Child') && ages.includes('Adult'), `${ages.filter(a => a === 'Child').length} child, ${ages.filter(a => a === 'Adult').length} adult`);
+  ok('out-of-logic checks have no age tag', (await p.$$('.row.outlogic .tag.age')).length === 0);
+  await p.screenshot({ path: shot + 'ages.png' });
 
   /* Bag button logs what was found at a check */
   const firstId = await p.getAttribute('.row.inlogic', 'data-id');
@@ -130,6 +144,24 @@ const shot = '.cache/shots/';
   await o.click('.rail .tab[data-tab=items]'); await o.waitForSelector('.item-btn', { timeout: 60000 });
   await o.click('.rail .tab[data-tab=hints]'); await o.waitForSelector('[data-hint]');
   ok('older saves open the new tabs', true);
+
+  /* Pre-completed dungeons */
+  await p.click('.rail .tab[data-tab=settings]'); await p.waitForSelector('#setSearch');
+  await p.fill('#setSearch', 'Pre-Completed Dungeons'); await wait(300);
+  await p.click('[data-bool=preCompletedDungeons]');
+  await p.waitForSelector('[data-precomplete="Water"]', { timeout: 30000 }).catch(() => {});
+  const pre = await p.$$eval('[data-precomplete]', e => e.map(x => x.textContent));
+  ok('pre-completed dungeons can be picked', pre.length >= 12, pre.join(', '));
+  await p.click('[data-precomplete="Water"]'); await wait(400);
+  const sp = await store();
+  const sc = sp.seeds.find(x => x.id === sp.current);
+  ok('picking one saves it and skips its area', sc.preCompleted.includes('Water') && sc.skippedRegions.some(r => /WATER/.test(r)), sc.skippedRegions.join(', '));
+  await p.click('[data-precomplete="Water"]'); await wait(400);
+  const sp2 = await store();
+  const sc2 = sp2.seeds.find(x => x.id === sp2.current);
+  ok('unpicking it brings the area back', !sc2.preCompleted.length && !sc2.skippedRegions.some(r => /WATER/.test(r)));
+  await p.click('[data-bool=preCompletedDungeons]'); await wait(400);
+  await p.fill('#setSearch', ''); await wait(200);
 
   /* Logic off */
   await p.click('.rail .tab[data-tab=items]'); await p.waitForSelector('[data-logic-toggle]');
