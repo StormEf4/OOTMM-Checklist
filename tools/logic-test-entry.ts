@@ -6,8 +6,9 @@
  *
  * LOGIC_FUZZ=n adds n random settings on top of the fixed cases. LOGIC_CASE=word runs only matching cases.
  */
+import { readFileSync } from 'node:fs';
 import { Monitor, SETTINGS, TRICKS, options } from '@ootmm/core';
-import { ExprParser, Items, Pathfinder, makePlayerItem, solvedWorldState } from '@ootmm/logic';
+import { ExprParser, ItemGroups, Items, Pathfinder, makePlayerItem, solvedWorldState } from '@ootmm/logic';
 import { computeLogic } from '../src/engine/logic';
 import { ROLLABLE } from '../src/engine/spoiler';
 
@@ -38,6 +39,8 @@ const cases: [string, any][] = [
   ['full ER', { songs: 'anywhere', ...dungeons, erBoss: 'full', erRegions: 'full', erIndoors: 'full', erIndoorsMajor: true, erOneWays: 'full', erOneWaysMajor: true, erOneWaysSongs: true, erOneWaysStatues: true, erOneWaysOwls: true }],
   ['decoupled', { erDecoupled: true, erIndoors: 'full', erIndoorsMajor: true, erGrottos: 'full' }],
   ['wallmasters and warps', { erWallmasters: 'full', erWarps: 'full' }],
+  ['custom bridge and moon', { rainbowBridge: 'custom', moon: 'custom', specialConds: { BRIDGE: { stones: true, medallions: true, count: 4 }, MOON: { remains: true, masksTransform: true, count: 5 } } }],
+  ['glitches', { tricks: Object.keys(TRICKS).filter(k => (TRICKS as any)[k].glitch).filter((_, i) => i % 3 === 0) }],
 ];
 
 function randomSettings() {
@@ -60,6 +63,30 @@ function randomSettings() {
   return out;
 }
 
+/* LOGIC_SWEEP=1: one case for every value of every setting that can touch logic, changed on its own from defaults. SHARD=i/n splits it. */
+if (process.env.LOGIC_SWEEP) {
+  cases.length = 0;
+  const [shard, shards] = (process.env.SHARD ?? '0/1').split('/').map(Number);
+  const base: any = Object.fromEntries((SETTINGS as readonly any[]).map(s => [s.key, s.type === 'set' ? { type: s.default } : typeof s.default === 'function' ? undefined : s.default]));
+  let job = 0;
+  for (const s of SETTINGS as readonly any[]) {
+    if (['players', 'teams', 'mode', 'generateSpoilerLog'].includes(s.key) || ['main.nologic', 'hints', 'main.camc'].includes(s.category)) continue;
+    if (s.cond && !s.cond(base)) continue;
+    let vals: any[] = [];
+    if (s.type === 'boolean') vals = [!base[s.key]];
+    else if (s.type === 'enum') vals = s.values.map((v: any) => v.value).filter((v: string) => v !== 'random' && v !== base[s.key]);
+    else if (s.type === 'set') vals = [{ type: 'all' }, { type: 'none' }].filter(v => v.type !== base[s.key]?.type);
+    else if (s.type === 'number') { const max = typeof s.max === 'function' ? s.max(base) : s.max; vals = [max ?? base[s.key] + 5].filter(v => v !== base[s.key]); }
+    for (const v of vals) if (job++ % shards === shard) cases.push([`${s.key}=${JSON.stringify(v)}`, { [s.key]: v }]);
+  }
+  /* LOGIC_RETRY=file: retry the named cases with looser placement rules, so OoTMM can make a seed for them. */
+  if (process.env.LOGIC_RETRY) {
+    const names = new Set(readFileSync(process.env.LOGIC_RETRY, 'utf8').split('\n').map(x => x.trim()).filter(Boolean));
+    const keep = cases.filter(([n]) => names.has(n));
+    cases.length = 0;
+    for (const [n, s] of keep) cases.push([`${n} + beatable, songs and rewards anywhere`, { logic: 'beatable', songs: 'anywhere', dungeonRewardShuffle: 'anywhere', ...s }]);
+  }
+}
 const fuzz = Number(process.env.LOGIC_FUZZ ?? 0);
 for (let i = 0; i < fuzz; ++i) cases.push([`random ${i + 1}`, randomSettings()]);
 const only = process.env.LOGIC_CASE;
@@ -70,7 +97,7 @@ for (const [name, s] of cases) {
   ExprParser.prototype.parse = realParse;
   const settings: any = { ...s, mode: 'single', players: 1, teams: 1 };
   let state: any = null, err = '';
-  for (let t = 0; t < 3 && !state; ++t) {
+  for (let t = 0; t < (process.env.LOGIC_SWEEP ? 2 : 3) && !state; ++t) {
     try { state = await solvedWorldState(monitor, options({ seed: `logic-${name}-${t}`, settings } as any)); } catch (e: any) { err = String(e?.message ?? e).slice(0, 100); }
   }
   if (!state) { skipped++; console.log(`SKIP ${name}: no seed generated (${err})`); continue; }
@@ -87,7 +114,16 @@ for (const [name, s] of cases) {
   let first: any;
   try { first = await computeLogic({ ...input, items: {} }); }
   catch (e: any) { fail++; console.log(`FAIL ${name}: checklist logic threw ${String(e?.message ?? e).slice(0, 160)}`); continue; }
-  const catalog = first.catalog as { id: string; max: number }[];
+  /* A player can only log items their seed has. Some pools are rolled per seed, like bottle contents,
+     so the app offers every item the roll could give, and the test logs only what this seed rolled. */
+  const fam = (id: string) => id.replace(/_\d+$/, '');
+  const real = new Map<string, number>();
+  for (const [pi, n] of [...state.allItems, ...state.startingItems] as [any, number][]) real.set(pi.item.id, (real.get(pi.item.id) ?? 0) + n);
+  const realFam = new Set([...real.keys()].map(fam));
+  const catalog = (first.catalog as { id: string; max: number }[]).filter(i => real.has(i.id) || realFam.has(fam(i.id)));
+  const offered = new Set((first.catalog as { id: string }[]).map(i => i.id));
+  const unloggable = [...real.keys()].filter(id => state.itemProperties?.important?.has((Items as any)[id]) && !ItemGroups.CONSUMABLES.has((Items as any)[id]) && !offered.has(id) && !(first.catalog as { id: string }[]).some(i => fam(i.id) === fam(id)));
+  if (unloggable.length) { fail++; console.log(`FAIL ${name}: the seed has items the Items tab can't log: ${unloggable.slice(0, 5).join(', ')}`); continue; }
   /* Items a pre-completed dungeon handed over, like a stone found at its boss, are in the player's inventory from the start, so they log them. */
   const gifts: Record<string, number> = {};
   for (const [pi, n] of state.startingItems as Map<any, number>) {
@@ -102,7 +138,8 @@ for (const [name, s] of cases) {
   ];
   const lines: string[] = [];
   let caseFail = false;
-  for (const [label, items] of sets) {
+  for (const [label, all] of sets) {
+    const items = Object.fromEntries(Object.entries(all).map(([id, n]) => [id, real.has(id) ? Math.min(n, real.get(id)!) : n]));
     const logged = { ...items };
     for (const [id, n] of Object.entries(gifts)) logged[id] = (logged[id] ?? 0) + n;
     const mine = new Set((await computeLogic({ ...input, items: logged })).reach);

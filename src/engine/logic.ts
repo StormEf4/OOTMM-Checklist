@@ -7,11 +7,12 @@
  */
 import type { Settings } from '@ootmm/core';
 
-import { Monitor, options } from '@ootmm/core';
-import { ENTRANCES } from '@ootmm/data';
+import { Monitor, SETTINGS, options } from '@ootmm/core';
+import { ENTRANCES, MACROS, WORLD } from '@ootmm/data';
 import { ChecklistLogicPassSolver, ChecklistWorldShuffler, ItemGroups, ItemHelpers, Items, Pathfinder, cloneWorld, logicPassPrice, makePlayerItem, worldState } from '@ootmm/logic';
 import { itemName } from '@ootmm/names';
 import { engineSettings, withRealLogic } from './engine';
+import { ROLLED_CHOICES } from './spoiler';
 
 export type CatalogItem = { id: string; name: string; game: 'oot' | 'mm' | 'shared'; group: string; max: number; start: number };
 export type LogicInput = {
@@ -36,6 +37,8 @@ export type LogicOutput = {
   ages: Record<string, 'child' | 'adult'>;
   /** Only when next was asked for. Best first. */
   next?: NextItem[];
+  /** Rolled settings the player hasn't set, so logic only counts checks open on every outcome. */
+  unsettled?: string[];
   ms: number;
 };
 
@@ -77,7 +80,13 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
   const key = JSON.stringify(settings);
   if (base?.key === key) return base;
   const opts = options({ seed: 'checklist', settings: settings as any });
-  const state: any = await worldState(monitor, opts);
+  (globalThis as any).__checklistKeepPool = true;
+  let state: any, other: any;
+  try {
+    state = await worldState(monitor, opts);
+    /* A second roll of the same settings shows which parts of the item pool change from seed to seed. */
+    other = await worldState(monitor, options({ seed: 'checklist-2', settings: settings as any }));
+  } finally { (globalThis as any).__checklistKeepPool = false; }
   /* Fixed prices (vanilla or affordable) are applied. Random prices can't be known, so those stay at the normal price. */
   const PRICE_KEYS = ['priceOotShops', 'priceOotScrubs', 'priceOotMerchants', 'priceMmShops', 'priceMmTingle'];
   const known: any = { ...state.settings };
@@ -119,6 +128,22 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
     if (itemProperties.important.has(item)) max.set(id, (max.get(id) ?? 0) + n);
   };
   for (const [pi, n] of allItems as Map<any, number>) add(pi.item, n);
+  /*
+   * Bottle contents, pond fish and the like are rolled per seed. Every item in a rolled
+   * group can be logged, up to how many the group holds, since the player's seed may have any of them.
+   */
+  const countOf = (pool: Map<any, number>) => { const m = new Map<string, number>(); for (const [pi, n] of pool) m.set(pi.item.id, (m.get(pi.item.id) ?? 0) + n); return m; };
+  const mine = countOf(allItems), theirs = countOf(other.allItems);
+  const rolled = [...new Set([...mine.keys(), ...theirs.keys()])].filter(id => mine.get(id) !== theirs.get(id));
+  if (rolled.length) {
+    const groups = Object.values(ItemGroups as Record<string, unknown>).filter((g): g is Set<any> => g instanceof Set);
+    for (const id of rolled) {
+      const holding = groups.filter(g => [...g].some(i => i.id === id)).sort((a, b) => a.size - b.size)[0];
+      if (!holding) continue;
+      const total = [...holding].reduce((n, i) => n + (mine.get(i.id) ?? 0), 0);
+      for (const item of holding) if (total && !consumable(item)) max.set(item.id, Math.max(max.get(item.id) ?? 0, total));
+    }
+  }
   for (const [pi, n] of startingItems as Map<any, number>) {
     const id = consumable(pi.item) ? family.get(familyOf(pi.item.id)) ?? pi.item.id : pi.item.id;
     start.set(id, (start.get(id) ?? 0) + n);
@@ -189,7 +214,47 @@ function knownWorld(b: Base, logged: Record<string, string>, pre: { events: Reco
   return { world, logged: Object.keys(overrides).filter(k => poolSources.has(k)).length };
 }
 
+let logicText = '';
+/** Rolled choices the player hasn't set yet that OoTMM's logic files read, like starting age. */
+function unsettledChoices(settings: any): string[] {
+  const open = ROLLED_CHOICES.filter(k => settings[k] === 'random');
+  if (!open.length) return [];
+  logicText ||= JSON.stringify(WORLD) + JSON.stringify(MACROS);
+  return open.filter(k => logicText.includes(`setting(${k}`));
+}
+
+/**
+ * Logic for one seed. A setting the seed rolled, like starting age, can't be read by
+ * OoTMM until it's known, so until the player sets it, only checks in logic for
+ * every outcome count.
+ */
 export async function computeLogic(input: LogicInput): Promise<LogicOutput> {
+  const open = unsettledChoices(input.settings);
+  if (!open.length) return computeOne(input);
+  let combos: Record<string, string>[] = [{}];
+  for (const k of open) {
+    const def = (SETTINGS as readonly any[]).find(s => s.key === k);
+    const vals = def.values.map((v: any) => v.value).filter((v: string) => v !== 'random');
+    combos = combos.flatMap(c => vals.map((v: string) => ({ ...c, [k]: v })));
+  }
+  const outs: LogicOutput[] = [];
+  for (const c of combos) outs.push(await computeOne({ ...input, settings: { ...input.settings, ...c } }));
+  const both = <T,>(lists: T[][]) => lists.slice(1).reduce((acc, l) => { const s = new Set(l); return acc.filter(x => s.has(x)); }, lists[0]);
+  const reach = both(outs.map(o => o.reach));
+  const keep = new Set(reach);
+  const first = outs[0];
+  return {
+    ...first,
+    reach,
+    stones: both(outs.map(o => o.stones)),
+    ages: Object.fromEntries(Object.entries(first.ages).filter(([k, v]) => keep.has(k) && outs.every(o => o.ages[k] === v))),
+    next: first.next?.map(n => ({ id: n.id, opens: both(outs.map(o => [...new Set([...o.reach, ...(o.next?.find(x => x.id === n.id)?.opens ?? [])])])).filter(x => !keep.has(x)) })).filter(n => n.opens.length).sort((x, y) => y.opens.length - x.opens.length),
+    unsettled: open,
+    ms: outs.reduce((a, o) => a + o.ms, 0),
+  };
+}
+
+async function computeOne(input: LogicInput): Promise<LogicOutput> {
   return withRealLogic(async () => {
     const t0 = performance.now();
     const b = await buildBase(input.settings);

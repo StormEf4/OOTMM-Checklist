@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell } = require('electron');
+const { app, BrowserWindow, Menu, shell, session } = require('electron');
 const path = require('node:path');
 
 app.setAppUserModelId('com.ootmmchecklist.app');
@@ -23,4 +23,6 @@ app.on('second-instance', () => {
   if (w) { if (w.isMinimized()) w.restore(); w.focus(); }
 });
 app.whenReady().then(createWindow);
-app.on('window-all-closed', () => app.quit());
+/* Write saved progress and renames to disk before the app closes, so nothing waits in memory. */
+app.on('before-quit', () => session.defaultSession.flushStorageData());
+app.on('window-all-closed', () => { session.defaultSession.flushStorageData(); app.quit(); });

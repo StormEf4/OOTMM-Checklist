@@ -50,6 +50,14 @@ export const plugins = [{
       if (!/class LogicPassEntrances\b/.test(text)) throw new Error('OoTMM no longer has a LogicPassEntrances class. Update src/engine/entrances.ts to match.');
       return { contents: `${text}\nexport { WorldShuffler as ChecklistWorldShuffler, LogicPassEntrances as ChecklistLogicPassEntrances };\n`, loader: 'ts' };
     });
+    /* OoTMM drops logic for items its seed didn't put in the pool. Some pools are rolled per seed
+       (bottle contents, pond fish), so the checklist keeps that logic and lets the player log what they found. */
+    build.onLoad({ filter: /world[\\/]transform\.ts$/ }, args => {
+      const text = readFileSync(args.path, 'utf8');
+      const call = 'this.state.worlds.map((world, i) => optimizeWorldStartingAndPool(world, i, this.state.startingItems, allItems))';
+      if (!text.includes(call)) throw new Error('OoTMM changed how it optimizes worlds. Update the expose-world-shuffler plugin in tools/paths.mjs to match.');
+      return { contents: text.replace(call, call.replace('allItems))', '(globalThis as any).__checklistKeepPool ? ({ get: () => Infinity, has: () => true } as any) : allItems))')), loader: 'ts' };
+    });
     build.onLoad({ filter: /solver[\\/]solve\.ts$/ }, args => {
       const text = readFileSync(args.path, 'utf8');
       if (!/class LogicPassSolver\b/.test(text) || !/private preCompleteDungeons\(/.test(text)) throw new Error('OoTMM no longer has LogicPassSolver.preCompleteDungeons. Update preCompleteEffects in src/engine/logic.ts to match.');

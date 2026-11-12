@@ -53,7 +53,13 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `node tools/seed-test.mjs` and `node tools/er-test.mjs`: compare against real seeds from the full solver.
 - `node tools/logic-test.mjs`: reachable checks must match OoTMM's own pathfinder on solved seeds. `LOGIC_FUZZ=n` adds random
   settings. Random settings that OoTMM can't generate are skipped and can take minutes each.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`: browser tests. Run with
+- Full sweeps, slow, split with `SHARD=i/n` across processes:
+  - `node tools/toggle-test.mjs` checks every value of every setting against `locationList()`. It takes about 35 minutes over 3 shards.
+  - `LOGIC_SWEEP=1 node tools/logic-test.mjs` checks the same values against OoTMM's pathfinder on real seeds. It takes
+    about an hour over 3 shards. `LOGIC_RETRY=<file of case names>` retries skipped cases with looser placement rules.
+  - `node tools/ui-toggles-data.mjs`, then `tools/ui-toggles.cjs`, uses every settings control in the browser.
+- Random shop prices are expected to differ in the logic sweep: the app counts shops at their normal price.
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 

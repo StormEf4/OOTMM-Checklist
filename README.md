@@ -19,7 +19,12 @@ rules, so a rebuild picks up changes in the randomizer.
   **Best items to find next**. Checks that need two new items together don't get a hint.
 - **Settings OoTMM rolls per seed.** When a setting such as Ganon's trials, key rings, open dungeons or Master Quest is
   random, Settings asks what came up. Opening your spoiler log fills it in from the header. Until you answer, Ganon's
-  trials count as all on and the rest as off.
+  trials count as all on and the rest as off. A random starting age works the same way: until you pick Child or Adult,
+  logic only counts checks you could reach with either.
+- **Rolled item pools.** With bottle contents or pond fish shuffled, each seed rolls which ones exist. The Items tab
+  offers every one the roll could give, so you can log what you found.
+- **Every OoTMM setting.** Settings lists OoTMM's whole settings list, plus its Tricks, Glitches, Special conditions,
+  Starting items and Junk locations. A settings string fills all of them in, and each can be changed by hand.
 - **Pre-completed dungeons.** Pick the dungeons your seed started as beaten on the Settings tab, or open your spoiler log.
   Their areas are skipped, and logic counts what OoTMM gives you for them: cleared region states, boss souls and keys.
 - **Items.** Tap an item to add one. The list comes from your settings. The bag button on any check logs what you found
@@ -28,6 +33,24 @@ rules, so a rebuild picks up changes in the randomizer.
   (or worded that way) tags its area in the list and on the map. **Add a hint** covers anything that isn't a stone.
 - **Map.** Switch the Checks tab to Map for a sketch of Hyrule and Termina with each area's progress. Gold areas have
   checks in logic. In Edit mode, tap an area to move it.
+
+## Check names
+
+**Settings > Your edits > Check names** has a three-way slider:
+
+- **OoTMM names**: the names from OoTMM and its spoiler log.
+- **Player names**: everyday wording made from OoTMM's names (Skull for GS, Heart Piece for HP, Silver Rupee for SR)
+  plus a few nicknames such as Sheik in Crater and Toilet Hand. The rules are in `src/names.ts`.
+- **Your names**: your renames on top of whichever of the other two you picked last.
+
+Rename a check by long-pressing it (right-click on a computer), in Edit mode, or by typing in the rename list. Renaming
+while on OoTMM or player names switches to Your names so the rename shows. The other two settings hide your names but
+keep them. Search finds a check by any of its names. **Share or move your names** copies them as `check = name` lines
+and adds a pasted list without removing the names you have.
+
+Saving happens on every change and again when the app closes or goes to the background. The browser is asked to keep
+the site's storage, and the Windows app writes to disk before it quits. A transfer code adds its edits to the ones on
+the device instead of replacing them.
 
 ## Edit mode
 
@@ -62,7 +85,8 @@ npm run package:win
 ```
 
 In PowerShell, use `$env:OOTMM_SRC="C:\path\to\your\OoTMM-fork"`. In WSL or Linux, use `export OOTMM_SRC=/path/to/fork`.
-The first build spends about 4 minutes working out which settings change checks. That result is cached until the
+The first build spends about 15 minutes working out which settings change checks or entrances, trying every value
+of each setting on its own and alongside other shuffles. That result is cached until the
 randomizer source changes. Run `npm run verify` from the same shell; `FUZZ_N=50` sets how many random settings it tries.
 
 What each kind of fork change needs:
@@ -75,6 +99,7 @@ What each kind of fork change needs:
 | Entrances, entrance types or `er*` settings | Nothing for most changes. The Entrances tab reads OoTMM's own pool code. A new entrance type shows a plain name until you add it to `entranceKind` in `src/engine/entrances.ts`. |
 | A new check type | Add its name to `TYPE_NAMES` and `TYPE_ONE` in `src/main.ts`. Until then it shows its raw type name. |
 | A new settings category | Optional: add a nicer name to `CATEGORY_NAMES` in `src/main.ts`. |
+| Tricks, glitches, special conditions | Nothing. They come from OoTMM's `TRICKS` and `SPECIAL_CONDS` tables. |
 | Something with no data in the source | Add it to `custom-checks.json`, or use Seeds > Your own checks in the app. |
 
 `custom-checks.json` entries look like this. `when` is optional and limits a check to certain settings:
