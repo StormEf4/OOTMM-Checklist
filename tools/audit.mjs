@@ -5,6 +5,15 @@ import { mkdirSync, existsSync, copyFileSync, readFileSync, readdirSync, statSyn
 import { pathToFileURL } from 'node:url';
 import { OOTMM, ROOT, aliases, esbuild, plugins } from './paths.mjs';
 
+/* Every nickname in src/names.ts must name a real OoTMM check, so a renamed location in a new OoTMM shows up here. */
+{
+  const ids = new Set(JSON.parse(readFileSync(path.join(OOTMM, 'packages/data/dist/lib/data-checks.json'), 'utf8')).map(c => c.location));
+  const names = readFileSync(path.join(ROOT, 'src/names.ts'), 'utf8');
+  const nick = names.slice(names.indexOf('NICKNAMES'), names.indexOf('};', names.indexOf('NICKNAMES')));
+  const gone = [...nick.matchAll(/^\s*'((?:OOT|MM) [^']+)':/gm)].map(m => m[1]).filter(id => !ids.has(id));
+  if (gone.length) { console.error(`Nicknames for checks OoTMM doesn't have: ${gone.join(', ')}. Fix them in src/names.ts.`); process.exit(1); }
+}
+
 const gen = path.join(ROOT, 'src/generated');
 mkdirSync(gen, { recursive: true });
 const hash = createHash('sha1');

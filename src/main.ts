@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS, SETTINGS, compute, enableFastMode, exportSettings, im
 import { computeLogic } from './engine/logic';
 import { checklistNormalDungeons } from '@ootmm/logic';
 import { MAP_SPOTS } from './mapspots';
+import { NAME_STYLES, playerName, type NameStyle } from './names';
 import { ROLLABLE, ROLLED_CHOICES, UNKNOWN_MEANS_ALL, parseSpoilerHeader } from './engine/spoiler';
 import audit from './generated/audit.json';
 import shippedCustom from '../custom-checks.json';
@@ -93,6 +94,8 @@ type Saved = {
     skin?: string; theme?: string; meter?: string; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
     showLocked?: boolean; changesOnly?: boolean; collapsed?: string[];
     logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; haveOnly?: boolean; hideWritten?: boolean;
+    /** Which check names show. Custom puts the player's renames on top of nameBase. */
+    names?: NameStyle; nameBase?: 'original' | 'player';
   };
 };
 
@@ -186,13 +189,14 @@ function load(raw?: string | null): Saved {
       if (v.seeds?.length) {
         const ui = v.ui ?? {};
         ui.skin ??= ui.theme === 'dark' ? 'termina' : ui.theme === 'light' ? 'day' : 'hero';
+        ui.names ??= 'custom'; ui.nameBase ??= 'original';
         for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
         return { ...v, custom: v.custom ?? [], edits: { ...blankEdits(), ...v.edits }, ui };
       }
     } catch { /* falls through to a fresh start */ }
   }
   const first = newSeed('My seed');
-  return { v: 1, seeds: [first], current: first.id, custom: [], edits: blankEdits(), ui: { skin: 'hero', hideDone: false, changesOnly: true } };
+  return { v: 1, seeds: [first], current: first.id, custom: [], edits: blankEdits(), ui: { skin: 'hero', hideDone: false, changesOnly: true, names: 'custom', nameBase: 'original' } };
 }
 
 let saveTimer = 0;
@@ -201,11 +205,31 @@ function save() {
   seed.skipped = [...skipSet];
   seed.updated = Date.now();
   clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => {
-    const json = JSON.stringify(saved);
-    try { localStorage.setItem(STORAGE_KEY, json); } catch { /* the hosted copy below still keeps it */ }
-    remoteSave?.(json);
-  }, 250);
+  saveTimer = window.setTimeout(writeSave, 250);
+}
+let warnedFull = false;
+function writeSave() {
+  clearTimeout(saveTimer);
+  saveTimer = 0;
+  const json = JSON.stringify(saved);
+  try { localStorage.setItem(STORAGE_KEY, json); } catch {
+    /* The hosted copy below still keeps it. Elsewhere, say so once rather than lose changes quietly. */
+    if (!remoteSave && !warnedFull) { warnedFull = true; toast("This device wouldn't save your changes. Save a backup from the Seeds page so nothing is lost."); }
+  }
+  remoteSave?.(json);
+}
+/** Writes any change still waiting, for when the page closes or goes to the background. */
+const flushSave = () => { if (saveTimer) writeSave(); };
+
+/** Two edit sets put together. Anything in the incoming set wins; anything only on this device stays. */
+function mergeEdits(mine: Edits, incoming: Partial<Edits>): Edits {
+  const out: any = { ...blankEdits(), ...mine };
+  for (const [k, v] of Object.entries(incoming ?? {}) as [keyof Edits, any][]) {
+    if (k === 'customEntrances' && Array.isArray(v)) out[k] = [...out[k].filter((x: any) => !v.some((y: any) => y.id === x.id)), ...v];
+    else if (Array.isArray(v)) { if (v.length) out[k] = v; }
+    else if (v && typeof v === 'object') out[k] = { ...out[k], ...v };
+  }
+  return out;
 }
 
 /* Undo covers the open seed and every edit. */
@@ -433,14 +457,52 @@ function resolveArea(name: string) {
   return known ?? { id: 'custom:' + name, name };
 }
 
+/* ---------- Check names ---------- */
+
+/** Every name a check goes by, so search finds it by any of them. */
+const otherNames = new Map<string, string>();
+const nameStyle = (): NameStyle => saved.ui.names ?? 'custom';
+const useRenames = () => nameStyle() === 'custom';
+/** The name a check has before the player's own renames: OoTMM's, or the player-style one. */
+function baseName(c: { id: string; name: string }) {
+  if (c.id.startsWith('custom:')) return c.name;
+  const style = nameStyle() === 'custom' ? saved.ui.nameBase ?? 'original' : nameStyle();
+  return style === 'player' ? playerName(c.id, c.name) : c.name;
+}
+/** The engine's own entry for a check, before any edits. */
+const engineCheck = (id: string) => [...(lastResult?.checks ?? []), ...customEntries()].find(x => x.id === id);
+function setNameStyle(style: NameStyle) {
+  if (style !== 'custom') saved.ui.nameBase = style;
+  saved.ui.names = style;
+  save(); rebuild(); renderAll();
+}
+/** Saves a player's name for a check. Blank or the same as the base name clears it. Switches to Your names so it shows. */
+function renameCheck(id: string, name: string) {
+  const c = engineCheck(id);
+  if (!c) return;
+  const E = saved.edits;
+  const keep = name.trim() && name.trim() !== baseName(c) ? name.trim() : undefined;
+  E.checks[id] = { ...E.checks[id], name: keep };
+  if (!Object.values(E.checks[id]).some(v => v !== undefined)) delete E.checks[id];
+  if (keep && !useRenames()) {
+    saved.ui.nameBase = nameStyle() as 'original' | 'player';
+    saved.ui.names = 'custom';
+    toast('Switched check names to Your names so your rename shows.');
+  }
+}
+
 /* Applies the player's edits on top of what the engine worked out. */
 function rebuild() {
   const E = saved.edits;
+  otherNames.clear();
   checks = [...(lastResult?.checks ?? []), ...customEntries()].map(c => {
     const o = E.checks[c.id];
-    if (!o) return c;
+    const base = baseName(c);
+    const name = (useRenames() || c.id.startsWith('custom:')) && o?.name ? o.name : base;
+    otherNames.set(c.id, `${c.name} ${playerName(c.id, c.name)} ${o?.name ?? ''}`);
+    if (!o) return name === c.name ? c : { ...c, name };
     const a = o.area ? resolveArea(o.area) : null;
-    return { ...c, name: o.name ?? c.name, region: a?.id ?? c.region, regionName: a?.name ?? c.regionName, game: o.game ?? c.game };
+    return { ...c, name, region: a?.id ?? c.region, regionName: a?.name ?? c.regionName, game: o.game ?? c.game };
   });
   const base = lastResult?.entrances ?? NO_ENTRANCES;
   const dests = base.dests.map(d => { const o = E.dests[d.id]; return o ? { ...d, title: o.name ?? d.title, sub: o.sub ?? d.sub } : d; });
@@ -505,7 +567,7 @@ function filtered() {
     if (saved.ui.logicOnly && logicReady() && !doneSet.has(c.id) && !inLogic(c)) return false;
     if (region && !q.length && c.region !== region) return false;
     if (q.length) {
-      const hay = `${c.id} ${c.name} ${regionLabel(c)} ${seed.notes[c.id] ?? ''}`.toLowerCase();
+      const hay = `${c.id} ${c.name} ${otherNames.get(c.id) ?? ''} ${regionLabel(c)} ${seed.notes[c.id] ?? ''}`.toLowerCase();
       if (!q.every(w => hay.includes(w))) return false;
     }
     return true;
@@ -1626,6 +1688,7 @@ function renderLook() {
   $('#pane').innerHTML = `<div class="toolbar">${settingsNav()}</div>
     <div class="scroll"><div class="page">
       <div class="box"><h3>Theme</h3><div class="skin-grid">${cards}</div></div>
+      <div class="box"><h3>Check names</h3>${namesSliderHtml()}<div class="btns"><button class="btn alt keep" data-setview="edits">Rename checks</button></div></div>
       <div class="box"><h3>Progress display</h3>
         <div class="seg" role="group" aria-label="Progress display">${seg('meter-set', saved.ui.meter ?? '', [['', 'Theme default'], ['hearts', 'Heart containers'], ['clock', 'Three-day clock'], ['none', 'Numbers only']])}</div></div>
       <div class="box"><h3>Text size</h3>
@@ -1707,7 +1770,7 @@ export function readTransferCode(code: string): Seed {
   const body = JSON.parse(new TextDecoder().decode(inflateRaw(base64ToUint8Array(t.slice(7)))));
   if (body.h !== dataHash) throw new Error('This code came from a different build of the checklist. Use the same version on both devices.');
   for (const c of (body.c ?? []) as CustomCheck[]) if (!saved.custom.some(x => x.id === c.id)) saved.custom.push(c);
-  if (body.x) saved.edits = { ...blankEdits(), ...body.x };
+  if (body.x) saved.edits = mergeEdits(saved.edits, body.x);
   return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, preCompleted: body.q ?? [], entrances: body.e ?? {}, notes: body.t ?? {}, pad: body.p ?? '', found: body.f ?? {}, have: body.v ?? {}, hints: body.i ?? {}, updated: Date.now() };
 }
 
@@ -1816,6 +1879,7 @@ function editCheck(id: string) {
   const peers = checks.filter(x => x.region === c.region).map(x => x.id);
   openSheet('Edit this check', c.id, `
     ${field('edName', 'Name', c.name)}
+    ${custom ? '' : `<p class="fine">OoTMM calls it ${esc(engineCheck(id)?.name ?? c.name)}${playerName(id, engineCheck(id)?.name ?? c.name) !== (engineCheck(id)?.name ?? c.name) ? `, players often say ${esc(playerName(id, engineCheck(id)!.name))}` : ''}. Clear the name to go back.</p>`}
     ${areaField(regionLabel(c))}
     <label class="field"><span>Game</span><select id="edGame"><option value="oot"${c.game === 'oot' ? ' selected' : ''}>Ocarina of Time</option><option value="mm"${c.game === 'mm' ? ' selected' : ''}>Majora's Mask</option></select></label>
     <label class="field"><span>Note for this seed</span><textarea id="edNote" placeholder="What you found, or a reminder">${esc(seed.notes[id] ?? '')}</textarea></label>
@@ -1828,8 +1892,9 @@ function editCheck(id: string) {
     save() {
       snap();
       const name = inputValue('edName'), area = inputValue('edArea'), game = ($('#edGame') as HTMLSelectElement).value as 'oot' | 'mm';
-      const baseC = [...(lastResult?.checks ?? []), ...customEntries()].find(x => x.id === id)!;
-      update({ name: name && name !== baseC.name ? name : undefined, area: area && area !== areaName(baseC.region, regionLabel(baseC)) ? area : undefined, game: game !== baseC.game ? game : undefined });
+      const baseC = engineCheck(id)!;
+      update({ area: area && area !== areaName(baseC.region, regionLabel(baseC)) ? area : undefined, game: game !== baseC.game ? game : undefined });
+      if (name !== c.name) renameCheck(id, name);
       const note = ($('#edNote') as HTMLTextAreaElement).value.trim();
       if (note) seed.notes[id] = note; else delete seed.notes[id];
       commit();
@@ -2169,11 +2234,86 @@ function editList() {
   return out;
 }
 
+/* ---------- Check names box ---------- */
+
+let renameQuery = '';
+let namesShareOpen = false;
+const renamedCount = () => Object.values(saved.edits.checks).filter(o => o.name).length;
+function namesSliderHtml() {
+  const cur = nameStyle(), i = NAME_STYLES.findIndex(([k]) => k === cur);
+  const baseLabel = (saved.ui.nameBase ?? 'original') === 'player' ? 'player names' : "OoTMM's names";
+  const n = renamedCount();
+  const about = cur === 'original' ? "OoTMM's own names, the same as the spoiler log. Your renames are kept, just not shown."
+    : cur === 'player' ? 'Everyday names: Skull for GS, Heart Piece for HP, Sheik in Crater and so on. Your renames are kept, just not shown.'
+    : `Your renames on top of ${baseLabel}. ${n ? `${n} ${n === 1 ? 'check' : 'checks'} renamed so far.` : 'Nothing renamed yet.'}`;
+  return `<div class="names-ctl"><div class="names-slider">
+      <input type="range" class="keep" min="0" max="2" step="1" value="${i}" data-names-range aria-label="Check names" aria-valuetext="${esc(NAME_STYLES[i][1])}">
+      <div class="names-stops">${NAME_STYLES.map(([k, l]) => `<button class="keep" data-names-set="${k}" aria-pressed="${k === cur}">${l}</button>`).join('')}</div>
+    </div>
+    <p class="fine">${esc(about)}</p></div>`;
+}
+const refreshNamesSlider = () => document.querySelectorAll('.names-ctl').forEach(el => { el.outerHTML = namesSliderHtml(); });
+let renameSnapFor: EventTarget | null = null;
+/** Checks matching the rename search, or with no search, the ones already renamed. */
+function renameRowsHtml() {
+  const E = saved.edits;
+  const q = renameQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const onList = new Map(checks.map(c => [c.id, c]));
+  let rows: { id: string; base: string; area: string }[];
+  if (q.length) {
+    rows = checks.filter(c => {
+      const hay = `${c.id} ${c.name} ${otherNames.get(c.id) ?? ''} ${regionLabel(c)}`.toLowerCase();
+      return q.every(w => hay.includes(w));
+    }).slice(0, 60).map(c => ({ id: c.id, base: baseName(engineCheck(c.id) ?? c), area: regionLabel(c) }));
+  } else {
+    rows = Object.keys(E.checks).filter(id => E.checks[id].name).map(id => {
+      const c = onList.get(id), raw = engineCheck(id);
+      return { id, base: raw ? baseName(raw) : id.replace(/^(OOT|MM) /, ''), area: c ? regionLabel(c) : 'Not on this seed' };
+    });
+  }
+  if (!rows.length) return `<p class="fine">${q.length ? 'No checks match that on this seed.' : 'Nothing renamed yet. Search for a check above to give it your own name.'}</p>`;
+  return rows.map(r => `<label class="rn-row" data-edit="check:${esc(r.id)}"><span class="rn-was"><b>${esc(r.base)}</b> <span>${esc(r.area)}</span></span>
+      <input type="text" class="keep" data-rename="${esc(r.id)}" value="${esc(E.checks[r.id]?.name ?? '')}" placeholder="${esc(r.base)}" aria-label="Your name for ${esc(r.base)}"></label>`).join('');
+}
+function namesBoxHtml() {
+  return `<div class="box" id="namesBox"><h3>Check names</h3>
+      ${namesSliderHtml()}
+      <p>Give any check the name you call it. Search below, or long-press a check on the list (right-click on a computer). Names save as you type them and apply to every seed.</p>
+      <input type="search" id="renameSearch" class="keep" placeholder="Find a check to rename" value="${esc(renameQuery)}">
+      <div class="rn-list" id="renameList">${renameRowsHtml()}</div>
+      <details class="rn-share" id="namesShare"${namesShareOpen ? ' open' : ''}><summary class="keep">Share or move your names</summary>
+        <p class="fine">Copy your names to send to a friend or keep somewhere safe. Paste a list here to add those names; your other names stay.</p>
+        <textarea id="namesText" class="keep" rows="5" placeholder="OOT Kokiri Forest Mido Top Left = Mido 1"></textarea>
+        <div class="btns"><button class="btn alt keep" data-names-copy>Copy my names</button><button class="btn keep" data-names-add>Add these names</button></div>
+      </details>
+    </div>`;
+}
+function namesText() {
+  return Object.entries(saved.edits.checks).filter(([, o]) => o.name).map(([id, o]) => `${id} = ${o.name}`).join('\n');
+}
+/** Adds names from a pasted list. Lines that name an unknown check are skipped. */
+function addNames(text: string) {
+  const known = new Set([...ALL_IDS, ...saved.custom.map(c => 'custom:' + c.id)]);
+  let added = 0, skipped = 0;
+  snap();
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*(.+?)\s*=\s*(.+?)\s*$/);
+    if (!m) continue;
+    if (!known.has(m[1])) { skipped++; continue; }
+    saved.edits.checks[m[1]] = { ...saved.edits.checks[m[1]], name: m[2] };
+    added++;
+  }
+  if (added && !useRenames()) { saved.ui.nameBase = nameStyle() as 'original' | 'player'; saved.ui.names = 'custom'; }
+  save(); rebuild(); renderAll();
+  toast(added ? `Added ${added} ${added === 1 ? 'name' : 'names'}${skipped ? `. ${skipped} didn't match a check and were left out` : ''}.` : "No names found. Each line should read: check = your name.");
+}
+
 function renderYourEdits() {
   const list = editList();
   const rows = list.map((x, i) => `<div class="seed"><div class="edit-label">${esc(x.label)}</div><div class="meta">${esc(x.what)}</div><div class="btns"><button class="btn alt" data-undo-edit="${i}">Put back</button></div></div>`).join('');
   $('#pane').innerHTML = `<div class="toolbar">${settingsNav()}</div>
     <div class="scroll"><div class="page">
+      ${namesBoxHtml()}
       <div class="box"><h3>Your edits</h3>
         <p>Everything you've changed in Edit mode, on every seed. Put back any one of them, or all of them.</p>
         ${list.length ? `<div class="btns"><button class="btn danger" data-reset-edits>Put everything back</button></div>${rows}` : '<p>No edits yet. Press Edit mode, then tap anything to change it.</p>'}
@@ -2311,11 +2451,39 @@ function events() {
   const app = $('#app');
   let searchTimer = 0;
   new MutationObserver(queueText).observe(app, { childList: true, subtree: true });
+  /* Long-press a check (or right-click it) to rename it without turning on Edit mode. */
+  let pressTimer = 0, pressedOpen = false, pressAt = [0, 0];
+  const checkAt = (t: EventTarget | null) => (t as HTMLElement | null)?.closest?.<HTMLElement>('.row[data-id] .tick-btn')?.closest<HTMLElement>('.row')?.dataset.id;
+  const cancelPress = () => clearTimeout(pressTimer);
+  app.addEventListener('pointerdown', e => {
+    pressedOpen = false;
+    const id = checkAt(e.target);
+    if (!id || editMode || e.pointerType === 'mouse') return;
+    pressAt = [e.clientX, e.clientY];
+    cancelPress();
+    pressTimer = window.setTimeout(() => { pressedOpen = true; editCheck(id); }, 550);
+  });
+  app.addEventListener('pointermove', e => { if (Math.hypot(e.clientX - pressAt[0], e.clientY - pressAt[1]) > 10) cancelPress(); });
+  app.addEventListener('pointerup', cancelPress);
+  app.addEventListener('pointercancel', cancelPress);
+  app.addEventListener('contextmenu', e => {
+    const id = checkAt(e.target);
+    if (!id || layers.length) return;
+    e.preventDefault();
+    cancelPress();
+    if (!pressedOpen) { pressedOpen = true; editCheck(id); }
+  });
+  /* The tap that ends a long-press doesn't also tick the check. */
+  app.addEventListener('click', e => { if (pressedOpen && checkAt(e.target)) { pressedOpen = false; e.preventDefault(); e.stopPropagation(); } }, true);
   app.addEventListener('click', editCapture, true);
 
   document.addEventListener('keydown', e => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement).tagName);
     if (e.key === 'Escape' && layers.length) { closeSheet(); return; }
+    if (e.key === 'Enter' && layers.length && (e.target as HTMLElement).matches?.('.sheet input[type=text]')) {
+      const act = layers[layers.length - 1].actions.save;
+      if (act) { e.preventDefault(); act(); return; }
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); undo(); return; }
     if (e.key === '/' && !typing && !layers.length) {
       const box = document.querySelector<HTMLInputElement>('#search, #entrSearch, #setSearch, #itemSearch, #hintSearch');
@@ -2357,6 +2525,14 @@ function events() {
       (saved.edits.colors[skin.id] ??= {})[t.dataset.color] = t.value;
       applyTheme();
       save();
+    } else if (t.id === 'renameSearch') {
+      renameQuery = t.value;
+      clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(() => { const box = $('#renameList'); if (box) box.innerHTML = renameRowsHtml(); }, 120);
+    } else if (t.dataset.rename) {
+      if (renameSnapFor !== t) { snap(); renameSnapFor = t; }
+      renameCheck(t.dataset.rename, t.value);
+      save(); rebuild(); refreshNamesSlider();
     } else if (t.id === 'setSearch') {
       settingsQuery = t.value;
       clearTimeout(searchTimer);
@@ -2366,6 +2542,8 @@ function events() {
 
   app.addEventListener('change', e => {
     const t = e.target as HTMLInputElement;
+    if ('namesRange' in t.dataset) { setNameStyle(NAME_STYLES[Number(t.value)]?.[0] ?? 'custom'); return; }
+    if (t.dataset.rename) { renameSnapFor = null; return; }
     if (t.dataset.itemNum) { snap(); setItemCount(t.dataset.itemNum, Number(t.value) || 0); afterItemChange(); return; }
     if (t.dataset.enum) setSetting(t.dataset.enum, t.value);
     else if (t.dataset.num) setSetting(t.dataset.num, Number(t.value));
@@ -2381,6 +2559,7 @@ function events() {
 
   app.addEventListener('toggle', e => {
     const d = e.target as HTMLDetailsElement;
+    if (d.id === 'namesShare') namesShareOpen = d.open;
     if (d.dataset?.cat) { if (d.open) openCats.add(d.dataset.cat); else openCats.delete(d.dataset.cat); }
   }, true);
 
@@ -2408,6 +2587,16 @@ function events() {
     if (d.scaleSet) { saved.ui.scale = Number(d.scaleSet); applyTheme(); save(); renderLook(); return; }
     if (d.compactSet) { saved.ui.compact = d.compactSet === '1'; applyTheme(); save(); renderLook(); return; }
     if ('backup' in d) { saveBackup(); return; }
+    if (d.namesSet) { setNameStyle(d.namesSet as NameStyle); return; }
+    if ('namesCopy' in d) {
+      const text = namesText();
+      if (!text) { toast('Nothing renamed yet.'); return; }
+      const box = $('#namesText') as HTMLTextAreaElement;
+      box.value = text;
+      copyText(text, 'Your names are copied.', box);
+      return;
+    }
+    if ('namesAdd' in d) { addNames(($('#namesText') as HTMLTextAreaElement).value); return; }
     if (d.undoEdit !== undefined) { snap(); editList()[Number(d.undoEdit)]?.undo(); save(); applyTheme(); rebuild(); renderAll(); return; }
     if ('resetEdits' in d) {
       if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Tap again to put everything back'; return; }
@@ -2633,6 +2822,11 @@ function boot() {
     if (source) { startWorker(source, 'checks'); startWorker(source, 'logic'); }
     openSeed(saved.current);
     connectHostedStore();
+    /* Ask the browser to keep this site's storage instead of clearing it when space runs low. */
+    navigator.storage?.persist?.().catch(() => {});
+    addEventListener('pagehide', flushSave);
+    addEventListener('beforeunload', flushSave);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
     if (__TARGET__ === 'web' && 'serviceWorker' in navigator && location.protocol === 'https:') {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }

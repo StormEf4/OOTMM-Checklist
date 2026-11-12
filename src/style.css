@@ -324,3 +324,22 @@ details.box[open] { display: grid; gap: 9px; }
 .opens b { color: var(--ink); font-weight: 600; }
 .next-items { margin: 8px 0 0; padding-left: 1.4em; display: grid; gap: 6px; }
 .next-items .fine { color: var(--muted); }
+
+/* Check names: the three-way slider and the rename list */
+.tick-btn { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.names-ctl { display: grid; gap: 6px; margin-bottom: 10px; }
+.names-slider { display: grid; gap: 4px; max-width: 460px; }
+.names-slider input[type=range] { width: 100%; accent-color: var(--gold); margin: 0; }
+.names-stops { display: grid; grid-template-columns: 1fr 1fr 1fr; }
+.names-stops button { padding: 4px 2px; color: var(--muted); font-size: .9rem; border-radius: 6px; }
+.names-stops button:nth-child(1) { text-align: left; }
+.names-stops button:nth-child(3) { text-align: right; }
+.names-stops button[aria-pressed="true"] { color: var(--ink); font-weight: 600; }
+#renameSearch, .rn-share textarea { width: 100%; padding: 8px 10px; border-radius: 7px; background: var(--raised); border: 1px solid var(--faint); margin: 6px 0; }
+.rn-list { display: grid; gap: 6px; max-height: 420px; overflow-y: auto; }
+.rn-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--faint); }
+.rn-was { overflow-wrap: anywhere; }
+.rn-was span { color: var(--muted); font-size: .85rem; }
+.rn-row input { width: 100%; padding: 6px 9px; border-radius: 7px; background: var(--raised); border: 1px solid var(--faint); }
+@media (max-width: 560px) { .rn-row { grid-template-columns: 1fr; gap: 3px; } }
+.rn-share summary { cursor: pointer; color: var(--muted); margin-top: 8px; }

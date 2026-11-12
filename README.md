@@ -34,6 +34,24 @@ rules, so a rebuild picks up changes in the randomizer.
 - **Map.** Switch the Checks tab to Map for a sketch of Hyrule and Termina with each area's progress. Gold areas have
   checks in logic. In Edit mode, tap an area to move it.
 
+## Check names
+
+**Settings > Your edits > Check names** has a three-way slider:
+
+- **OoTMM names**: the names from OoTMM and its spoiler log.
+- **Player names**: everyday wording made from OoTMM's names (Skull for GS, Heart Piece for HP, Silver Rupee for SR)
+  plus a few nicknames such as Sheik in Crater and Toilet Hand. The rules are in `src/names.ts`.
+- **Your names**: your renames on top of whichever of the other two you picked last.
+
+Rename a check by long-pressing it (right-click on a computer), in Edit mode, or by typing in the rename list. Renaming
+while on OoTMM or player names switches to Your names so the rename shows. The other two settings hide your names but
+keep them. Search finds a check by any of its names. **Share or move your names** copies them as `check = name` lines
+and adds a pasted list without removing the names you have.
+
+Saving happens on every change and again when the app closes or goes to the background. The browser is asked to keep
+the site's storage, and the Windows app writes to disk before it quits. A transfer code adds its edits to the ones on
+the device instead of replacing them.
+
 ## Edit mode
 
 Press **Edit mode** and anything in the app can be changed. Press it again to finish. The button itself is the
