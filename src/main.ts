@@ -186,7 +186,7 @@ function load(raw?: string | null): Saved {
       if (v.seeds?.length) {
         const ui = v.ui ?? {};
         ui.skin ??= ui.theme === 'dark' ? 'termina' : ui.theme === 'light' ? 'day' : 'hero';
-        for (const s of v.seeds) { s.preCompleted ??= []; s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
+        for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
         return { ...v, custom: v.custom ?? [], edits: { ...blankEdits(), ...v.edits }, ui };
       }
     } catch { /* falls through to a fresh start */ }
@@ -1514,7 +1514,7 @@ function extraSettingsHtml(q: string) {
   const condRows = Object.entries(SPECIAL_CONDS as Record<string, any>).filter(([, c]) => c.cond(S) && hit(`${c.name} special conditions`)).map(([key, c]) => {
     const cur = S.specialConds[key];
     const fields = Object.entries(SPECIAL_CONDS_FIELDS as Record<string, any>).filter(([, f]) => !f.cond || f.cond(S));
-    const max = fields.filter(([k]) => cur[k]).reduce((n, [, f]) => n + (typeof f.max === 'function' ? f.max(S) : f.max), 0);
+    const max = condMax(key);
     const chips = fields.map(([k, f]) => `<button class="chip" data-cond="${esc(key)}" data-val="${esc(k)}" aria-pressed="${!!cur[k]}">${esc(f.name)}</button>`).join('');
     return `<div class="set wide"><div class="lab"><b>${esc(c.name)}</b></div>
       <div class="ctl"><input type="number" aria-label="${esc(c.name)} amount" data-cond-count="${esc(key)}" value="${esc(cur.count)}" min="0" max="${max}"></div>
@@ -1544,6 +1544,14 @@ function extraSettingsHtml(q: string) {
     + section('x.specialConds', 'Special conditions', condRows)
     + section('x.startingItems', 'Starting items', [...(startAdd ? [startAdd] : []), ...startRows])
     + section('x.junk', 'Junk locations', [...(junkAdd ? [junkAdd] : []), ...junkRows]);
+}
+
+/** The most a special condition can ask for, worked out the way OoTMM's generator page does (shared masks count once). */
+function condMax(key: string, s: any = S) {
+  const cur = s.specialConds[key];
+  let max = Object.entries(SPECIAL_CONDS_FIELDS as Record<string, any>).filter(([k]) => cur[k]).reduce((n, [, f]) => n + (typeof f.max === 'function' ? f.max(s) : f.max), 0);
+  if (cur.masksOot && cur.masksRegular) max -= Object.keys(s).filter(k => k.includes('sharedMask') && s[k]).length;
+  return Math.max(0, max);
 }
 
 function setSettingsRaw(change: (s: any) => void) {
@@ -2361,8 +2369,8 @@ function events() {
     if (t.dataset.itemNum) { snap(); setItemCount(t.dataset.itemNum, Number(t.value) || 0); afterItemChange(); return; }
     if (t.dataset.enum) setSetting(t.dataset.enum, t.value);
     else if (t.dataset.num) setSetting(t.dataset.num, Number(t.value));
-    else if (t.dataset.condCount) { const k = t.dataset.condCount; setSettingsRaw(s => { s.specialConds[k].count = Math.max(0, Number(t.value) || 0); }); }
-    else if (t.dataset.startNum) { const k = t.dataset.startNum; setSettingsRaw(s => { s.startingItems[k] = Math.max(0, Number(t.value) || 0); }); }
+    else if (t.dataset.condCount) { const k = t.dataset.condCount; setSettingsRaw(s => { s.specialConds[k].count = Math.min(condMax(k, s), Math.max(0, Number(t.value) || 0)); }); }
+    else if (t.dataset.startNum) { const k = t.dataset.startNum; setSettingsRaw(s => { s.startingItems[k] = Math.min(catalogById().get(k)?.max ?? Infinity, Math.max(0, Math.floor(Number(t.value)) || 0)); }); }
     else if ('startAdd' in t.dataset && t.value) { const k = t.value; setSettingsRaw(s => { s.startingItems[k] = 1; }); }
     else if (t.id === 'importFile' && t.files?.[0]) t.files[0].text().then(applyImport);
     else if (t.id === 'backupFile' && t.files?.[0]) t.files[0].text().then(loadBackup);
@@ -2511,7 +2519,7 @@ function events() {
     /* Settings */
     if (d.bool) return setSetting(d.bool, !S[d.bool]);
     if (d.trick) { const k = d.trick; return setSettingsRaw(s => { s.tricks = s.tricks.includes(k) ? s.tricks.filter((x: string) => x !== k) : [...s.tricks, k]; }); }
-    if (d.cond) { const [k, f] = [d.cond, d.val!]; return setSettingsRaw(s => { s.specialConds[k][f] = !s.specialConds[k][f]; }); }
+    if (d.cond) { const [k, f] = [d.cond, d.val!]; return setSettingsRaw(s => { s.specialConds[k][f] = !s.specialConds[k][f]; s.specialConds[k].count = Math.min(s.specialConds[k].count, condMax(k, s)); }); }
     if (d.junkDel) { const k = d.junkDel; return setSettingsRaw(s => { s.junkLocations = s.junkLocations.filter((x: string) => x !== k); }); }
     if ('junkAdd' in d) {
       const v = ($('#junkAdd') as HTMLInputElement).value.trim();
