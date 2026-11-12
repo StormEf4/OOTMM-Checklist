@@ -3,6 +3,13 @@ import { WORLD_FLAGS } from '@ootmm/logic';
 
 /** Settings OoTMM can roll at random per seed. MQ and JP layouts change the list; the rest change logic. */
 export const ROLLABLE: string[] = [...WORLD_FLAGS];
+/**
+ * Single-choice settings with a Random option that OoTMM settles once per seed, like
+ * starting age. Price settings aren't here: Random there means every price is random.
+ */
+export const ROLLED_CHOICES: string[] = (SETTINGS as readonly any[])
+  .filter(s => s.type === 'enum' && s.category !== 'main.prices' && s.values.some((v: any) => v.value === 'random'))
+  .map(s => s.key);
 /** Until the player says what rolled, these count as fully on, so logic never promises too much. */
 export const UNKNOWN_MEANS_ALL = new Set(['ganonTrials']);
 

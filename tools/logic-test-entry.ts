@@ -38,6 +38,8 @@ const cases: [string, any][] = [
   ['full ER', { songs: 'anywhere', ...dungeons, erBoss: 'full', erRegions: 'full', erIndoors: 'full', erIndoorsMajor: true, erOneWays: 'full', erOneWaysMajor: true, erOneWaysSongs: true, erOneWaysStatues: true, erOneWaysOwls: true }],
   ['decoupled', { erDecoupled: true, erIndoors: 'full', erIndoorsMajor: true, erGrottos: 'full' }],
   ['wallmasters and warps', { erWallmasters: 'full', erWarps: 'full' }],
+  ['custom bridge and moon', { rainbowBridge: 'custom', moon: 'custom', specialConds: { BRIDGE: { stones: true, medallions: true, count: 4 }, MOON: { remains: true, masksTransform: true, count: 5 } } }],
+  ['glitches', { tricks: Object.keys(TRICKS).filter(k => (TRICKS as any)[k].glitch).filter((_, i) => i % 3 === 0) }],
 ];
 
 function randomSettings() {

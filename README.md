@@ -19,7 +19,10 @@ rules, so a rebuild picks up changes in the randomizer.
   **Best items to find next**. Checks that need two new items together don't get a hint.
 - **Settings OoTMM rolls per seed.** When a setting such as Ganon's trials, key rings, open dungeons or Master Quest is
   random, Settings asks what came up. Opening your spoiler log fills it in from the header. Until you answer, Ganon's
-  trials count as all on and the rest as off.
+  trials count as all on and the rest as off. A random starting age works the same way: until you pick Child or Adult,
+  logic only counts checks you could reach with either.
+- **Every OoTMM setting.** Settings lists OoTMM's whole settings list, plus its Tricks, Glitches, Special conditions,
+  Starting items and Junk locations. A settings string fills all of them in, and each can be changed by hand.
 - **Pre-completed dungeons.** Pick the dungeons your seed started as beaten on the Settings tab, or open your spoiler log.
   Their areas are skipped, and logic counts what OoTMM gives you for them: cleared region states, boss souls and keys.
 - **Items.** Tap an item to add one. The list comes from your settings. The bag button on any check logs what you found
@@ -62,7 +65,8 @@ npm run package:win
 ```
 
 In PowerShell, use `$env:OOTMM_SRC="C:\path\to\your\OoTMM-fork"`. In WSL or Linux, use `export OOTMM_SRC=/path/to/fork`.
-The first build spends about 4 minutes working out which settings change checks. That result is cached until the
+The first build spends about 15 minutes working out which settings change checks or entrances, trying every value
+of each setting on its own and alongside other shuffles. That result is cached until the
 randomizer source changes. Run `npm run verify` from the same shell; `FUZZ_N=50` sets how many random settings it tries.
 
 What each kind of fork change needs:
@@ -75,6 +79,7 @@ What each kind of fork change needs:
 | Entrances, entrance types or `er*` settings | Nothing for most changes. The Entrances tab reads OoTMM's own pool code. A new entrance type shows a plain name until you add it to `entranceKind` in `src/engine/entrances.ts`. |
 | A new check type | Add its name to `TYPE_NAMES` and `TYPE_ONE` in `src/main.ts`. Until then it shows its raw type name. |
 | A new settings category | Optional: add a nicer name to `CATEGORY_NAMES` in `src/main.ts`. |
+| Tricks, glitches, special conditions | Nothing. They come from OoTMM's `TRICKS` and `SPECIAL_CONDS` tables. |
 | Something with no data in the source | Add it to `custom-checks.json`, or use Seeds > Your own checks in the app. |
 
 `custom-checks.json` entries look like this. `when` is optional and limits a check to certain settings:

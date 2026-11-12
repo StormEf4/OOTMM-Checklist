@@ -9,7 +9,7 @@ const gen = path.join(ROOT, 'src/generated');
 mkdirSync(gen, { recursive: true });
 const hash = createHash('sha1');
 const walk = d => { for (const f of readdirSync(d).sort()) { const p = path.join(d, f); statSync(p).isDirectory() ? walk(p) : hash.update(readFileSync(p)); } };
-walk(path.join(OOTMM, 'packages/core/src')); walk(path.join(OOTMM, 'packages/logic/src')); walk(path.join(OOTMM, 'data/checks')); walk(path.join(OOTMM, 'data/world'));
+walk(path.join(OOTMM, 'packages/core/src')); walk(path.join(OOTMM, 'packages/logic/src')); walk(path.join(OOTMM, 'data/checks')); walk(path.join(OOTMM, 'data/world')); walk(path.join(ROOT, 'src/engine')); hash.update(readFileSync(path.join(ROOT, 'tools/audit-entry.ts')));
 const key = hash.digest('hex').slice(0, 16);
 const cached = path.join(ROOT, `.cache/audit-${key}.json`);
 if (!existsSync(cached)) {

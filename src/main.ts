@@ -5,11 +5,13 @@ import { uint8ArrayToBase64, base64ToUint8Array } from 'uint8array-extras';
 import type { CheckEntry, ComputeResult, GossipEntry } from './engine/engine';
 import type { EntranceData, EntranceEntry } from './engine/entrances';
 import type { CatalogItem, LogicOutput } from './engine/logic';
+import { SPECIAL_CONDS, SPECIAL_CONDS_FIELDS, TRICKS } from '@ootmm/core';
+import { itemName } from '@ootmm/names';
 import { DEFAULT_SETTINGS, SETTINGS, compute, enableFastMode, exportSettings, importSettings, makeSettings, serial } from './engine/engine';
 import { computeLogic } from './engine/logic';
 import { checklistNormalDungeons } from '@ootmm/logic';
 import { MAP_SPOTS } from './mapspots';
-import { ROLLABLE, UNKNOWN_MEANS_ALL, parseSpoilerHeader } from './engine/spoiler';
+import { ROLLABLE, ROLLED_CHOICES, UNKNOWN_MEANS_ALL, parseSpoilerHeader } from './engine/spoiler';
 import audit from './generated/audit.json';
 import shippedCustom from '../custom-checks.json';
 import { COLOR_TOKENS, FONT_CHOICES, SEALS, SKINS, skinById } from './skins';
@@ -97,6 +99,8 @@ type Saved = {
 const blankEdits = (): Edits => ({ text: {}, hide: {}, checks: {}, entrances: {}, dests: {}, areas: {}, order: {}, tabs: [], icons: {}, colors: {}, customEntrances: [], items: {}, stones: {} });
 
 const AFFECTS = new Set<string>(audit.affects);
+/** Settings outside the Entrances section that still change which entrances shuffle. */
+const AFFECTS_ENTRANCES = new Set<string>((audit as any).entrances ?? []);
 const TYPE_NAMES: Record<string, string> = {
   chest: 'Chests', npc: 'NPCs', gs: 'Skulltulas', sf: 'Stray fairies', cow: 'Cows', shop: 'Shops', scrub: 'Scrubs', sr: 'Silver rupees',
   collectible: 'Freestanding', pot: 'Pots', crate: 'Crates', barrel: 'Barrels', grass: 'Grass', tree: 'Trees', bush: 'Bushes', rock: 'Rocks',
@@ -311,11 +315,18 @@ function settingsForEngine() {
       out[key] = { type: 'specific', values: [...new Set([...fixedOn, ...known])] };
     }
   }
+  /* A one-of choice like starting age. Left on Random until the player sets it; logic then only counts checks open either way. */
+  for (const key of ROLLED_CHOICES) if (S[key] === 'random' && seed.rolled[key]?.length) out[key] = seed.rolled[key][0];
   return out;
 }
 
 const settingDef = (key: string) => (SETTINGS as readonly any[]).find(s => s.key === key);
-const rolling = () => ROLLABLE.filter(k => ['random', 'random-mixed'].includes(S[k]?.type) && (SETTINGS as readonly any[]).find(s => s.key === k)?.cond?.(S) !== false);
+const rolling = () => [
+  ...ROLLABLE.filter(k => ['random', 'random-mixed'].includes(S[k]?.type)),
+  ...ROLLED_CHOICES.filter(k => S[k] === 'random'),
+].filter(k => settingDef(k)?.cond?.(S) !== false);
+/** A rolled setting the player still has to answer. An empty answer only counts for sets, where it means none came up. */
+const unanswered = (k: string) => ROLLED_CHOICES.includes(k) ? !seed.rolled[k]?.length : !seed.rolled[k];
 
 let computeSeq = 0;
 async function recompute() {
@@ -748,9 +759,9 @@ function renderChecks() {
       ${shut ? '' : `<div class="rows">${sortIn('c:' + id, rows, c => c.id).map(rowHtml).join('')}</div>`}</section>`;
   }
 
-  const rolls = rolling().filter(k => !seed.rolled[k]);
+  const rolls = rolling().filter(unanswered);
   const banner = rolls.length ? `<div class="banner"><div><strong>This seed rolls some settings at random.</strong> Tell the checklist what came up so its list and logic match your seed. Opening your spoiler log fills this in.</div>
-    <div class="btns"><button class="btn alt" data-goto="settings">Set what this seed rolled</button><button class="btn alt" data-roll-none>All stayed normal</button></div></div>` : '';
+    <div class="btns"><button class="btn alt" data-goto="settings">Set what this seed rolled</button>${rolls.some(k => !ROLLED_CHOICES.includes(k)) ? '<button class="btn alt" data-roll-none>All stayed normal</button>' : ''}</div></div>` : '';
 
   const empty = !checks.length ? `<div class="empty"><h3>${computing ? 'Reading your settings' : 'No checks yet'}</h3></div>`
     : !body ? `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more checks.${saved.ui.hideDone ? ' Finished checks are hidden too.' : ''}</div>` : '';
@@ -798,7 +809,7 @@ const viewSeg = () => `<div class="seg" role="group" aria-label="View">
 function logicPill() {
   if (!logicOn()) return '';
   if (logicError) return '<span class="pill" id="logicPill">Logic unavailable</span>';
-  if (!logicOut) return '<span class="pill" id="logicPill">Working out logic</span>';
+  if (!logicOut || logicBusy) return '<span class="pill" id="logicPill">Working out logic</span>';
   return `<span class="pill" id="logicPill"><b>${totals().reach.toLocaleString()}</b> in logic now</span>`;
 }
 function logicBanner() {
@@ -1436,7 +1447,7 @@ function controlHtml(s: any) {
 function settingHtml(s: any) {
   const changes = AFFECTS.has(s.key);
   return `<div class="set${s.type === 'set' ? ' wide' : ''}">
-    <div class="lab"><b>${esc(s.name)}</b>${changes && !saved.ui.changesOnly ? '<span class="why">changes checks</span>' : s.category === 'entrances' && !saved.ui.changesOnly ? '<span class="why">changes entrances</span>' : ''}</div>
+    <div class="lab"><b>${esc(s.name)}</b>${changes && !saved.ui.changesOnly ? '<span class="why">changes checks</span>' : (s.category === 'entrances' || AFFECTS_ENTRANCES.has(s.key)) && !saved.ui.changesOnly ? '<span class="why">changes entrances</span>' : ''}</div>
     <div class="ctl">${controlHtml(s)}</div>
     ${s.description ? `<div class="desc">${esc(descText(s.description))}</div>` : ''}</div>`;
 }
@@ -1445,6 +1456,12 @@ function rolledHtml() {
   return rolling().map(key => {
     const def = (SETTINGS as readonly any[]).find(s => s.key === key);
     const v = S[key];
+    if (ROLLED_CHOICES.includes(key)) {
+      const chips = def.values.filter((x: any) => x.value !== 'random').map((x: any) =>
+        `<button class="chip" data-rolled="${esc(key)}" data-val="${esc(x.value)}" aria-pressed="${seed.rolled[key]?.[0] === x.value}">${esc(x.name)}</button>`).join('');
+      const note = seed.rolled[key]?.length ? '' : ' Until you set this, logic only counts checks you can reach whichever one it was.';
+      return `<div class="box"><h3>What this seed rolled: ${esc(def.name)}</h3><p>Pick the one this seed came up with.${note}</p><div class="setvals">${chips}</div></div>`;
+    }
     const fixedOn: string[] = v.type === 'random-mixed' ? v.set ?? [] : [];
     const fixedOff: string[] = v.type === 'random-mixed' ? v.unset ?? [] : [];
     const chips = def.values.filter((x: any) => !fixedOn.includes(x.value) && !fixedOff.includes(x.value)).map((x: any) =>
@@ -1478,6 +1495,67 @@ function preCompletedHtml() {
   return `<div class="box"><h3>Pre-completed dungeons</h3><p>Turn on each dungeon this seed started as beaten. Logic then counts what that gives you, like the region staying cleared, and the dungeon's area is skipped. Add the rewards you started with, like stones or medallions, on the Items tab. Opening your spoiler log fills this in.</p><div class="setvals">${chips}</div></div>`;
 }
 
+/*
+ * The rest of OoTMM's settings, which live outside its main settings list: tricks, glitches,
+ * special conditions, starting items and junk locations. All of them come from OoTMM's own
+ * tables, and all of them change logic, so they show under "Changes your lists" too.
+ */
+function extraSettingsHtml(q: string) {
+  const hit = (text: string) => !q || text.toLowerCase().includes(q);
+  const section = (id: string, title: string, rows: string[], intro = '') => !rows.length ? '' : `<details class="cat" data-cat="${id}"${openCats.has(id) || q ? ' open' : ''}>
+    <summary class="keep"><span class="sum-t">${esc(title)}</span> <span>${rows.length}</span></summary>${intro}${rows.join('')}</details>`;
+  const games = S.games === 'oot' ? ['oot'] : S.games === 'mm' ? ['mm'] : ['oot', 'mm'];
+  const trickRows = (glitch: boolean) => Object.entries(TRICKS as Record<string, any>)
+    .filter(([k, x]) => !!x.glitch === glitch && games.includes(x.game) && hit(`${x.name} ${k} ${x.tooltip ?? ''}`))
+    .map(([k, x]) => `<div class="set"><div class="lab"><b>${esc(x.name)}</b></div>
+      <div class="ctl"><button class="switch" role="switch" aria-checked="${S.tricks.includes(k)}" aria-label="${esc(x.name)}" data-trick="${esc(k)}"></button></div>
+      ${x.tooltip ? `<div class="desc">${esc(x.tooltip)}</div>` : ''}</div>`);
+
+  const condRows = Object.entries(SPECIAL_CONDS as Record<string, any>).filter(([, c]) => c.cond(S) && hit(`${c.name} special conditions`)).map(([key, c]) => {
+    const cur = S.specialConds[key];
+    const fields = Object.entries(SPECIAL_CONDS_FIELDS as Record<string, any>).filter(([, f]) => !f.cond || f.cond(S));
+    const max = fields.filter(([k]) => cur[k]).reduce((n, [, f]) => n + (typeof f.max === 'function' ? f.max(S) : f.max), 0);
+    const chips = fields.map(([k, f]) => `<button class="chip" data-cond="${esc(key)}" data-val="${esc(k)}" aria-pressed="${!!cur[k]}">${esc(f.name)}</button>`).join('');
+    return `<div class="set wide"><div class="lab"><b>${esc(c.name)}</b></div>
+      <div class="ctl"><input type="number" aria-label="${esc(c.name)} amount" data-cond-count="${esc(key)}" value="${esc(cur.count)}" min="0" max="${max}"></div>
+      <div class="desc">How many of the items picked below are needed. Out of ${max}.</div>
+      <div class="setvals">${chips}</div></div>`;
+  });
+
+  const nameOf = (id: string) => catalogById().get(id)?.name ?? (() => { try { return itemName(id); } catch { return id; } })();
+  const startRows = Object.entries(S.startingItems as Record<string, number>).filter(([id]) => hit(`${nameOf(id)} starting items`)).sort((a, b) => nameOf(a[0]).localeCompare(nameOf(b[0])))
+    .map(([id, n]) => `<div class="set"><div class="lab"><b>${esc(nameOf(id))}</b></div>
+      <div class="ctl"><input type="number" aria-label="${esc(nameOf(id))} at start" data-start-num="${esc(id)}" value="${esc(n)}" min="0"${catalogById().get(id) ? ` max="${catalogById().get(id)!.max}"` : ''}></div></div>`);
+  const addable = catalog().filter(i => !S.startingItems[i.id]).sort((a, b) => a.name.localeCompare(b.name));
+  const startAdd = !hit('starting items') && !startRows.length ? '' : `<div class="set"><div class="lab"><b>Add a starting item</b></div>
+    <div class="ctl"><select aria-label="Add a starting item" data-start-add><option value="">${logicOut ? 'Pick an item' : 'Items show once logic has run'}</option>${addable.map(i => `<option value="${esc(i.id)}">${esc(i.name)}</option>`).join('')}</select></div>
+    <div class="desc">Items Link starts the seed with. Logic counts them as yours.</div></div>`;
+
+  const checkName = (id: string) => { const c = lastResult?.checks.find(x => x.id === id); return c ? `${c.regionName}: ${c.name}` : id.replace(/^(OOT|MM) /, ''); };
+  const junkRows = (S.junkLocations as string[]).filter(id => hit(`${checkName(id)} junk locations`)).map(id => `<div class="set"><div class="lab"><b>${esc(checkName(id))}</b></div>
+    <div class="ctl"><button class="btn alt" data-junk-del="${esc(id)}">Remove</button></div></div>`);
+  const junkAdd = !hit('junk locations') && !junkRows.length ? '' : `<div class="set wide"><div class="lab"><b>Add a junk location</b></div>
+    <div class="ctl"><input type="text" list="junkChecks" id="junkAdd" aria-label="Check to mark as junk" placeholder="Start typing a check"><button class="btn alt" data-junk-add>Add</button></div>
+    <div class="desc">Checks that always hold junk on this seed.</div>
+    <datalist id="junkChecks">${(lastResult?.checks ?? []).filter(c => !c.fixed && !S.junkLocations.includes(c.id)).map(c => `<option value="${esc(`${c.regionName}: ${c.name}`)}"></option>`).join('')}</datalist></div>`;
+
+  return section('x.tricks', 'Tricks', trickRows(false))
+    + section('x.glitches', 'Glitches', trickRows(true))
+    + section('x.specialConds', 'Special conditions', condRows)
+    + section('x.startingItems', 'Starting items', [...(startAdd ? [startAdd] : []), ...startRows])
+    + section('x.junk', 'Junk locations', [...(junkAdd ? [junkAdd] : []), ...junkRows]);
+}
+
+function setSettingsRaw(change: (s: any) => void) {
+  const next = JSON.parse(JSON.stringify(S));
+  change(next);
+  S = makeSettings(next);
+  seed.settings = exportSettings(S);
+  save();
+  renderSettings();
+  recompute();
+}
+
 const settingsNav = () => `<div class="seg subnav" role="group" aria-label="Settings sections">
   ${([['game', 'Randomizer'], ['look', 'Appearance'], ['edits', 'Your edits']] as const).map(([k, l]) => `<button class="keep" data-setview="${k}" aria-pressed="${settingsView === k}">${l}</button>`).join('')}</div>`;
 
@@ -1489,7 +1567,7 @@ function renderSettings() {
   const list = (SETTINGS as readonly any[]).filter(s => {
     if (s.cond && !s.cond(S)) return false;
     if (q) return `${s.name} ${s.key} ${descText(s.description)}`.toLowerCase().includes(q);
-    return !saved.ui.changesOnly || AFFECTS.has(s.key) || s.category === 'entrances';
+    return !saved.ui.changesOnly || AFFECTS.has(s.key) || AFFECTS_ENTRANCES.has(s.key) || s.category === 'entrances';
   });
   const cats = new Map<string, any[]>();
   for (const s of list) (cats.get(s.category) ?? cats.set(s.category, []).get(s.category)!).push(s);
@@ -1524,7 +1602,7 @@ function renderSettings() {
         <div class="ctl"><button class="switch" role="switch" aria-checked="${!!saved.ui.showLocked}" aria-label="Show vanilla spots too" data-showlocked></button></div>
         <div class="desc">Lists places your settings leave unshuffled, tagged Vanilla. They never count toward your total.</div></div>
       </div>
-      <div>${body || '<div class="empty"><h3>No settings match</h3>Try another word, or switch to All settings.</div>'}</div>
+      <div>${body + extraSettingsHtml(q) || '<div class="empty"><h3>No settings match</h3>Try another word, or switch to All settings.</div>'}</div>
     </div></div>`;
   $('#setScroll').scrollTop = scrollTop;
   if (searchFocus) { const i = $('#setSearch') as HTMLInputElement; i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
@@ -2283,6 +2361,9 @@ function events() {
     if (t.dataset.itemNum) { snap(); setItemCount(t.dataset.itemNum, Number(t.value) || 0); afterItemChange(); return; }
     if (t.dataset.enum) setSetting(t.dataset.enum, t.value);
     else if (t.dataset.num) setSetting(t.dataset.num, Number(t.value));
+    else if (t.dataset.condCount) { const k = t.dataset.condCount; setSettingsRaw(s => { s.specialConds[k].count = Math.max(0, Number(t.value) || 0); }); }
+    else if (t.dataset.startNum) { const k = t.dataset.startNum; setSettingsRaw(s => { s.startingItems[k] = Math.max(0, Number(t.value) || 0); }); }
+    else if ('startAdd' in t.dataset && t.value) { const k = t.value; setSettingsRaw(s => { s.startingItems[k] = 1; }); }
     else if (t.id === 'importFile' && t.files?.[0]) t.files[0].text().then(applyImport);
     else if (t.id === 'backupFile' && t.files?.[0]) t.files[0].text().then(loadBackup);
     else if ('seal' in t.dataset) { saved.ui.seal = t.value || undefined; applyTheme(); save(); }
@@ -2429,6 +2510,15 @@ function events() {
 
     /* Settings */
     if (d.bool) return setSetting(d.bool, !S[d.bool]);
+    if (d.trick) { const k = d.trick; return setSettingsRaw(s => { s.tricks = s.tricks.includes(k) ? s.tricks.filter((x: string) => x !== k) : [...s.tricks, k]; }); }
+    if (d.cond) { const [k, f] = [d.cond, d.val!]; return setSettingsRaw(s => { s.specialConds[k][f] = !s.specialConds[k][f]; }); }
+    if (d.junkDel) { const k = d.junkDel; return setSettingsRaw(s => { s.junkLocations = s.junkLocations.filter((x: string) => x !== k); }); }
+    if ('junkAdd' in d) {
+      const v = ($('#junkAdd') as HTMLInputElement).value.trim();
+      const c = lastResult?.checks.find(x => `${x.regionName}: ${x.name}` === v || x.id === v);
+      if (!c) return toast('Pick a check from the list.');
+      return setSettingsRaw(s => { s.junkLocations = [...s.junkLocations, c.id]; });
+    }
     if (d.setmode) {
       const m = d.mode!;
       return setSetting(d.setmode, m === 'specific' ? { type: 'specific', values: S[d.setmode]?.values ?? [] } : { type: m });
@@ -2439,7 +2529,8 @@ function events() {
     }
     if (d.rolled) {
       const cur = seed.rolled[d.rolled] ?? [];
-      seed.rolled[d.rolled] = cur.includes(d.val!) ? cur.filter(x => x !== d.val) : [...cur, d.val!];
+      if (ROLLED_CHOICES.includes(d.rolled)) seed.rolled[d.rolled] = cur[0] === d.val ? [] : [d.val!];
+      else seed.rolled[d.rolled] = cur.includes(d.val!) ? cur.filter(x => x !== d.val) : [...cur, d.val!];
       save(); renderSettings(); recompute();
       return;
     }
@@ -2453,7 +2544,7 @@ function events() {
       save(); renderSettings(); scheduleLogic();
       return;
     }
-    if ('rollNone' in d) { for (const k of rolling()) seed.rolled[k] ??= []; save(); renderChecks(); return; }
+    if ('rollNone' in d) { for (const k of rolling()) if (!ROLLED_CHOICES.includes(k)) seed.rolled[k] ??= []; save(); renderChecks(); return; }
     if (d.changes) { saved.ui.changesOnly = d.changes === '1'; save(); renderSettings(); return; }
     if ('showlocked' in d) { saved.ui.showLocked = !saved.ui.showLocked; save(); renderAll(); return; }
     if ('import' in d) return applyImport(($('#importText') as HTMLTextAreaElement).value);
