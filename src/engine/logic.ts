@@ -80,7 +80,13 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
   const key = JSON.stringify(settings);
   if (base?.key === key) return base;
   const opts = options({ seed: 'checklist', settings: settings as any });
-  const state: any = await worldState(monitor, opts);
+  (globalThis as any).__checklistKeepPool = true;
+  let state: any, other: any;
+  try {
+    state = await worldState(monitor, opts);
+    /* A second roll of the same settings shows which parts of the item pool change from seed to seed. */
+    other = await worldState(monitor, options({ seed: 'checklist-2', settings: settings as any }));
+  } finally { (globalThis as any).__checklistKeepPool = false; }
   /* Fixed prices (vanilla or affordable) are applied. Random prices can't be known, so those stay at the normal price. */
   const PRICE_KEYS = ['priceOotShops', 'priceOotScrubs', 'priceOotMerchants', 'priceMmShops', 'priceMmTingle'];
   const known: any = { ...state.settings };
@@ -122,6 +128,22 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
     if (itemProperties.important.has(item)) max.set(id, (max.get(id) ?? 0) + n);
   };
   for (const [pi, n] of allItems as Map<any, number>) add(pi.item, n);
+  /*
+   * Bottle contents, pond fish and the like are rolled per seed. Every item in a rolled
+   * group can be logged, up to how many the group holds, since the player's seed may have any of them.
+   */
+  const countOf = (pool: Map<any, number>) => { const m = new Map<string, number>(); for (const [pi, n] of pool) m.set(pi.item.id, (m.get(pi.item.id) ?? 0) + n); return m; };
+  const mine = countOf(allItems), theirs = countOf(other.allItems);
+  const rolled = [...new Set([...mine.keys(), ...theirs.keys()])].filter(id => mine.get(id) !== theirs.get(id));
+  if (rolled.length) {
+    const groups = Object.values(ItemGroups as Record<string, unknown>).filter((g): g is Set<any> => g instanceof Set);
+    for (const id of rolled) {
+      const holding = groups.filter(g => [...g].some(i => i.id === id)).sort((a, b) => a.size - b.size)[0];
+      if (!holding) continue;
+      const total = [...holding].reduce((n, i) => n + (mine.get(i.id) ?? 0), 0);
+      for (const item of holding) if (total && !consumable(item)) max.set(item.id, Math.max(max.get(item.id) ?? 0, total));
+    }
+  }
   for (const [pi, n] of startingItems as Map<any, number>) {
     const id = consumable(pi.item) ? family.get(familyOf(pi.item.id)) ?? pi.item.id : pi.item.id;
     start.set(id, (start.get(id) ?? 0) + n);

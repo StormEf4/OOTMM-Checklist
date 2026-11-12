@@ -21,6 +21,8 @@ rules, so a rebuild picks up changes in the randomizer.
   random, Settings asks what came up. Opening your spoiler log fills it in from the header. Until you answer, Ganon's
   trials count as all on and the rest as off. A random starting age works the same way: until you pick Child or Adult,
   logic only counts checks you could reach with either.
+- **Rolled item pools.** With bottle contents or pond fish shuffled, each seed rolls which ones exist. The Items tab
+  offers every one the roll could give, so you can log what you found.
 - **Every OoTMM setting.** Settings lists OoTMM's whole settings list, plus its Tricks, Glitches, Special conditions,
   Starting items and Junk locations. A settings string fills all of them in, and each can be changed by hand.
 - **Pre-completed dungeons.** Pick the dungeons your seed started as beaten on the Settings tab, or open your spoiler log.
