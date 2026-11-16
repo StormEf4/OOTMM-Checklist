@@ -12,6 +12,8 @@ import { computeLogic } from './engine/logic';
 import { checklistNormalDungeons } from '@ootmm/logic';
 import { MAP_SPOTS } from './mapspots';
 import { NAME_STYLES, playerName, type NameStyle } from './names';
+import { PAGE_SIZES, ZOOMS, cleanNotes, textToNotes, type NotesView } from './notes';
+import { flatten, liveCode, merge, roomFromCode, sameState, stamp, unflatten, type LiveState } from './live';
 import { ROLLABLE, ROLLED_CHOICES, UNKNOWN_MEANS_ALL, parseSpoilerHeader } from './engine/spoiler';
 import audit from './generated/audit.json';
 import shippedCustom from '../custom-checks.json';
@@ -63,7 +65,10 @@ type Seed = {
   preCompleted?: string[];
   entrances: Record<string, string>;
   notes: Record<string, string>;
+  /** Plain text of the seed's notes, kept for older versions of the app. */
   pad: string;
+  /** The seed's notes page, as cleaned HTML. */
+  doc?: string;
   /** Item the player found at a check: check id to item id, or text: for their own words. */
   found: Record<string, string>;
   /** Items the player added or took away by hand, on top of what they logged at checks. */
@@ -71,6 +76,10 @@ type Seed = {
   /** What each gossip stone (or other hint source) said, as the player typed it. */
   hints: Record<string, Hint>;
   updated: number;
+  /** The live room this seed is shared in, on the hosted page. */
+  live?: string;
+  /** When each shared key last changed, for merging live changes. */
+  liveClock?: Record<string, number>;
 };
 type ItemEdit = { name?: string; sub?: string; area?: string; game?: 'oot' | 'mm'; hidden?: boolean; order?: number; map?: [number, number] };
 type Edits = {
@@ -96,6 +105,7 @@ type Saved = {
     logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; haveOnly?: boolean; hideWritten?: boolean;
     /** Which check names show. Custom puts the player's renames on top of nameBase. */
     names?: NameStyle; nameBase?: 'original' | 'player';
+    notes?: NotesView;
   };
 };
 
@@ -140,7 +150,7 @@ let checks: CheckEntry[] = [];
 let lastResult: ComputeResult | null = null;
 let doneSet = new Set<string>();
 let skipSet = new Set<string>();
-let tab: 'list' | 'entrances' | 'items' | 'hints' | 'settings' | 'seeds' = 'list';
+let tab: 'list' | 'entrances' | 'notes' | 'items' | 'hints' | 'settings' | 'seeds' = 'list';
 let region: string | null = null;
 let phoneView: 'rail' | 'pane' = 'rail';
 let query = '';
@@ -176,7 +186,7 @@ let itemPickQuery = '';
 /* ---------- Saving ---------- */
 
 function newSeed(name: string, settings?: string): Seed {
-  return { id: uid(), name, settings: settings ?? exportSettings(DEFAULT_SETTINGS), done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, notes: {}, pad: '', found: {}, have: {}, hints: {}, updated: Date.now() };
+  return { id: uid(), name, settings: settings ?? exportSettings(DEFAULT_SETTINGS), done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, notes: {}, pad: '', doc: '', found: {}, have: {}, hints: {}, updated: Date.now() };
 }
 
 function load(raw?: string | null): Saved {
@@ -190,7 +200,7 @@ function load(raw?: string | null): Saved {
         const ui = v.ui ?? {};
         ui.skin ??= ui.theme === 'dark' ? 'termina' : ui.theme === 'light' ? 'day' : 'hero';
         ui.names ??= 'custom'; ui.nameBase ??= 'original';
-        for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
+        for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; s.doc ??= textToNotes(s.pad); s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
         return { ...v, custom: v.custom ?? [], edits: { ...blankEdits(), ...v.edits }, ui };
       }
     } catch { /* falls through to a fresh start */ }
@@ -204,6 +214,7 @@ function save() {
   seed.done = [...doneSet];
   seed.skipped = [...skipSet];
   seed.updated = Date.now();
+  if (seed.live) liveStamp();
   clearTimeout(saveTimer);
   saveTimer = window.setTimeout(writeSave, 250);
 }
@@ -270,11 +281,175 @@ async function connectHostedStore() {
       applyTheme();
       openSeed(saved.current);
     }
+    hostedDb = db;
+    liveFollow();
     remoteSave = json => {
       const blob = uint8ArrayToBase64(deflateRaw(new TextEncoder().encode(json), { level: 9 }), { urlSafe: true });
       doc.set({ blob, updated: Date.now() }).catch(() => {});
     };
   } catch { /* stays on browser storage */ }
+}
+
+/* ---------- Live play (hosted page) ---------- */
+
+let hostedDb: any = null;
+let liveUnsub: (() => void) | null = null;
+let liveRoom = '';
+let liveRemote: LiveState | null = null;
+let livePushTimer = 0, livePushing = false, livePushAgain = false;
+let liveStatus = '';
+const liveBase = new Map<string, Record<string, string>>();
+const liveDoc = (room: string) => hostedDb.doc('live/' + room);
+const liveLocal = (): LiveState => ({ flat: flatten(seed), clock: seed.liveClock ??= {} });
+const encodeLive = (st: LiveState) => ({ v: 1, updated: Date.now(), blob: uint8ArrayToBase64(deflateRaw(new TextEncoder().encode(JSON.stringify(st)), { level: 6 }), { urlSafe: true }) });
+function decodeLive(data: any): LiveState | null {
+  try {
+    const st = JSON.parse(new TextDecoder().decode(inflateRaw(base64ToUint8Array(data.blob))));
+    return st && typeof st.flat === 'object' && typeof st.clock === 'object' ? st : null;
+  } catch { return null; }
+}
+function setLiveStatus(text: string) {
+  liveStatus = text;
+  const el = document.getElementById('liveStatus');
+  if (el) el.textContent = text;
+}
+/** Times the keys that changed since the last look, then sends them. */
+function liveStamp() {
+  const now = flatten(seed);
+  const before = liveBase.get(seed.id);
+  if (before) stamp(before, now, seed.liveClock ??= {}, Date.now());
+  liveBase.set(seed.id, now);
+  queueLivePush();
+}
+function queueLivePush() {
+  if (!hostedDb || !seed.live) return;
+  clearTimeout(livePushTimer);
+  livePushTimer = window.setTimeout(livePush, 300);
+}
+/** One write at a time: this device's state merged with the latest from the room. */
+async function livePush() {
+  if (!hostedDb || !seed.live) return;
+  if (livePushing) { livePushAgain = true; return; }
+  livePushing = true;
+  const room = seed.live;
+  try {
+    const mine = liveLocal();
+    const state = liveRemote ? merge(mine, liveRemote) : mine;
+    if (liveRemote && sameState(state, liveRemote)) return;
+    await liveDoc(room).set(encodeLive(state));
+    if (seed.live === room) liveRemote = state;
+    setLiveStatus('Synced');
+  } catch (e: any) {
+    if (e?.code === 'invalid_argument') setLiveStatus("Your changes can't be shared from here. The page's owner needs to invite you as an Editor.");
+    else { setLiveStatus('Not synced yet. Trying again.'); window.setTimeout(queueLivePush, 1500 + Math.random() * 1500); }
+  } finally {
+    livePushing = false;
+    if (livePushAgain) { livePushAgain = false; queueLivePush(); }
+  }
+}
+/** Follows the open seed's live room, if it has one. */
+function liveFollow() {
+  const room = hostedDb && seed?.live ? seed.live : '';
+  if (room === liveRoom) return;
+  liveUnsub?.(); liveUnsub = null; liveRemote = null; liveRoom = room;
+  if (!room) { setLiveStatus(''); return; }
+  liveBase.set(seed.id, flatten(seed));
+  setLiveStatus('Connecting');
+  const seedId = seed.id;
+  try {
+    liveUnsub = liveDoc(room).onSnapshot((snap: any) => {
+      if (seed.id !== seedId) return;
+      if (!snap.exists) { liveRemote = null; if (!snap.metadata?.fromCache) queueLivePush(); return; }
+      const remote = decodeLive(snap.data());
+      if (!remote) return;
+      liveRemote = remote;
+      applyLive(merge(liveLocal(), remote));
+      if (!sameState(liveLocal(), remote)) queueLivePush();
+      if (!snap.metadata?.fromCache) setLiveStatus('Synced');
+    }, (e: any) => setLiveStatus(e?.code === 'revoked' ? 'Live play stopped because access to the page changed.' : 'Lost the connection. Reopen the page to reconnect.'));
+  } catch { setLiveStatus("Live play isn't available here."); }
+}
+/** Puts merged live state on the open seed and refreshes what changed. */
+function applyLive(st: LiveState) {
+  seed.liveClock = st.clock;
+  const before = flatten(seed);
+  const keys = new Set([...Object.keys(before), ...Object.keys(st.flat)]);
+  if ([...keys].every(k => before[k] === st.flat[k])) return;
+  const settingsBefore = seed.settings;
+  const docBefore = seed.doc;
+  unflatten(st.flat, seed);
+  liveBase.set(seed.id, flatten(seed));
+  doneSet = new Set(seed.done);
+  skipSet = new Set(seed.skipped);
+  save();
+  if (seed.settings !== settingsBefore) {
+    try { S = importSettings(seed.settings); } catch { /* keeps the last good settings */ }
+    recompute();
+    return;
+  }
+  const typing = document.activeElement?.id === 'docPage';
+  if (tab === 'notes' && typing) { renderDial(); renderRail(); renderCount(); }
+  else if (tab === 'notes' && seed.doc === docBefore) { renderDial(); renderRail(); renderCount(); }
+  else renderAll();
+  scheduleLogic();
+}
+function startLive() {
+  if (!hostedDb) return;
+  seed.live = uid() + uid();
+  const now = Date.now();
+  seed.liveClock = {};
+  for (const k of Object.keys(flatten(seed))) seed.liveClock[k] = now;
+  save();
+  liveFollow();
+  livePush();
+  renderSeeds();
+}
+async function joinLive(code: string) {
+  const room = roomFromCode(code);
+  if (!hostedDb || !room) { toast('Type the LIVE- code your partner sent.'); return; }
+  let remote: LiveState | null = null;
+  try {
+    const snap = await liveDoc(room).get();
+    remote = snap.exists ? decodeLive(snap.data()) : null;
+  } catch { /* handled below */ }
+  if (!remote) { toast("There's no live seed with that code yet. Check it with your partner."); return; }
+  let target = saved.seeds.find(s => s.live === room);
+  if (!target) {
+    target = newSeed('Live seed');
+    target.live = room;
+    unflatten(remote.flat, target);
+    target.liveClock = { ...remote.clock };
+    saved.seeds.push(target);
+  }
+  save();
+  openSeed(target.id);
+  save();
+  renderAll();
+  toast(`Joined ${target.name}. You'll see each other's changes as they happen.`);
+}
+function stopLive() {
+  seed.live = undefined;
+  seed.liveClock = undefined;
+  save();
+  liveFollow();
+  renderSeeds();
+  toast('This seed is no longer live on this device. Your progress stays here.');
+}
+function liveBoxHtml() {
+  if (!hostedDb) return '';
+  if (seed.live) return `<div class="box live-box"><h3>Playing live</h3>
+      <p>This seed is shared live. Ticks, skips, found items, entrances, hints, settings and notes show up for everyone in it within a second or two.</p>
+      <p>Your partner joins with this code: <b class="live-code">${esc(liveCode(seed.live))}</b></p>
+      <p class="fine">They need this page shared with them as an Editor, from the page's Share menu. If you both type in the Notes page at the same moment, the last one to type wins.</p>
+      <p class="fine">Status: <span id="liveStatus">${esc(liveStatus || 'Connecting')}</span></p>
+      <div class="btns"><button class="btn alt keep" data-live-copy>Copy code</button><button class="btn danger keep" data-live-stop>Stop playing live on this device</button></div>
+    </div>`;
+  return `<div class="box live-box"><h3>Play together live</h3>
+      <p>Share this seed with a partner. Ticks, found items, entrances and notes show up for both of you as they happen.</p>
+      <div class="btns"><button class="btn keep" data-live-start>Share this seed live</button></div>
+      <p class="fine">Or join your partner's seed with their code:</p>
+      <div class="live-join"><input type="text" id="liveJoin" class="keep" placeholder="LIVE-..." aria-label="Live code"><button class="btn alt keep" data-live-join>Join</button></div>
+    </div>`;
 }
 
 /* ---------- Engine calls ---------- */
@@ -582,13 +757,14 @@ const ICON = {
   seeds: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M9 4v5h6V4M9 20v-6h6v6"/></svg>',
   entrances: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 21V6a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v15M3 21h18"/><circle cx="14.5" cy="12.5" r=".9" fill="currentColor" stroke="none"/></svg>',
   items: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9h14l-1.2 11H6.2z"/><path d="M9 9V7a3 3 0 0 1 6 0v2"/></svg>',
+  notes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 12h7M9 15.5h7M9 19h4"/></svg>',
   hints: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 21V9a5 5 0 0 1 10 0v12M4.5 21h15"/><path d="M10 11.5h4M10 15h4"/></svg>',
   bag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9h14l-1.2 11H6.2z"/><path d="M9 9V7a3 3 0 0 1 6 0v2"/></svg>',
   pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg>',
   tick: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>',
 };
 
-const TAB_LABELS: Record<string, string> = { list: 'Checks', entrances: 'Entrances', items: 'Items', hints: 'Hints', settings: 'Settings', seeds: 'Seeds' };
+const TAB_LABELS: Record<string, string> = { list: 'Checks', entrances: 'Entrances', notes: 'Notes', items: 'Items', hints: 'Hints', settings: 'Settings', seeds: 'Seeds' };
 const pen = (edit: string) => `<span class="pen" data-edit="${esc(edit)}" role="button" aria-label="Edit">${ICON.pen}</span>`;
 function tabs() {
   return Object.entries(TAB_LABELS).map(([k, label]) =>
@@ -1761,7 +1937,7 @@ function unpackIds(p: { b: string; x: string[] }) {
 }
 
 export function makeTransferCode(s: Seed) {
-  const body = JSON.stringify({ h: dataHash, o: s.origin ?? s.id, n: s.name, s: s.settings, d: packIds(s.done), k: packIds(s.skipped), r: s.rolled, q: s.preCompleted ?? [], g: s.skippedRegions, c: saved.custom, e: s.entrances, t: s.notes, p: s.pad, f: s.found, v: s.have, i: s.hints, x: saved.edits });
+  const body = JSON.stringify({ h: dataHash, o: s.origin ?? s.id, n: s.name, s: s.settings, d: packIds(s.done), k: packIds(s.skipped), r: s.rolled, q: s.preCompleted ?? [], g: s.skippedRegions, c: saved.custom, e: s.entrances, t: s.notes, p: s.pad, w: s.doc ?? '', f: s.found, v: s.have, i: s.hints, x: saved.edits });
   return 'OOTMM1.' + uint8ArrayToBase64(deflateRaw(new TextEncoder().encode(body), { level: 9 }), { urlSafe: true });
 }
 export function readTransferCode(code: string): Seed {
@@ -1771,7 +1947,7 @@ export function readTransferCode(code: string): Seed {
   if (body.h !== dataHash) throw new Error('This code came from a different build of the checklist. Use the same version on both devices.');
   for (const c of (body.c ?? []) as CustomCheck[]) if (!saved.custom.some(x => x.id === c.id)) saved.custom.push(c);
   if (body.x) saved.edits = mergeEdits(saved.edits, body.x);
-  return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, preCompleted: body.q ?? [], entrances: body.e ?? {}, notes: body.t ?? {}, pad: body.p ?? '', found: body.f ?? {}, have: body.v ?? {}, hints: body.i ?? {}, updated: Date.now() };
+  return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, preCompleted: body.q ?? [], entrances: body.e ?? {}, notes: body.t ?? {}, pad: body.p ?? '', doc: cleanNotes(body.w ?? textToNotes(body.p ?? '')), found: body.f ?? {}, have: body.v ?? {}, hints: body.i ?? {}, updated: Date.now() };
 }
 
 /* ---------- Seeds page ---------- */
@@ -1781,7 +1957,7 @@ function renderSeeds() {
     const on = s.id === seed.id;
     return `<div class="seed${on ? ' on' : ''}">
       <button class="nmz" data-open="${s.id}" data-edit="seed:${s.id}">${esc(s.name)}</button>
-      <div class="meta">${on ? 'Open now, ' : ''}${s.done.length.toLocaleString()} ${s.done.length === 1 ? 'check' : 'checks'} done${Object.keys(s.entrances ?? {}).length ? `, ${Object.keys(s.entrances).length} entrances logged` : ''}</div>
+      <div class="meta">${s.live ? '<span class="tag live-tag">Live</span> ' : ''}${on ? 'Open now, ' : ''}${s.done.length.toLocaleString()} ${s.done.length === 1 ? 'check' : 'checks'} done${Object.keys(s.entrances ?? {}).length ? `, ${Object.keys(s.entrances).length} entrances logged` : ''}</div>
       <div class="btns">
         <button class="btn alt" data-rename="${s.id}">Rename</button>
         <button class="btn danger" data-del="${s.id}"${saved.seeds.length < 2 ? ' disabled' : ''}>Delete</button>
@@ -1796,6 +1972,7 @@ function renderSeeds() {
       <div class="btns"><button class="btn" data-new>Start a new seed</button><button class="btn alt" data-dupe>Copy settings to a new seed</button><button class="btn danger" data-reset>Clear progress on this seed</button></div>
       <div id="seedList">${seedsHtml}</div>
     </div>
+    ${liveBoxHtml()}
     <div class="box">
       <h3>Move a seed to another device</h3>
       <p>Copy the code here, then paste it on your other device. It picks up your settings and progress. When you switch back, paste a new code and the same seed updates.</p>
@@ -1805,8 +1982,8 @@ function renderSeeds() {
     </div>
     <div class="box">
       <h3>Notes for this seed</h3>
-      <p>Hints, plans, anything you want to remember. Saved with the seed.</p>
-      <textarea id="seedPad" aria-label="Notes for this seed" placeholder="Write hints or plans here">${esc(seed.pad)}</textarea>
+      <p>Notes now have their own tab, with headings, lists, colors and a full page to write on.</p>
+      <div class="btns"><button class="btn alt keep" data-tab="notes">Open Notes</button></div>
     </div>
     <div class="box">
       <h3>Back up everything</h3>
@@ -2350,10 +2527,89 @@ function loadBackup(text: string) {
 
 /* ---------- Rendering and events ---------- */
 
+/* ---------- Notes tab ---------- */
+
+const notesView = (): Required<NotesView> => ({ size: 'letter', zoom: 1, paper: false, ...saved.ui.notes });
+const docBtn = (cmd: string, label: string, inner: string, arg = '') =>
+  `<button class="keep" data-doc="${cmd}"${arg ? ` data-arg="${esc(arg)}"` : ''} title="${esc(label)}" aria-label="${esc(label)}">${inner}</button>`;
+function renderNotes() {
+  const v = notesView();
+  const sel = (attr: string, label: string, opts: [string, string][], cur = '') =>
+    `<select class="keep" data-${attr} aria-label="${esc(label)}" title="${esc(label)}">${opts.map(([val, l]) => `<option value="${esc(val)}"${val === cur ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+  const sep = '<span class="doc-sep" aria-hidden="true"></span>';
+  $('#pane').innerHTML = `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Notes</h2><span class="doc-for">${esc(seed.name)}</span></div>
+    <div class="doc-tools" role="toolbar" aria-label="Formatting">
+      ${docBtn('undo', 'Undo', '↶')}${docBtn('redo', 'Redo', '↷')}${sep}
+      ${sel('doc-block', 'Text style', [['p', 'Normal text'], ['h1', 'Heading 1'], ['h2', 'Heading 2'], ['h3', 'Heading 3'], ['blockquote', 'Quote']])}
+      ${sel('doc-font', 'Font', [['', 'Font'], ['inherit', 'Theme font'], ['Georgia, serif', 'Serif'], ['Arial, sans-serif', 'Sans'], ["'Courier New', monospace", 'Typewriter']])}
+      ${sel('doc-size', 'Text size', [['', 'Size'], ['2', 'Small'], ['3', 'Normal'], ['4', 'Large'], ['5', 'Larger'], ['6', 'Huge']])}${sep}
+      ${docBtn('bold', 'Bold (Ctrl+B)', '<b>B</b>')}${docBtn('italic', 'Italic (Ctrl+I)', '<i>I</i>')}${docBtn('underline', 'Underline (Ctrl+U)', '<u>U</u>')}${docBtn('strikeThrough', 'Strikethrough', '<s>S</s>')}
+      <label class="doc-color keep" title="Text color"><span style="border-bottom:3px solid #e05050">A</span><input type="color" class="keep" data-doc-color="foreColor" value="#e05050" aria-label="Text color"></label>
+      <label class="doc-color keep" title="Highlight"><span class="hl">ab</span><input type="color" class="keep" data-doc-color="hiliteColor" value="#f2d24b" aria-label="Highlight color"></label>${sep}
+      ${docBtn('insertUnorderedList', 'Bulleted list', '•≡')}${docBtn('insertOrderedList', 'Numbered list', '1≡')}${docBtn('checklist', 'Checklist', '☑')}
+      ${docBtn('outdent', 'Decrease indent', '⇤')}${docBtn('indent', 'Increase indent', '⇥')}${sep}
+      ${docBtn('justifyLeft', 'Align left', '⫷')}${docBtn('justifyCenter', 'Center', '≡')}${docBtn('justifyRight', 'Align right', '⫸')}${sep}
+      ${docBtn('insertHorizontalRule', 'Line', '―')}${docBtn('stamp', 'Insert date and time', '🕒')}${docBtn('removeFormat', 'Clear formatting', '⌫')}
+    </div>
+    <div class="doc-tools doc-view" aria-label="Page">
+      ${sel('doc-page', 'Page size', PAGE_SIZES, v.size)}
+      ${sel('doc-zoom', 'Zoom', ZOOMS.map(z => [String(z), `${Math.round(z * 100)}%`] as [string, string]), String(v.zoom))}
+      <button class="keep" data-doc-paper aria-pressed="${v.paper}" title="White paper with black text">White paper</button>
+      <span class="doc-count" id="docCount"></span>
+    </div></div>
+    <div class="scroll doc-scroll"><div class="doc-desk size-${v.size}${v.paper ? ' paper' : ''}" style="--zoom:${v.zoom}">
+      <div class="doc-page keep" id="docPage" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Notes for ${esc(seed.name)}" data-placeholder="Hints, plans, anything you want to remember on this seed.">${cleanNotes(seed.doc ?? '')}</div>
+    </div></div>`;
+  try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older browsers use font tags */ }
+  updateDocCount();
+}
+function updateDocCount() {
+  const page = $('#docPage'), out = $('#docCount');
+  if (!page || !out) return;
+  const text = page.innerText.trim();
+  const words = text ? text.split(/\s+/).length : 0;
+  out.textContent = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
+}
+/** Keeps the seed's notes in step with the page. */
+function saveDoc() {
+  const page = $('#docPage');
+  if (!page) return;
+  seed.doc = page.innerHTML;
+  seed.pad = page.innerText;
+  save();
+  updateDocCount();
+}
+/** Runs a formatting command on the page, keeping the selection in it. */
+function docCommand(cmd: string, arg?: string) {
+  const page = $('#docPage');
+  if (!page) return;
+  page.focus();
+  if (cmd === 'stamp') document.execCommand('insertText', false, new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }));
+  else if (cmd === 'checklist') {
+    const sel = getSelection();
+    let ul = (sel?.anchorNode instanceof Element ? sel.anchorNode : sel?.anchorNode?.parentElement)?.closest('ul');
+    if (!ul || !page.contains(ul)) { document.execCommand('insertUnorderedList'); ul = (getSelection()?.anchorNode as Node | null)?.parentElement?.closest('ul') ?? null; }
+    if (ul && page.contains(ul)) ul.classList.toggle('doc-check');
+  } else if (cmd === 'formatBlock') document.execCommand('formatBlock', false, `<${arg}>`);
+  else document.execCommand(cmd, false, arg);
+  saveDoc();
+}
+/** Puts pasted or dropped content in as cleaned formatting. */
+function docInsert(e: ClipboardEvent | DragEvent) {
+  const data = 'clipboardData' in e ? e.clipboardData : (e as DragEvent).dataTransfer;
+  if (!data) return;
+  e.preventDefault();
+  const html = data.getData('text/html');
+  if (html) document.execCommand('insertHTML', false, cleanNotes(html));
+  else document.execCommand('insertText', false, data.getData('text/plain'));
+  saveDoc();
+}
+
 function renderPane() {
   if (tab === 'list') renderChecks();
   else if (tab === 'entrances') renderEntrances();
   else if (tab === 'items') renderItems();
+  else if (tab === 'notes') renderNotes();
   else if (tab === 'hints') renderHints();
   else if (tab === 'settings') renderSettings();
   else renderSeeds();
@@ -2386,7 +2642,9 @@ function openSeed(id: string) {
   logicOut = null;
   reachSet = new Set();
   stoneSet = new Set();
+  if (seed.live) liveBase.set(seed.id, flatten(seed));
   recompute();
+  liveFollow();
 }
 
 let toastTimer = 0;
@@ -2476,9 +2734,20 @@ function events() {
   /* The tap that ends a long-press doesn't also tick the check. */
   app.addEventListener('click', e => { if (pressedOpen && checkAt(e.target)) { pressedOpen = false; e.preventDefault(); e.stopPropagation(); } }, true);
   app.addEventListener('click', editCapture, true);
+  /* Notes page: clean what's pasted or dropped, and tick checklist lines by their box. */
+  const inDoc = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('#docPage');
+  app.addEventListener('paste', e => { if (inDoc(e.target)) docInsert(e); });
+  app.addEventListener('drop', e => { if (inDoc(e.target)) docInsert(e); });
+  app.addEventListener('click', e => {
+    const li = (e.target as HTMLElement).closest?.<HTMLElement>('#docPage ul.doc-check > li');
+    if (!li || e.offsetX > 0) return;
+    e.preventDefault();
+    li.classList.toggle('done');
+    saveDoc();
+  });
 
   document.addEventListener('keydown', e => {
-    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement).tagName);
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement).tagName) || (e.target as HTMLElement).isContentEditable;
     if (e.key === 'Escape' && layers.length) { closeSheet(); return; }
     if (e.key === 'Enter' && layers.length && (e.target as HTMLElement).matches?.('.sheet input[type=text]')) {
       const act = layers[layers.length - 1].actions.save;
@@ -2517,9 +2786,8 @@ function events() {
       hintQuery = t.value;
       clearTimeout(searchTimer);
       searchTimer = window.setTimeout(renderHints, 120);
-    } else if (t.id === 'seedPad') {
-      seed.pad = t.value;
-      save();
+    } else if (t.id === 'docPage') {
+      saveDoc();
     } else if (t.dataset.color) {
       const skin = skinById(saved.ui.skin);
       (saved.edits.colors[skin.id] ??= {})[t.dataset.color] = t.value;
@@ -2542,6 +2810,12 @@ function events() {
 
   app.addEventListener('change', e => {
     const t = e.target as HTMLInputElement;
+    if ('docBlock' in t.dataset) { docCommand('formatBlock', t.value); return; }
+    if ('docFont' in t.dataset) { if (t.value) docCommand('fontName', t.value); (t as unknown as HTMLSelectElement).selectedIndex = 0; return; }
+    if ('docSize' in t.dataset) { if (t.value) docCommand('fontSize', t.value); (t as unknown as HTMLSelectElement).selectedIndex = 0; return; }
+    if (t.dataset.docColor) { docCommand(t.dataset.docColor, t.value); return; }
+    if ('docPage' in t.dataset) { saved.ui.notes = { ...saved.ui.notes, size: t.value as NotesView['size'] }; save(); renderNotes(); return; }
+    if ('docZoom' in t.dataset) { saved.ui.notes = { ...saved.ui.notes, zoom: Number(t.value) || 1 }; save(); renderNotes(); return; }
     if ('namesRange' in t.dataset) { setNameStyle(NAME_STYLES[Number(t.value)]?.[0] ?? 'custom'); return; }
     if (t.dataset.rename) { renameSnapFor = null; return; }
     if (t.dataset.itemNum) { snap(); setItemCount(t.dataset.itemNum, Number(t.value) || 0); afterItemChange(); return; }
@@ -2587,6 +2861,12 @@ function events() {
     if (d.scaleSet) { saved.ui.scale = Number(d.scaleSet); applyTheme(); save(); renderLook(); return; }
     if (d.compactSet) { saved.ui.compact = d.compactSet === '1'; applyTheme(); save(); renderLook(); return; }
     if ('backup' in d) { saveBackup(); return; }
+    if (d.doc) { docCommand(d.doc, d.arg); return; }
+    if ('liveStart' in d) { startLive(); return; }
+    if ('liveStop' in d) { stopLive(); return; }
+    if ('liveJoin' in d) { joinLive(($('#liveJoin') as HTMLInputElement).value); return; }
+    if ('liveCopy' in d && seed.live) { copyText(liveCode(seed.live), 'Live code copied.'); return; }
+    if ('docPaper' in d) { saved.ui.notes = { ...saved.ui.notes, paper: !notesView().paper }; save(); renderNotes(); return; }
     if (d.namesSet) { setNameStyle(d.namesSet as NameStyle); return; }
     if ('namesCopy' in d) {
       const text = namesText();
@@ -2800,7 +3080,7 @@ function events() {
         const n = readTransferCode(($('#codeBox') as HTMLTextAreaElement).value);
         const mine = saved.seeds.find(x => (x.origin ?? x.id) === n.origin);
         save();
-        if (mine) Object.assign(mine, { settings: n.settings, done: n.done, skipped: n.skipped, skippedRegions: n.skippedRegions, rolled: n.rolled, preCompleted: n.preCompleted ?? [], entrances: n.entrances, notes: n.notes, pad: n.pad, found: n.found, have: n.have, hints: n.hints, updated: n.updated });
+        if (mine) Object.assign(mine, { settings: n.settings, done: n.done, skipped: n.skipped, skippedRegions: n.skippedRegions, rolled: n.rolled, preCompleted: n.preCompleted ?? [], entrances: n.entrances, notes: n.notes, pad: n.pad, doc: n.doc, found: n.found, have: n.have, hints: n.hints, updated: n.updated });
         else saved.seeds.push(n);
         openSeed((mine ?? n).id);
         save();

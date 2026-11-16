@@ -42,6 +42,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `src/main.ts`: the app and Edit mode
 - `src/textlayer.ts`: makes any on-screen text editable
 - `src/skins.ts`: themes
+- `src/notes.ts`: the Notes tab's cleaning of formatted notes. `src/live.ts`: live play merging on the hosted page
 - `desktop/`: the Windows window (Electron)
 - `tools/`: build, tests and packaging
 - `dist/web/`: the built phone site, committed so it's always available
@@ -59,7 +60,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
     about an hour over 3 shards. `LOGIC_RETRY=<file of case names>` retries skipped cases with looser placement rules.
   - `node tools/ui-toggles-data.mjs`, then `tools/ui-toggles.cjs`, uses every settings control in the browser.
 - Random shop prices are expected to differ in the logic sweep: the app counts shops at their normal price.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`: browser tests. Run with
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 
@@ -69,6 +70,6 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 2. Build `dist/OoTMM-Checklist-Setup.exe` with `npm run package:win`. It's over GitHub's 100 MB file limit, so attach it
    to a GitHub Release. Never commit it.
 3. Republish the hosted page from `dist/artifact/ootmm-checklist.html` to
-   https://claude.ai/artifact/4huFU4uw3UpjistaT7BWo9 with capabilities `db`, `user` and `downloads`.
+   https://claude.ai/artifact/9mUJwKrCFE88AprUDRHoe1 with capabilities `db`, `user` and `downloads`.
 4. Note in the release which things weren't tested. The installer hasn't been run on real Windows or a real phone
    unless the owner has confirmed it.
