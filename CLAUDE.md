@@ -42,6 +42,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `src/main.ts`: the app and Edit mode
 - `src/textlayer.ts`: makes any on-screen text editable
 - `src/skins.ts`: themes
+- `src/menu-icons.ts`: the item menu's drawn icons. `src/icon-store.ts`: icons the player swaps in through Edit mode, kept on their device (Windows: an `icons` folder beside the saved data, through `desktop/preload.js`; browsers: IndexedDB), never in this repository
 - `src/notes.ts`: the Notes tab's cleaning of formatted notes. `src/live.ts`: Coop live play merging. `src/firebase.ts`:
   Coop's server outside the hosted page, set by `firebase-config.json`, with rules in `firestore.rules`
 - `desktop/`: the Windows window (Electron)
@@ -61,7 +62,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
     about an hour over 3 shards. `LOGIC_RETRY=<file of case names>` retries skipped cases with looser placement rules.
   - `node tools/ui-toggles-data.mjs`, then `tools/ui-toggles.cjs`, uses every settings control in the browser.
 - Random shop prices are expected to differ in the logic sweep: the app counts shops at their normal price.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`: browser tests. Run with
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 

@@ -1,5 +1,5 @@
 /* The item menu progress display: an original take on the pause-menu cube of each game, laid out the way the games
-   lay out their pages, drawn with the app's own labels instead of the games' art. Each page is a grid of slots, and a
+   lay out their pages, drawn with the app's own icons (src/menu-icons.ts) instead of the games' art. Each page is a grid of slots, and a
    slot lights up once the player has the item. */
 
 export type Slot = {
@@ -104,19 +104,19 @@ export const PAGES: Record<'oot' | 'mm', Page[]> = {
 /** Shared items use one id for both games. */
 export const alt = (id: string) => 'SHARED_' + id.replace(/^(OOT|MM)_/, '');
 
-export type SlotView = { on: boolean; label: string; name: string; n: number };
+export type SlotView = { on: boolean; label: string; name: string; n: number; icon: string };
 
 /** What a slot shows, given how many of each item the player has. */
 export function slotView(slot: Slot, count: (id: string) => number): SlotView {
   const n = (id: string) => count(id) || count(alt(id));
   if (slot.bottle) {
     const total = slot.ids.reduce((t, id) => t + n(id), 0);
-    return { on: total >= slot.bottle, label: slot.label, name: slot.name, n: 0 };
+    return { on: total >= slot.bottle, label: slot.label, name: slot.name, n: 0, icon: slot.ids[0] };
   }
   if (slot.ids.length > 1) {
     const got = [...slot.ids].reverse().find(id => n(id) > 0);
-    return got ? { on: true, label: SHORT[got] ?? slot.label, name: got, n: 0 } : { on: false, label: slot.label, name: slot.name, n: 0 };
+    return got ? { on: true, label: SHORT[got] ?? slot.label, name: got, n: 0, icon: got } : { on: false, label: slot.label, name: slot.name, n: 0, icon: slot.ids[0] };
   }
   const have = n(slot.ids[0]);
-  return { on: slot.always || have > 0, label: slot.label, name: slot.name, n: slot.count && have > 1 ? have : 0 };
+  return { on: slot.always || have > 0, label: slot.label, name: slot.name, n: slot.count && have > 1 ? have : 0, icon: slot.ids[0] };
 }

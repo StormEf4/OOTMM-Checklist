@@ -435,35 +435,68 @@ details.box[open] { display: grid; gap: 9px; }
 .cube { display: none; }
 .brand[data-meter="menu"] > :not(.cube) { display: none; }
 .brand[data-meter="menu"] .cube { display: block; width: 100%; perspective: 700px; }
-.cube-face { --frame: var(--gold); --plate: color-mix(in srgb, var(--panel) 55%, #000); --cell: color-mix(in srgb, var(--ink) 7%, transparent); --lit: var(--ink);
-  border: 1.5px solid color-mix(in srgb, var(--frame) 70%, transparent); border-radius: 14px; padding: 6px 8px 6px;
-  background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--frame) 12%, var(--plate)), var(--plate) 70%);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .45), inset 0 1px 0 color-mix(in srgb, var(--frame) 25%, transparent), 0 3px 12px rgba(0, 0, 0, .3); }
+.cube-face { --frame: var(--gold); --frame-hi: color-mix(in srgb, var(--frame) 55%, #fff); --frame-lo: color-mix(in srgb, var(--frame) 45%, #000);
+  --plate: color-mix(in srgb, var(--panel) 50%, #000); --sock: color-mix(in srgb, var(--plate) 70%, #000); --lit: var(--ink);
+  position: relative; border-radius: 12px; padding: 9px 10px 8px;
+  border: 2px solid var(--frame-lo);
+  background:
+    radial-gradient(circle at 7px 7px, var(--frame-hi) 0 1.6px, var(--frame-lo) 2.4px, transparent 3px),
+    radial-gradient(circle at calc(100% - 7px) 7px, var(--frame-hi) 0 1.6px, var(--frame-lo) 2.4px, transparent 3px),
+    radial-gradient(circle at 7px calc(100% - 7px), var(--frame-hi) 0 1.6px, var(--frame-lo) 2.4px, transparent 3px),
+    radial-gradient(circle at calc(100% - 7px) calc(100% - 7px), var(--frame-hi) 0 1.6px, var(--frame-lo) 2.4px, transparent 3px),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, .018) 0 2px, transparent 2px 6px),
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--frame) 16%, var(--plate)), var(--plate) 72%);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .55), 0 0 0 3px color-mix(in srgb, var(--frame) 55%, transparent), 0 0 0 4px rgba(0, 0, 0, .5),
+    inset 0 1px 0 color-mix(in srgb, var(--frame) 35%, transparent), inset 0 0 18px rgba(0, 0, 0, .45), 0 5px 16px rgba(0, 0, 0, .4); }
+.cube-face::before { content: ""; position: absolute; inset: 4px; border: 1px solid color-mix(in srgb, var(--frame) 30%, transparent); border-radius: 8px; pointer-events: none; }
+.cube-face::after { content: ""; position: absolute; left: 50%; top: -6px; width: 10px; height: 10px; transform: translateX(-50%) rotate(45deg);
+  background: linear-gradient(135deg, var(--frame-hi), var(--frame) 50%, var(--frame-lo)); box-shadow: 0 0 0 1.5px rgba(0, 0, 0, .55), 0 0 8px color-mix(in srgb, var(--frame) 60%, transparent); }
 .cube-face.mm { --frame: var(--mm); }
 .cube-face.spin-r { animation: cube-r .32s ease-out; } .cube-face.spin-l { animation: cube-l .32s ease-out; }
 @keyframes cube-r { from { transform: rotateY(-70deg); opacity: .3; } to { transform: none; opacity: 1; } }
 @keyframes cube-l { from { transform: rotateY(70deg); opacity: .3; } to { transform: none; opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .cube-face.spin-r, .cube-face.spin-l { animation: none; } }
-.cube-head { display: flex; align-items: center; gap: 4px; margin-bottom: 5px; }
-.cube-name { flex: 1; text-align: center; font: 700 .92rem var(--display); color: var(--frame); letter-spacing: .05em; font-kerning: none; text-transform: uppercase; }
-.cube-turn { width: 30px; height: 24px; color: var(--frame); font-size: .78rem; border-radius: 7px; border: 1px solid color-mix(in srgb, var(--frame) 35%, transparent); }
-.cube-turn:hover, .cube-game:hover { background: var(--cell); }
-.cube-game { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 7px; border-radius: 7px; border: 1px solid var(--frame); color: var(--frame); font-size: .74rem; font-weight: 700; }
-.slots { display: grid; grid-template-columns: repeat(var(--cols), 1fr); gap: 4px; }
-.slot { position: relative; aspect-ratio: 1; display: grid; place-items: center; border-radius: 50%; background: var(--cell); padding: 0;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 9%, transparent); color: color-mix(in srgb, var(--ink) 26%, transparent); font-size: .58rem; line-height: 1.05; text-align: center; overflow: hidden; }
-.slot .sl { padding: 0 2px; overflow-wrap: anywhere; }
-.slot.on { background: radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--frame) 42%, transparent), color-mix(in srgb, var(--frame) 12%, transparent) 72%);
-  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--frame) 85%, transparent); color: var(--lit); font-weight: 700; }
-.slot:hover, .slot.sel { outline: 2px solid var(--frame); outline-offset: 1px; }
-.slot.sel { animation: cube-cursor 1s ease-in-out infinite alternate; }
-@keyframes cube-cursor { from { outline-color: var(--frame); } to { outline-color: color-mix(in srgb, var(--frame) 35%, transparent); } }
-.slot i { position: absolute; right: 1px; bottom: 0; font: 700 .6rem var(--body); font-style: normal; color: #fff; background: rgba(0, 0, 0, .65); border-radius: 6px; padding: 0 3px; }
-.cube-foot { display: flex; align-items: center; gap: 6px; margin-top: 6px; min-height: 18px; }
-.cube-label { flex: 1; min-width: 0; font-size: .8rem; color: var(--lit); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cube-dots { display: flex; gap: 5px; }
-.cube-dots i { width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--frame); }
-.cube-dots i.on { background: var(--frame); }
+@media (prefers-reduced-motion: reduce) { .cube-face.spin-r, .cube-face.spin-l { animation: none; } .slot.sel { animation: none; } }
+.cube-head { position: relative; display: flex; align-items: center; gap: 4px; margin: 1px 0 7px; }
+/* The page name sits on a ribbon banner. */
+.cube-name { flex: 1; min-width: 0; display: flex; justify-content: center; }
+.cube-name span { display: block; padding: 3px 14px 4px; font: 700 .82rem var(--display); letter-spacing: .06em; font-kerning: none; text-transform: uppercase; white-space: nowrap;
+  color: var(--frame-hi); text-shadow: 0 1px 0 rgba(0, 0, 0, .8);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--frame) 34%, var(--sock)), color-mix(in srgb, var(--frame) 14%, var(--sock)));
+  clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 50%, 100% 100%, 0 100%, 8px 50%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--frame) 45%, transparent), inset 0 -1px 0 rgba(0, 0, 0, .5); }
+/* Page turns are small shoulder buttons with a jewel face. */
+.cube-turn { width: 28px; height: 24px; display: grid; place-items: center; font-size: .66rem; color: var(--frame-hi); border-radius: 12px 4px 4px 12px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--frame) 30%, var(--sock)), var(--sock)); box-shadow: inset 0 0 0 1px var(--frame-lo), inset 0 1px 0 color-mix(in srgb, var(--frame) 40%, transparent); }
+.cube-head .cube-turn:nth-of-type(2) { border-radius: 4px 12px 12px 4px; }
+.cube-turn:hover, .cube-game:hover { filter: brightness(1.25); }
+.cube-turn:active { transform: translateY(1px); }
+.cube-game { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border-radius: 12px; color: rgba(0, 0, 0, .82); font-size: .72rem; font-weight: 800; letter-spacing: .03em;
+  background: linear-gradient(180deg, var(--frame-hi), var(--frame) 55%, var(--frame-lo)); box-shadow: 0 0 0 1px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .35); }
+.slots { display: grid; grid-template-columns: repeat(var(--cols), 1fr); gap: 4px; padding: 5px; border-radius: 9px;
+  background: color-mix(in srgb, var(--sock) 70%, transparent); box-shadow: inset 0 2px 6px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(0, 0, 0, .35), 0 1px 0 color-mix(in srgb, var(--frame) 22%, transparent); }
+/* Each slot is a recessed socket; a found item glows in it. */
+.slot { position: relative; aspect-ratio: 1; display: grid; place-items: center; padding: 0; border-radius: 30%;
+  background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--ink) 7%, var(--sock)), var(--sock) 75%);
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, .6), inset 0 -1px 0 color-mix(in srgb, var(--frame) 18%, transparent), 0 0 0 1px rgba(0, 0, 0, .3); }
+.slot .mi { width: 70%; height: 70%; fill: color-mix(in srgb, var(--ink) 17%, transparent); transition: transform .15s; }
+.slot .mi .hi { fill: rgba(0, 0, 0, .25); }
+.slot.on { background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--tint-glow, var(--frame)) 40%, var(--sock)), var(--sock) 78%);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--frame) 75%, transparent), inset 0 2px 3px rgba(0, 0, 0, .35), 0 0 8px color-mix(in srgb, var(--frame) 30%, transparent); }
+.slot.on .mi { fill: var(--tint, var(--frame-hi)); filter: drop-shadow(0 1px 0 rgba(0, 0, 0, .7)) drop-shadow(0 0 3px color-mix(in srgb, var(--tint, var(--frame)) 55%, transparent)); }
+.slot.on .mi .hi { fill: rgba(255, 255, 255, .5); }
+.slot:hover .mi { transform: scale(1.1); }
+.slot:hover, .slot.sel { outline: 2px solid var(--frame-hi); outline-offset: 1px; }
+.slot.sel { animation: cube-cursor .9s ease-in-out infinite alternate; }
+@keyframes cube-cursor { from { outline-color: var(--frame-hi); box-shadow: 0 0 10px color-mix(in srgb, var(--frame) 60%, transparent); } to { outline-color: color-mix(in srgb, var(--frame) 35%, transparent); } }
+.slot i { position: absolute; right: 0; bottom: -1px; font: 800 .6rem var(--body); font-style: normal; color: #fff; background: linear-gradient(180deg, var(--frame-lo), #000);
+  border: 1px solid var(--frame); border-radius: 6px; padding: 0 3px; line-height: 1.25; }
+/* The item's name shows on a plate along the bottom, like an inventory caption. */
+.cube-foot { display: flex; align-items: center; gap: 8px; margin-top: 7px; min-height: 22px; padding: 2px 9px; border-radius: 7px;
+  background: linear-gradient(180deg, var(--sock), color-mix(in srgb, var(--sock) 80%, #000)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--frame) 40%, transparent), inset 0 2px 4px rgba(0, 0, 0, .5); }
+.cube-label { flex: 1; min-width: 0; font-size: .8rem; color: var(--frame-hi); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 0 #000; }
+.cube-dots { display: flex; gap: 6px; }
+.cube-dots i { width: 7px; height: 7px; transform: rotate(45deg); box-shadow: inset 0 0 0 1px var(--frame); }
+.cube-dots i.on { background: linear-gradient(135deg, var(--frame-hi), var(--frame)); box-shadow: 0 0 5px var(--frame); }
 .cube-wait { padding: 30px 0; text-align: center; color: var(--lit); opacity: .7; font-size: .85rem; }
 
 /* Double Defense: bold gold outline on the hearts */
@@ -483,3 +516,12 @@ details.box[open] { display: grid; gap: 9px; }
 .row-pin { width: 32px; height: 40px; }
 .row:not(:hover):not(:focus-within) .row-pin[aria-pressed="false"] { opacity: .35; }
 .pins-sec .section-head h2 { color: var(--gold); }
+
+/* The player's own item menu icons, and the Edit mode window that changes them */
+.slot .mi-own { width: 72%; height: 72%; object-fit: contain; image-rendering: auto; filter: grayscale(1) brightness(.55) opacity(.55); }
+.slot.on .mi-own { filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .7)); }
+.editing .cube .slot { cursor: pointer; outline: 1px dashed color-mix(in srgb, var(--frame) 60%, transparent); outline-offset: -3px; }
+.icon-edit-row { display: flex; gap: 18px; align-items: end; margin: 4px 0 12px; }
+.icon-prev { display: grid; gap: 4px; justify-items: center; font-size: .8rem; color: var(--muted); }
+.icon-prev .slot { --frame: var(--gold); --frame-hi: color-mix(in srgb, var(--gold) 55%, #fff); --sock: color-mix(in srgb, var(--panel) 50%, #000); width: 72px; }
+.icon-pick { display: inline-flex; cursor: pointer; }
