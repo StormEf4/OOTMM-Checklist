@@ -29,6 +29,7 @@ export const aliases = {
   '@ootmm/data': path.join(OOTMM, 'packages/data/lib/index.ts'),
   '@ootmm/regions': path.join(OOTMM, 'packages/generator/lib/combo/regions.ts'),
   '@ootmm/names': path.join(OOTMM, 'packages/generator/lib/combo/names.ts'),
+  '@ootmm/gi': path.join(OOTMM, 'packages/generator/lib/combo/randomizer/util.ts'),
   'fast-xml-parser': path.join(ROOT, 'tools/shims/fast-xml-parser.mjs'),
   'csv/sync': path.join(ROOT, 'tools/shims/csv-sync.mjs'),
   'uint8array-extras': path.join(ROOT, 'tools/shims/uint8array-extras.mjs'),

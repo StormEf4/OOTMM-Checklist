@@ -49,6 +49,9 @@ h1, h2, h3 { font-family: var(--display); font-weight: 700; margin: 0; text-wrap
 .seed-btn { text-align: left; }
 .day { color: var(--gold); font: italic 400 .95rem var(--display); }
 .remain { color: var(--muted); font-size: .92rem; font-variant-numeric: tabular-nums; }
+.game-link { color: var(--muted); font-size: .82rem; display: flex; align-items: center; gap: .4em; }
+.game-link::before { content: ""; width: .55em; height: .55em; border-radius: 50%; background: var(--oot); box-shadow: 0 0 6px var(--oot); }
+.game-link[hidden] { display: none; }
 .legend { display: flex; flex-wrap: wrap; gap: 0 12px; white-space: nowrap; font-size: .86rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .legend b { font-weight: 500; }
 .legend .o { color: var(--oot); } .legend .m { color: var(--mm); }

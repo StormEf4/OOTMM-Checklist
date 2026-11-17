@@ -83,6 +83,22 @@ After that, the `Firebase site` workflow publishes `dist/web` to `https://<proje
 `firestore.rules` on every change to main. The free plan allows 20,000 writes and 50,000 reads a day, far more than
 coop uses.
 
+## Game tracking (Windows app)
+
+The Windows app can tick checks off by itself as you play. It listens to the OoTMM Client, the program OoTMM uses for
+co-op, which reads the game in Project64-EM.
+
+1. Get [Project64-EM](https://github.com/OoTMM/Project64-EM/releases/latest) and the
+   [OoTMM Client](https://github.com/OoTMM/multiplayer/releases/latest) (the "client" download).
+2. Open your seed's patch file (`.ootmm`) with the OoTMM Client. It comes with every seed, solo seeds too.
+3. Play your ROM in Project64-EM with the checklist open. "Connected to game" shows under the progress line.
+
+Each check you get is ticked, and the item you got there is logged, so the Items tab and item menu keep up. App
+Settings > Game tracking turns it off, or keeps the checks but not the items. Entrances are never read from the game.
+Each seed follows the first game that reports to it, so playing another seed doesn't tick the wrong list. Coop players
+on the phone see the ticks through the Coop room. Pickups made while the checklist is closed aren't caught; tick those
+yourself.
+
 ## Check names
 
 **Settings > Your edits > Check names** has a three-way slider:

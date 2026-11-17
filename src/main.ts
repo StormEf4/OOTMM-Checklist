@@ -23,6 +23,7 @@ import audit from './generated/audit.json';
 import shippedCustom from '../custom-checks.json';
 import { COLOR_TOKENS, FONT_CHOICES, SEALS, SKINS, skinById } from './skins';
 import { applyLayer, originalAttr, originalOf, templateOf, textAt } from './textlayer';
+import { startGameFeed, type GameItem, type GameLink } from './gamefeed';
 
 declare const __TARGET__: 'web' | 'desktop' | 'artifact';
 declare const __OOTMM__: string;
@@ -71,6 +72,8 @@ type Seed = {
   entrances: Record<string, string>;
   /** Checks and entrances the player marked to come back to later. */
   later?: string[];
+  /** The OoTMM game this seed follows for game tracking, by the session id in its patch file. Set by the first item it reports. */
+  game?: string;
   notes: Record<string, string>;
   /** Plain text of the seed's notes, kept for older versions of the app. */
   pad: string;
@@ -109,6 +112,8 @@ type Saved = {
   ui: {
     skin?: string; theme?: string; meter?: string; cubeGame?: 'oot' | 'mm'; cubePage?: string; railOpen?: string[]; railW?: number; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
     showLocked?: boolean; changesOnly?: boolean; collapsed?: string[];
+    /** Game tracking (Windows app): off when false. gameItems false keeps the checks but not the items found at them. */
+    gameTrack?: boolean; gameItems?: boolean;
     logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; haveOnly?: boolean; hideWritten?: boolean;
     /** Which check names show. Custom puts the player's renames on top of nameBase. */
     names?: NameStyle; nameBase?: 'original' | 'player';
@@ -617,6 +622,7 @@ function scheduleLogic() {
       logicError = '';
       reachSet = new Set(out.reach);
       stoneSet = new Set(out.stones);
+      if (gameQueue.length) flushGameItems();
       opensWith = new Map();
       logicBusy = false;
       renderLogicStatus();
@@ -856,6 +862,7 @@ function shell() {
           <button class="seed-btn" data-tab="seeds"><h1 id="seedName"></h1></button>
           <div class="day" id="dayLine"></div>
           <div class="remain" id="remain"></div>
+          <div class="game-link" id="gameLink" hidden></div>
           <div class="legend" id="legend"></div>
         </div>
         <div class="hearts" id="hearts" data-edit="meter"></div>
@@ -2092,6 +2099,86 @@ function renderPinsView() {
     </div></div>`;
 }
 
+/* ---------- Game tracking ---------- */
+
+/* Only the Windows app can reach the OoTMM Client on the same PC. Tests point it at a stand-in with __OOTMM_GAME_FEED_URL__. */
+const gameTrackAvailable = () => iconFolderAvailable() || !!(globalThis as any).__OOTMM_GAME_FEED_URL__;
+const gameTrackOn = () => gameTrackAvailable() && saved.ui.gameTrack !== false;
+let stopGameFeed: (() => void) | null = null;
+let gameLink: GameLink = 'none';
+/** Items that came in before the item list was ready, so they can be logged as items rather than words. */
+let gameQueue: GameItem[] = [];
+/** Check names the game reported that aren't on this seed's list, newest last. */
+const gameUnknown: string[] = [];
+let gameRenderTimer = 0;
+
+function syncGameFeed() {
+  if (gameTrackOn() && !stopGameFeed) stopGameFeed = startGameFeed({ item: onGameItem, status: l => { gameLink = l; renderGameLink(); } });
+  else if (!gameTrackOn() && stopGameFeed) { stopGameFeed(); stopGameFeed = null; gameLink = 'none'; renderGameLink(); }
+}
+function renderGameLink() {
+  const el = document.getElementById('gameLink');
+  if (el) {
+    el.hidden = gameLink !== 'game';
+    el.textContent = gameLink === 'game' ? 'Connected to game' : '';
+  }
+  if (tab === 'settings' && settingsView === 'look') { const s = document.getElementById('gameState'); if (s) s.textContent = gameStateText(); }
+}
+const gameStateText = () => gameLink === 'game' ? 'Connected to your game. Checks tick as you get them.'
+  : gameLink === 'client' ? 'The OoTMM Client is running. Waiting for the game to start.'
+  : 'Not connected. Start the OoTMM Client and Project64-EM.';
+
+function onGameItem(m: GameItem) {
+  /* Each seed follows one game, so playing a different seed doesn't tick this one. */
+  if (m.session && seed.game && seed.game !== m.session) return;
+  if (m.session && !seed.game) seed.game = m.session;
+  gameQueue.push(m);
+  if (logicOut || !logicOn() || !lastResult) flushGameItems();
+  else scheduleLogic();
+}
+function flushGameItems() {
+  const list = gameQueue;
+  gameQueue = [];
+  const listed = new Set(checks.map(c => c.id));
+  let changed = 0;
+  for (const m of list) {
+    if (!listed.has(m.location)) {
+      if (!gameUnknown.includes(m.location)) { gameUnknown.push(m.location); if (gameUnknown.length > 30) gameUnknown.shift(); }
+      continue;
+    }
+    if (!doneSet.has(m.location)) { doneSet.add(m.location); changed++; }
+    if (saved.ui.gameItems !== false && m.item && !seed.found[m.location]) {
+      const id = m.self ? logicOut?.giItems?.[m.item] : undefined;
+      const words = itemName(m.item) || m.item;
+      seed.found[m.location] = id ?? 'text:' + (m.self ? words : `${words} (for another player)`);
+      changed++;
+    }
+  }
+  if (!changed) return;
+  save();
+  clearTimeout(gameRenderTimer);
+  gameRenderTimer = window.setTimeout(() => {
+    renderDial();
+    renderRail();
+    if (tab === 'items') renderItems(); else renderPane();
+    scheduleLogic();
+  }, 120);
+}
+
+function gameTrackBox() {
+  if (!gameTrackAvailable()) return '';
+  const on = saved.ui.gameTrack !== false;
+  const seg = (attr: string, value: boolean, l: [string, string]) => `<button data-${attr}="1" aria-pressed="${value}">${l[0]}</button><button data-${attr}="0" aria-pressed="${!value}">${l[1]}</button>`;
+  return `<div class="box"><h3>Game tracking</h3>
+    <p>Ticks checks off as you get them in the game. Play in Project64-EM with the OoTMM Client running (open your seed's patch file to start it), and keep this app open. Entrances are never read from the game; you still fill those in.</p>
+    <div class="seg" role="group" aria-label="Game tracking">${seg('game-track-set', on, ['On', 'Off'])}</div>
+    ${on ? `<p class="fine" id="gameState">${esc(gameStateText())}</p>
+    <h3>Items found</h3><p>Also log the item you got at each check, so the Items tab and item menu keep up.</p>
+    <div class="seg" role="group" aria-label="Log items found">${seg('game-items-set', saved.ui.gameItems !== false, ['Log items', 'Checks only'])}</div>
+    ${seed.game ? `<p class="fine">This seed follows one game. If you started a new seed in the game, let it follow that one.</p><div class="btns"><button class="btn alt keep" data-game-forget>Follow a different game</button></div>` : ''}
+    ${gameUnknown.length ? `<p class="fine">Checks the game reported that aren't on this seed's list: ${gameUnknown.slice(-5).map(esc).join(', ')}. Check that this seed's settings match your game.</p>` : ''}` : ''}</div>`;
+}
+
 function renderLook() {
   if (!iconsLoaded) { iconsLoaded = true; loadIcons().then(() => { if (customIcons.size) { renderCube(); if (tab === 'settings' && settingsView === 'look') renderLook(); } }); }
   const cur = skinById(saved.ui.skin);
@@ -2108,6 +2195,7 @@ function renderLook() {
       <div class="box"><h3>Item menu icons</h3><p>In Edit mode, tap any icon in the item menu to change it to a picture of your own. Your pictures stay on this device, and every later version of the app keeps them.</p>
         <p class="fine" id="iconCount">${customIcons.size ? `${customIcons.size} ${customIcons.size === 1 ? 'icon' : 'icons'} changed.` : 'No icons changed yet.'}</p>
         <div class="btns">${iconFolderAvailable() ? '<button class="btn alt keep" data-open-icons>Open icons folder</button>' : ''}${customIcons.size ? '<button class="btn danger keep" data-reset-icons>Put back every original icon</button>' : ''}</div></div>
+      ${gameTrackBox()}
       <div class="box"><h3>Text size</h3>
         <div class="seg" role="group" aria-label="Text size">${seg('scale-set', String(saved.ui.scale ?? 1), [['0.9', 'Small'], ['1', 'Normal'], ['1.12', 'Large'], ['1.25', 'Extra large']])}</div></div>
       <div class="box"><h3>List spacing</h3>
@@ -3214,6 +3302,9 @@ function events() {
     if (d.cubeSlot !== undefined) { cubeSel = cubeSel === Number(d.cubeSlot) ? -1 : Number(d.cubeSlot); renderCube(); return; }
     if (d.meterSet !== undefined) { saved.ui.meter = d.meterSet || undefined; save(); renderDial(); renderLook(); return; }
     if (d.scaleSet) { saved.ui.scale = Number(d.scaleSet); applyTheme(); save(); renderLook(); return; }
+    if (d.gameTrackSet) { saved.ui.gameTrack = d.gameTrackSet === '1'; save(); syncGameFeed(); renderLook(); return; }
+    if (d.gameItemsSet) { saved.ui.gameItems = d.gameItemsSet === '1'; save(); renderLook(); return; }
+    if ('gameForget' in d) { delete seed.game; save(); renderLook(); toast('This seed will follow the next game that reports an item.'); return; }
     if (d.compactSet) { saved.ui.compact = d.compactSet === '1'; applyTheme(); save(); renderLook(); return; }
     if ('backup' in d) { saveBackup(); return; }
     if (d.doc) { docCommand(d.doc, d.arg); return; }
@@ -3479,6 +3570,7 @@ function boot() {
     openSeed(saved.current);
     connectHostedStore();
     if (saved.seeds.some(s => s.live)) useFirebase();
+    syncGameFeed();
     /* Ask the browser to keep this site's storage instead of clearing it when space runs low. */
     navigator.storage?.persist?.().catch(() => {});
     addEventListener('pagehide', flushSave);

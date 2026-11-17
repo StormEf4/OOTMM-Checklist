@@ -8,7 +8,8 @@
 import type { Settings } from '@ootmm/core';
 
 import { Monitor, SETTINGS, options } from '@ootmm/core';
-import { ENTRANCES, MACROS, WORLD } from '@ootmm/data';
+import { ENTRANCES, MACROS, RAW_GI, WORLD } from '@ootmm/data';
+import { gi } from '@ootmm/gi';
 import { ChecklistLogicPassSolver, ChecklistWorldShuffler, ItemGroups, ItemHelpers, Items, Pathfinder, cloneWorld, logicPassPrice, makePlayerItem, worldState } from '@ootmm/logic';
 import { itemName } from '@ootmm/names';
 import { engineSettings, withRealLogic } from './engine';
@@ -33,6 +34,8 @@ export type LogicOutput = {
   logged: number;
   spawnsOpen: boolean;
   pricesShuffled: boolean;
+  /** Catalog id for each item name the game reports, for game tracking. */
+  giItems: Record<string, string>;
   /** OoT checks in logic for only one age. Checks both ages can get aren't listed. */
   ages: Record<string, 'child' | 'adult'>;
   /** Only when next was asked for. Best first. */
@@ -60,6 +63,32 @@ function itemGroup(id: string, item: any): string {
 const familyOf = (id: string) => id.replace(/_\d+$/, '');
 const consumableName = (id: string, name: string) => /_\d+$/.test(id) ? name.replace(/^\d+ /, '') : name;
 
+/*
+ * The game reports items by OoTMM's "GI" names, which are the names its own gi() turns each item into when it writes the
+ * seed: shared items become each game's own copy, dungeon keys can become one plain key, and so on. Run every item
+ * through that same code, so a reported name leads back to the item on the checklist. A name two items share (a plain
+ * small key with keys in their own dungeon) can't say which one it was, so it's left out.
+ */
+function giItemMap(settings: any, catalogFamily: Map<string, string>): Record<string, string> {
+  const targets = new Map<string, Set<string>>();
+  for (const [id, item] of Object.entries(Items as Record<string, any>)) {
+    const target = catalogFamily.get(id) ?? catalogFamily.get(familyOf(id));
+    if (!target) continue;
+    for (const game of ['oot', 'mm'] as const) {
+      let sym: string | undefined;
+      try { sym = (RAW_GI as any[])[gi(settings, game, item, true) - 1]?.id; } catch { continue; }
+      if (sym) (targets.get(sym) ?? targets.set(sym, new Set()).get(sym)!).add(target);
+    }
+  }
+  const out: Record<string, string> = {};
+  for (const [sym, t] of targets) {
+    const own = catalogFamily.get(sym);
+    if (own && t.has(own)) out[sym] = own;
+    else if (t.size === 1) out[sym] = [...t][0];
+  }
+  return out;
+}
+
 type Base = {
   key: string;
   state: any;
@@ -71,6 +100,8 @@ type Base = {
   /** Areas each location sits in. */
   locAreas: Map<string, string[]>;
   pricesShuffled: boolean;
+  /** Catalog id for each item name the game reports (OoTMM's "GI" names), for game tracking. */
+  giItems: Record<string, string>;
   pre?: { key: string; events: Record<string, any>; start: Map<any, number> };
 };
 let base: Base | null = null;
@@ -177,7 +208,7 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
   for (const [area, a] of Object.entries(shuffler.world.areas as Record<string, any>)) {
     for (const loc of Object.keys(a.locations)) (locAreas.get(loc) ?? locAreas.set(loc, []).get(loc)!).push(area);
   }
-  base = { key, state, shuffler, poolSources, catalog, catalogFamily, locAreas, pricesShuffled };
+  base = { key, state, shuffler, poolSources, catalog, catalogFamily, locAreas, pricesShuffled, giItems: giItemMap(state.settings, catalogFamily) };
   return base;
 }
 
@@ -333,6 +364,7 @@ async function computeOne(input: LogicInput): Promise<LogicOutput> {
       logged,
       spawnsOpen: spawns.every(s => input.entrances[s]),
       pricesShuffled: b.pricesShuffled,
+      giItems: b.giItems,
       ages,
       next,
       ms: Math.round(performance.now() - t0),

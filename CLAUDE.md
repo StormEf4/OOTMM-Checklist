@@ -45,6 +45,9 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `src/menu-icons.ts`: the item menu's drawn icons. `src/icon-store.ts`: icons the player swaps in through Edit mode, kept on their device (Windows: an `icons` folder beside the saved data, through `desktop/preload.js`; browsers: IndexedDB), never in this repository
 - `src/notes.ts`: the Notes tab's cleaning of formatted notes. `src/live.ts`: Coop live play merging. `src/firebase.ts`:
   Coop's server outside the hosted page, set by `firebase-config.json`, with rules in `firestore.rules`
+- `src/gamefeed.ts`: game tracking in the Windows app. It listens to the OoTMM Client's local feed
+  (`127.0.0.1:39278`), never the emulator's own pipe, so co-op keeps working. It drops entrance messages, so the
+  Entrances tab stays player-filled. Item names map to the checklist through OoTMM's own `gi()` (`giItems` in `logic.ts`)
 - `desktop/`: the Windows window (Electron)
 - `tools/`: build, tests and packaging
 - `dist/web/`: the built phone site, and `dist/desktop/`: the built Windows app files. Both are committed
@@ -62,7 +65,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
     about an hour over 3 shards. `LOGIC_RETRY=<file of case names>` retries skipped cases with looser placement rules.
   - `node tools/ui-toggles-data.mjs`, then `tools/ui-toggles.cjs`, uses every settings control in the browser.
 - Random shop prices are expected to differ in the logic sweep: the app counts shops at their normal price.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`: browser tests. Run with
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 
