@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS, SETTINGS, compute, enableFastMode, exportSettings, im
 import { computeLogic } from './engine/logic';
 import { checklistNormalDungeons } from '@ootmm/logic';
 import { PAGES, slotView } from './cube';
+import { menuIcon } from './menu-icons';
 import { MAP_SPOTS } from './mapspots';
 import { NAME_STYLES, playerName, type NameStyle } from './names';
 import { connectFirebase, firebaseReady, type LiveDb } from './firebase';
@@ -958,15 +959,15 @@ function renderCube() {
   });
   const nameOf = (i: number) => { const v = views[i]; return v ? (v.on ? v.name + (v.n ? ` ×${v.n}` : '') : `${v.name}: not found yet`) : ''; };
   const slots = views.map((v, i) =>
-    `<button class="slot keep${v.on ? ' on' : ''}${i === cubeSel ? ' sel' : ''}" data-cube-slot="${i}" aria-label="${esc(nameOf(i))}"><span class="sl">${esc(v.label)}</span>${v.n ? `<i>${v.n}</i>` : ''}</button>`).join('');
+    `<button class="slot keep${v.on ? ' on' : ''}${i === cubeSel ? ' sel' : ''}" data-cube-slot="${i}" aria-label="${esc(nameOf(i))}" title="${esc(nameOf(i))}">${menuIcon(v.icon)}${v.n ? `<i>${v.n}</i>` : ''}</button>`).join('');
   const got = views.filter(v => v.on).length;
   const turn = (d: number) => pages[(at + d + pages.length) % pages.length].id;
   const spin = cubeSpin; cubeSpin = '';
   box.innerHTML = `<div class="cube-face ${game}${spin}">
     <div class="cube-head">
-      <button class="cube-turn keep" data-cube-page="${turn(-1)}" aria-label="Previous page">◀</button>
-      <span class="cube-name">${page.name}</span>
-      <button class="cube-turn keep" data-cube-page="${turn(1)}" aria-label="Next page">▶</button>
+      <button class="cube-turn keep" data-cube-page="${turn(-1)}" aria-label="Previous page"><span aria-hidden="true">◀</span></button>
+      <span class="cube-name"><span>${page.name}</span></span>
+      <button class="cube-turn keep" data-cube-page="${turn(1)}" aria-label="Next page"><span aria-hidden="true">▶</span></button>
       <button class="cube-game keep" data-cube-game="${game === 'oot' ? 'mm' : 'oot'}" title="Switch to the ${game === 'oot' ? 'Majora\'s Mask' : 'Ocarina of Time'} menu">${game === 'oot' ? 'OoT' : 'MM'}<span aria-hidden="true">⇄</span></button>
     </div>
     ${catalog().length ? `<div class="slots" style="--cols:${page.cols}">${slots}</div>` : '<div class="cube-wait">Loading items</div>'}
