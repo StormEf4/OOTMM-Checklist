@@ -82,8 +82,10 @@ const MODULES = {
   ok('partner joins', await until(() => bb.evaluate(k => { const s = JSON.parse(localStorage.getItem(k)); return !!s?.seeds.find(x => x.id === s.current).live; }, KEY)));
 
   const KS = 'OOT Kokiri Forest Kokiri Sword Chest', MIDO = "OOT Mido's House Top Left";
+  await tab(bb, 'list'); await bb.fill('#search', 'kokiri sword'); await bb.waitForTimeout(300);
   await tick(a, KS);
   ok("A's tick reaches B", await until(() => isDone(bb, KS)));
+  ok("B's open list shows it without a reload", await until(() => bb.evaluate(id => document.querySelector(`.row[data-id="${CSS.escape(id)}"]`)?.classList.contains('done') ?? false, KS)));
   await tick(bb, MIDO);
   ok("B's tick reaches A", await until(() => isDone(a, MIDO)));
 

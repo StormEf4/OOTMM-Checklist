@@ -1468,8 +1468,10 @@ function renderEntrances() {
     }
     return true;
   });
+  /* Spawns decide where the seed starts, so the full list opens with them. */
+  const spawns = entrRegion && !words.length ? [] : list.filter(e => e.kind === 'Spawns');
   const byGroup = new Map<string, EntranceEntry[]>();
-  for (const e of list) (byGroup.get(e.group) ?? byGroup.set(e.group, []).get(e.group)!).push(e);
+  for (const e of list) if (!spawns.includes(e)) (byGroup.get(e.group) ?? byGroup.set(e.group, []).get(e.group)!).push(e);
   const body = [...byGroup.values()].sort((a, b) => regionRank(a[0].group, a[0].game, a[0].dungeon) - regionRank(b[0].group, b[0].game, b[0].dungeon)).map(rows => {
     const gid = rows[0].group;
     const all = vis.filter(e => e.group === gid && !entranceHidden(e));
@@ -1480,6 +1482,12 @@ function renderEntrances() {
       <span class="head-acts"><button class="linkish edit-only keep" data-add-entrance="${esc(gid)}">Add an entrance</button></span></div>
       ${shut ? '' : `<div class="rows">${sortIn('e:' + gid, rows, e => e.id).map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
   }).join('');
+  const spawnAll = vis.filter(e => e.kind === 'Spawns' && !entranceHidden(e));
+  const spawnShut = collapsed('e:spawns');
+  const spawnHtml = !spawns.length ? '' : `<section class="spawn-sec"><div class="section-head">
+      <button class="caret keep" data-collapse="e:spawns" aria-expanded="${!spawnShut}" aria-label="Show or hide the spawns"></button>
+      <h2>Where you start</h2><span class="c">${spawnAll.filter(e => seed.entrances[e.id]).length}/${spawnAll.length}</span></div>
+      ${spawnShut ? '' : `<div class="rows">${[...spawns].sort((a, b) => Number(/adult/i.test(a.title)) - Number(/adult/i.test(b.title))).map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
 
   const { found, total } = entranceStats();
   pane.innerHTML = `<div class="toolbar">
@@ -1494,7 +1502,7 @@ function renderEntrances() {
       </div>
       <div class="chips" role="group" aria-label="Filter by kind of entrance">${chips}</div>
     </div>
-    <div class="scroll" id="entrScroll">${body || `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more entrances.${saved.ui.hideFound ? ' Logged entrances are hidden too.' : ''}</div>`}</div>`;
+    <div class="scroll" id="entrScroll">${spawnHtml + body || `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more entrances.${saved.ui.hideFound ? ' Logged entrances are hidden too.' : ''}</div>`}</div>`;
   $('#entrScroll').scrollTop = scrollTop;
   if (hadFocus) {
     const i = $('#entrSearch', pane) as HTMLInputElement;
