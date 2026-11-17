@@ -18,6 +18,9 @@ export type EntranceEntry = {
   dungeon: boolean;
   allowed: number;
   reusable: boolean;
+  /* in: a door from this area into a house, grotto or dungeon. out: leaving one of those, back to this area.
+     path: a road to another area. other: spawns, songs, bosses and the rest. */
+  dir?: 'in' | 'out' | 'path' | 'other';
 };
 export type EntranceDest = { id: string; game: 'oot' | 'mm'; title: string; sub: string; groupName: string };
 export type EntranceData = {
@@ -47,6 +50,13 @@ export function entranceKind(type: string) {
   if (type === 'wallmaster') return 'Wallmasters';
   if (type.startsWith('spawn')) return 'Spawns';
   return type.replace(/-/g, ' ').replace(/^./, c => c.toUpperCase());
+}
+
+function entranceDir(type: string): EntranceEntry['dir'] {
+  if (type.endsWith('-exit')) return 'out';
+  if (/^(dungeon|indoors|grotto|grave)/.test(type)) return 'in';
+  if (/^(region|overworld)/.test(type)) return 'path';
+  return 'other';
 }
 
 function describeSource(e: any) {
@@ -136,7 +146,7 @@ export function shuffledEntrances(state: any): EntranceData {
     if (back) rev[id] = back;
     list.push({
       id, game: e.game, kind: entranceKind(e.type), ...describeSource(e), group, groupName: groupLabel(group),
-      dungeon: DUNGEON_REGIONS.has(group), allowed: set, reusable: reusable.has(id),
+      dungeon: DUNGEON_REGIONS.has(group), allowed: set, reusable: reusable.has(id), dir: entranceDir(e.type),
     });
   }
   return { list, dests, sets, rev };
