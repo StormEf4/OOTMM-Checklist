@@ -20,7 +20,7 @@ const shot = n => `.cache/shots/${n}.png`;
   // Double Defense outlines the hearts
   ok('hearts start without the gold outline', !(await pc.$('.heart-row.dd')));
   await pc.click('.item-btn[data-item="OOT_DEFENSE_UPGRADE"]'); await pc.waitForTimeout(250);
-  ok('Double Defense gives the Hyrule hearts a gold outline', !!(await pc.$('.heart-row.oot.dd')) && !(await pc.$('.heart-row.mm.dd')));
+  ok('Double Defense gives all 20 hearts a gold outline', (await pc.$$('.heart-row.dd')).length === 2);
   // the item menu progress display
   await pc.click('.item-btn[data-item="OOT_BOW"]'); await pc.waitForTimeout(200);
   await pc.click('.rail .tab[data-tab=settings]'); await pc.click('[data-setview=look]'); await pc.click('[data-meter-set=menu]'); await pc.waitForTimeout(200);
@@ -57,6 +57,11 @@ const shot = n => `.cache/shots/${n}.png`;
   await pc.click('[data-entr-region="@songs"]'); await pc.waitForTimeout(300);
   ok('the rail opens just the songs', (await pc.$$eval('#entrScroll section h2', hs => hs.map(h => h.textContent))).join() === 'Songs');
   await pc.click('[data-entr-region=""]'); await pc.waitForTimeout(300);
+  const pinFirst = await pc.$eval('#entrScroll .row.entr .row-pin', e => e.dataset.pin);
+  await pc.click(`#entrScroll .row-pin[data-pin="${pinFirst}"]`); await pc.waitForTimeout(250);
+  ok('a pinned entrance moves to Pinned at the top', (await pc.$eval('#entrScroll section', s => s.className)) === 'pins-sec' && !!(await pc.$(`#entrScroll .pins-sec .row-pin[data-pin="${pinFirst}"]`)));
+  await pc.click(`#entrScroll .pins-sec .row-pin[data-pin="${pinFirst}"]`); await pc.waitForTimeout(250);
+  ok('unpinning puts it back', !(await pc.$('#entrScroll .pins-sec')), await pc.$eval('#entrScroll .pins-sec', e => e.textContent.replace(/\s+/g, ' ').slice(0, 200)).catch(() => ''));
   const railHas = id => pc.$$eval(`#regions [data-entr-region="${id}"]`, e => e.length);
   ok('Hyrule starts folded on Entrances', (await railHas('OOT_KOKIRI_FOREST')) === 0);
   await pc.click('#regions .group.fold[data-collapse="re:Hyrule"]'); await pc.waitForTimeout(200);

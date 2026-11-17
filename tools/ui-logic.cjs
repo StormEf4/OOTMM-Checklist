@@ -38,7 +38,7 @@ const shot = '.cache/shots/';
   const items = await p.$$eval('.item-btn', e => e.map(x => x.textContent.trim()));
   ok('items tab lists items from the settings', items.length > 80, `${items.length} items`);
   ok('consumable refills are left out', !items.some(t => /^5 Bombs/.test(t)));
-  for (const name of ['Fairy Slingshot', 'Bomb Bag', 'Progressive Hookshot', 'Hookshot', 'Progressive Strength', "Goron's Bracelet", 'Fairy Ocarina', 'Ocarina'])
+  for (const name of ['Fairy Slingshot', 'Bomb Bag', 'Hookshot', "Goron's Bracelet", 'Ocarina of Time'])
     await p.locator('.item-btn', { hasText: name }).first().click().catch(() => {});
   await wait(200);
   await p.screenshot({ path: shot + 'items.png' });
@@ -136,12 +136,12 @@ const shot = '.cache/shots/';
   ok('older saves open the new tabs', true);
 
   /* Save pins off */
-  await p.click('.rail .tab[data-tab=settings]'); await p.click('[data-setview=look]'); await p.waitForSelector('[data-save-pins]');
+  await p.click('.rail .tab[data-tab=settings]'); await p.click('[data-setview=pins]'); await p.waitForSelector('[data-save-pins]');
   await p.click('[data-save-pins]'); await wait(300);
   ok('turning Save pins off drops them from the save', (await store()).ui.savePins === false && !(await store()).ui.pins);
   await p.click('.rail .tab[data-tab=items]'); await p.waitForSelector('.item-btn');
   ok('pins still show until the app closes', !!(await p.$('.items.pinned')));
-  await p.click('.rail .tab[data-tab=settings]'); await p.click('[data-setview=look]'); await p.waitForSelector('[data-save-pins]');
+  await p.click('.rail .tab[data-tab=settings]'); await p.click('[data-setview=pins]'); await p.waitForSelector('[data-save-pins]');
   await p.click('[data-save-pins]'); await wait(300);
   ok('turning it back on saves them', (await store()).ui.pins.length === 1);
   await p.click('[data-clear-pins]'); await wait(300);
