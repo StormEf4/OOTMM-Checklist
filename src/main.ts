@@ -1923,12 +1923,6 @@ function renderCoop() {
   $('#pane').innerHTML = `${head}<div class="scroll"><div class="page">
     ${liveBoxHtml()}
     ${liveSeeds.length ? `<div class="box"><h3>Your live seeds</h3><p>Seeds on this device that are shared live. Open one to play it together.</p><div id="coopList">${list}</div></div>` : ''}
-    <div class="box"><h3>How coop works</h3>
-      <p>Ticks, skips, found items, item counts, entrances, check notes, settings and the Notes page sync within a second or two.</p>
-      <p>Each change is timed, so changes made at the same moment on both sides both survive. If you both type in the Notes page at once, the last one to type wins.</p>
-      <p class="fine">${liveWhere === 'claude'
-        ? "Your partner opens this same hosted page and joins with your code. To save changes, they need the page shared with them as an Editor from the page's Share menu."
-        : 'Your partner joins with your code from the Windows app or the phone site, signed in to nothing. Anyone with the code can join, so share it only with your partner. Codes from the hosted page on Claude only work there.'} Stopping on one device leaves the seed and its progress there.</p></div>
   </div></div>`;
 }
 

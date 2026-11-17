@@ -11,6 +11,8 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+/* The heading fonts' kerning pulls some letter pairs together, so in Cinzel Decorative the two O's of "Coop" overlap. */
+h1, h2, h3, .dial .pct, .day, .group, .cat summary, .nmz, .skin-card strong { font-kerning: none; }
 html { font-size: calc(16px * var(--scale)); }
 body { margin: 0; background: var(--bg) var(--pattern); color: var(--ink); font: 400 calc(17px * var(--scale))/1.35 var(--body); -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
 button, input, select, textarea { font: inherit; color: inherit; }
