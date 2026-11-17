@@ -152,6 +152,18 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
     if (!max.has(id) && tracked(pi.item)) max.set(id, n);
     if (max.has(id)) start.set(id, Math.min(start.get(id)!, max.get(id)!));
   }
+  /*
+   * Owl statues and tunics are one thing each, even when the pool holds a spare copy, so they don't count up to 2.
+   * Pre-activated owls (when owls aren't shuffled) are already on at the start. OoTMM gives them through their
+   * statues' locations rather than the starting items, so they're added here.
+   */
+  for (const id of max.keys()) if (/^MM_OWL_|_TUNIC_/.test(id)) max.set(id, 1);
+  const owlPre = state.settings.mmPreActivatedOwls?.type;
+  if (owlPre && owlPre !== 'none' && owlPre !== 'random' && state.settings.owlShuffle !== 'anywhere') {
+    const OWLS: Record<string, string> = { clocktown: 'CLOCK_TOWN', milkroad: 'MILK_ROAD', swamp: 'SOUTHERN_SWAMP', woodfall: 'WOODFALL', mountain: 'MOUNTAIN_VILLAGE', snowhead: 'SNOWHEAD', greatbay: 'GREAT_BAY', zoracape: 'ZORA_CAPE', canyon: 'IKANA_CANYON', tower: 'STONE_TOWER' };
+    const flag = worlds[0]?.resolvedFlags?.mmPreActivatedOwls;
+    for (const [f, owl] of Object.entries(OWLS)) if (flag?.has(f) && max.has('MM_OWL_' + owl)) start.set('MM_OWL_' + owl, 1);
+  }
   const catalog: CatalogItem[] = [...max].map(([id, n]) => ({
     id,
     name: consumableName(id, itemName(id).replace(/ \((OoT|MM)\)$/i, '')),

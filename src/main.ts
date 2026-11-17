@@ -54,6 +54,7 @@ type Hint = { text: string; kind?: HintKind; area?: string; check?: string; item
 
 type CustomCheck = { id: string; name: string; region: string; game: 'oot' | 'mm'; type?: string; when?: Record<string, unknown> };
 type CustomEntrance = { id: string; title: string; sub: string; area: string; game: 'oot' | 'mm' };
+type PinTab = 'list' | 'entrances' | 'items';
 type Seed = {
   id: string;
   origin?: string;
@@ -104,7 +105,7 @@ type Edits = {
 type Saved = {
   v: 1; seeds: Seed[]; current: string; custom: CustomCheck[]; edits: Edits;
   ui: {
-    skin?: string; theme?: string; meter?: string; cubeGame?: 'oot' | 'mm'; cubePage?: string; railOpen?: string[]; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
+    skin?: string; theme?: string; meter?: string; cubeGame?: 'oot' | 'mm'; cubePage?: string; railOpen?: string[]; railW?: number; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
     showLocked?: boolean; changesOnly?: boolean; collapsed?: string[];
     logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; haveOnly?: boolean; hideWritten?: boolean;
     /** Which check names show. Custom puts the player's renames on top of nameBase. */
@@ -112,6 +113,10 @@ type Saved = {
     notes?: NotesView;
     /** Items pinned to the top of the Items tab. Kept here only while savePins is on. */
     pins?: string[]; savePins?: boolean;
+    /** Pinned checks and entrances, kept like item pins. */
+    pinChecks?: string[]; pinEntrs?: string[];
+    /** Tabs whose pins are switched off in Settings > Pins. All are on by default. */
+    pinOff?: Partial<Record<PinTab, boolean>>;
   };
 };
 
@@ -173,7 +178,7 @@ let picking: string | null = null;
 let pickQuery = '';
 let computing = false;
 let editMode = false;
-let settingsView: 'game' | 'look' | 'edits' = 'game';
+let settingsView: 'game' | 'look' | 'pins' | 'edits' = 'game';
 let entr: EntranceData = { list: [], dests: [], sets: [], rev: {} };
 let pickAll = false;
 let remoteSave: ((s: string) => void) | null = null;
@@ -185,6 +190,8 @@ let opensWith = new Map<string, string[]>();
 let logicBusy = false;
 let logicError = '';
 let itemQuery = '';
+/** The Items sidebar's choice, as game:group, or null for every item. */
+let itemArea: string | null = null;
 let itemGame: 'all' | 'oot' | 'mm' = 'all';
 let pickingItemFor: string | null = null;
 let itemPickQuery = '';
@@ -831,6 +838,7 @@ function shell() {
   }).join('');
   $('#app').innerHTML = `
     <aside class="rail">
+      <div class="rail-size keep" role="separator" aria-orientation="vertical" aria-label="Sidebar width. Drag to resize, double-click to reset" tabindex="0" title="Drag to resize the sidebar. Double-click to reset"></div>
       <div class="brand">
         <svg class="dial" data-edit="meter" viewBox="0 0 120 120" role="img" aria-label="Checks finished">
           ${ticks}
@@ -900,7 +908,7 @@ function hasDoubleDefense(game: 'oot' | 'mm') {
 }
 function heartRow(fraction: number, cls: 'oot' | 'mm') {
   const pieces = Math.floor(fraction * 40 + 1e-9);
-  return `<div class="heart-row ${cls}${hasDoubleDefense(cls) ? ' dd' : ''}">${Array.from({ length: 10 }, (_, i) => {
+  return `<div class="heart-row ${cls}${hasDoubleDefense('oot') || hasDoubleDefense('mm') ? ' dd' : ''}">${Array.from({ length: 10 }, (_, i) => {
     const q = Math.max(0, Math.min(4, pieces - i * 4));
     const fill = q === 0 ? '' : `<path class="hf" d="${HEART}"${q < 4 ? ` clip-path="url(#hq${q})"` : ''}/>`;
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path class="he" d="${HEART}"/>${fill}</svg>`;
@@ -925,10 +933,7 @@ function renderDial() {
   $('#dialPct').textContent = `${Math.floor(pct * 100)}%`;
   $('#seedName').textContent = seed.name;
   $('.seed-btn').dataset.edit = 'seed:' + seed.id;
-  const finished = t.all > 0 && t.done === t.all;
-  $('#dayLine').textContent = meter === 'clock'
-    ? (finished ? 'Dawn of a new day' : pct >= 2 / 3 ? 'Dawn of the final day' : pct >= 1 / 3 ? 'Dawn of the second day' : 'Dawn of the first day')
-    : (finished ? 'Hero of Time' : pct >= .75 ? 'Champion of the Sages' : pct >= .5 ? "Ruto's fiancé" : pct >= .25 ? 'Sworn Brother of the Gorons' : 'Kokiri outsider');
+  $('#dayLine').textContent = '';
   $('#remain').textContent = `${(t.all - t.done).toLocaleString()} of ${t.all.toLocaleString()} left`;
   $('#legend').innerHTML = [t.oot ? `<b class="o">Hyrule ${t.ootDone}/${t.oot}</b>` : '', t.mm ? `<b class="m">Termina ${t.mmDone}/${t.mm}</b>` : ''].join('');
 }
@@ -984,6 +989,7 @@ function railGroup(key: string, name: string, cls: string, rows: () => string) {
 
 function renderRail() {
   if (tab === 'entrances') return renderEntranceRail();
+  if (tab === 'items') return renderItemRail();
   const stats = regionStats();
   const groups: [string, string, typeof stats][] = [
     ['Hyrule', 'oot', stats.filter(r => r.game === 'oot' && !r.dungeon && !['NONE', 'POCKET'].includes(r.id))],
@@ -1027,7 +1033,7 @@ const rowHtml = (c: CheckEntry) => {
   const age = logic === ' inlogic' ? logicOut?.ages[c.id] : undefined;
   return `<div class="row ${c.game}${isDone ? ' done' : ''}${hid ? ' ghost' : ''}${logic}${isLater(c.id) ? ' is-later' : ''}" data-id="${esc(c.id)}">
     <button class="tick-btn" aria-pressed="${isDone}" data-edit="check:${esc(c.id)}"><span class="seal">${ICON.tick}</span><span class="nm"><span class="t">${esc(c.name)}</span>${itemLine}${noteHtml(c.id)}</span>${tag}${age ? `<span class="tag age" data-text>${age === 'child' ? 'Child' : 'Adult'}</span>` : ''}${logic === ' inlogic' ? '<span class="lgdot" title="In logic now" aria-label="In logic now"></span>' : ''}<span class="ty" data-text>${esc(TYPE_ONE[c.type] ?? c.type)}</span></button>
-    ${laterBtn(c.id, c.name)}
+    ${pinBtn('list', c.id, c.name)}${laterBtn(c.id, c.name)}
     <button class="bag${found ? ' has' : ''}" data-found="${esc(c.id)}" aria-label="What was here" title="Log the item you found here">${ICON.bag}</button>
     <button class="skip" aria-label="${isSkip ? 'Restore' : 'Skip'} ${esc(c.name)}" title="${isSkip ? 'Put back on the list' : 'Not on this seed: skip it'}">${isSkip ? '+' : '×'}</button>
   </div>`;
@@ -1091,11 +1097,19 @@ function renderChecks() {
   const chips = [...typeCounts].sort((a, b) => b[1] - a[1]).map(([t, n]) =>
     `<button class="chip" data-type="${esc(t)}" aria-pressed="${typeFilter.has(t)}">${esc(TYPE_NAMES[t] ?? t)} ${n}</button>`).join('');
 
-  const list = filtered();
+  const all = filtered();
+  const pinIds = pinsOn('list') ? pinList('list') : [];
+  const pinRows = all.filter(c => pinIds.includes(c.id)).sort((a, b) => pinIds.indexOf(a.id) - pinIds.indexOf(b.id));
+  const list = all.filter(c => !pinIds.includes(c.id));
   const byRegion = new Map<string, CheckEntry[]>();
   for (const c of list) { (byRegion.get(c.region) ?? byRegion.set(c.region, []).get(c.region)!).push(c); }
   const ordered = [...byRegion].sort((a, b) => regionRank(a[0], a[1][0].game, a[1][0].dungeon) - regionRank(b[0], b[1][0].game, b[1][0].dungeon));
   let body = '';
+  if (pinRows.length) {
+    const shut = collapsed('c:pinned');
+    body += `<section class="pins-sec"><div class="section-head"><button class="caret keep" data-collapse="c:pinned" aria-expanded="${!shut}" aria-label="Show or hide pinned checks"></button><h2>Pinned</h2><span class="c">${pinRows.filter(c => doneSet.has(c.id)).length}/${pinRows.length}</span></div>
+      ${shut ? '' : `<div class="rows">${pinRows.map(rowHtml).join('')}</div>`}</section>`;
+  }
   for (const [id, rows] of ordered) {
     const isSkipped = seed.skippedRegions.includes(id);
     const inRegion = checks.filter(c => c.region === id && counted(c));
@@ -1234,6 +1248,74 @@ function renderMap() {
 
 const ITEM_GROUP_ORDER = ['Equipment', 'Ammo and shields', 'Songs', 'Masks', 'Medallions, stones and remains', 'Trade and quest items', 'Bottles and their contents', 'Owls and maps', 'Skulltula tokens', 'Keys and dungeon items'];
 
+/*
+ * Items that come in steps get a tile for each step, named the way the games name them, instead of one "0/2" counter.
+ * The steps follow the seed: they're only used when the seed has exactly that many, so a setting that changes the count
+ * falls back to a counter.
+ */
+const LEVELS: [RegExp, string[]][] = [
+  [/_OCARINA$/, ['Fairy Ocarina', 'Ocarina of Time']],
+  [/^OOT_SWORD$/, ['Kokiri Sword', 'Master Sword', "Giant's Knife", "Biggoron's Sword"]],
+  [/^OOT_SWORD_GORON$/, ["Giant's Knife", "Biggoron's Sword"]],
+  [/^(MM|SHARED)_SWORD$/, ['Kokiri Sword', 'Razor Sword', 'Gilded Sword']],
+  [/_HOOKSHOT$/, ['Hookshot', 'Longshot']],
+  [/_STRENGTH$/, ["Goron's Bracelet", 'Silver Gauntlets', 'Golden Gauntlets']],
+  [/_SCALE$/, ['Silver Scale', 'Golden Scale']],
+  [/_WALLET$/, ["Adult's Wallet", "Giant's Wallet", "Tycoon's Wallet"]],
+  [/_MAGIC_UPGRADE$/, ['Magic Meter', 'Double Magic']],
+  [/^OOT_BOW$/, ['Fairy Bow', 'Big Quiver', 'Biggest Quiver']],
+  [/^MM_BOW$/, ["Hero's Bow", 'Big Quiver', 'Biggest Quiver']],
+  [/^SHARED_BOW$/, ['Bow', 'Big Quiver', 'Biggest Quiver']],
+  [/_BOMB_BAG$/, ['Bomb Bag', 'Big Bomb Bag', 'Biggest Bomb Bag']],
+  [/_SLINGSHOT$/, ['Fairy Slingshot', 'Big Bullet Bag', 'Biggest Bullet Bag']],
+  [/_STICK_UPGRADE$/, ['Deku Sticks (20)', 'Deku Sticks (30)']],
+  [/_NUT_UPGRADE$/, ['Deku Nuts (30)', 'Deku Nuts (40)']],
+  [/^OOT_SHIELD$/, ['Deku Shield', 'Hylian Shield', 'Mirror Shield']],
+  [/^MM_SHIELD$/, ["Hero's Shield", 'Mirror Shield']],
+  [/^MM_SONG_GORON_HALF$/, ['Lullaby Intro', "Goron Lullaby"]],
+];
+function levelsOf(i: CatalogItem): string[] | undefined {
+  if (i.max < 2) return;
+  const names = LEVELS.find(([re]) => re.test(i.id))?.[1];
+  return names && names.length >= i.max ? names.slice(0, i.max) : undefined;
+}
+/** One tile on the Items tab: a whole item, or one step of an item that comes in steps. */
+type ItemView = { i: CatalogItem; level: number; key: string; name: string };
+function itemViews(i: CatalogItem): ItemView[] {
+  const lv = levelsOf(i);
+  if (!lv) return [{ i, level: 0, key: i.id, name: itemLabel(i.id) }];
+  /* A name given in Edit mode replaces the step names, numbered by step. */
+  const own = saved.edits.items[i.id]?.name;
+  return lv.map((name, k) => ({ i, level: k + 1, key: `${i.id}#${k + 1}`, name: own ? `${own} ${k + 1}` : name }));
+}
+const viewOn = (v: ItemView, have: Record<string, number>) => v.level ? countOf(v.i, have) >= v.level : countOf(v.i, have) > 0;
+/* Shared items belong to both games, so they show under Hyrule and Termina alike. */
+const inGame = (i: CatalogItem, game: 'oot' | 'mm') => i.game === game || i.game === 'shared';
+
+function renderItemRail() {
+  const have = owned();
+  const all = catalog().filter(i => editMode || !saved.edits.items[i.id]?.hidden);
+  const count = (items: CatalogItem[]) => {
+    const views = items.flatMap(itemViews);
+    return { done: views.filter(v => viewOn(v, have)).length, total: views.length };
+  };
+  const row = (id: string, name: string, c: { done: number; total: number }) =>
+    `<button class="reg keep${c.total && c.done === c.total ? ' complete' : ''}" data-item-area="${esc(id)}" aria-current="${itemArea === (id || null)}">
+      <span class="n">${esc(name)}</span><span class="c">${c.done}/${c.total}</span>
+      <span class="bar"><i style="width:${c.total ? (c.done / c.total) * 100 : 0}%"></i></span></button>`;
+  let html = row('', 'All items', count(all));
+  for (const [game, name] of [['oot', 'Hyrule'], ['mm', 'Termina']] as const) {
+    const mine = all.filter(i => inGame(i, game));
+    const groups = [...new Set(mine.map(i => i.group))].sort((a, b) => ITEM_GROUP_ORDER.indexOf(a) - ITEM_GROUP_ORDER.indexOf(b));
+    if (!groups.length) continue;
+    html += railGroup('ri:' + name, name, game, () => groups.map(g => row(`${game}:${g}`, g, count(mine.filter(i => i.group === g)))).join(''));
+  }
+  const box = $('#regions');
+  const top = box.scrollTop;
+  box.innerHTML = catalog().length ? html : '<p class="fine" style="padding:10px">Loading items</p>';
+  box.scrollTop = top;
+}
+
 function foundAt(itemId: string) {
   return Object.entries(seed.found).filter(([, v]) => v === itemId).map(([k]) => k);
 }
@@ -1242,27 +1324,43 @@ const checkLabel = (id: string) => {
   return c ? `${regionLabel(c)}: ${c.name}` : id.replace(/^(OOT|MM) /, '');
 };
 
-/* Item pins. With Save pins on they live in saved.ui and come back on every visit; with it off they last until the page closes. */
-let sessionPins: string[] = [];
+/* Pins on the Checks, Entrances and Items tabs: pinned rows sit in a Pinned section at the top of their tab.
+   With Save pins on they live in saved.ui and come back on every visit; with it off they last until the page closes.
+   Each tab's pins can be switched off in Settings > Pins. */
+const PIN_KEY: Record<PinTab, 'pinChecks' | 'pinEntrs' | 'pins'> = { list: 'pinChecks', entrances: 'pinEntrs', items: 'pins' };
+const PIN_TABS: [PinTab, string][] = [['list', 'Checks'], ['entrances', 'Entrances'], ['items', 'Items']];
+const sessionPinLists: Record<PinTab, string[]> = { list: [], entrances: [], items: [] };
 const savingPins = () => saved.ui.savePins !== false;
-const pinList = () => savingPins() ? (saved.ui.pins ??= []) : sessionPins;
-function togglePin(id: string) {
-  const list = pinList();
+const pinsOn = (t: PinTab) => !saved.ui.pinOff?.[t];
+const pinList = (t: PinTab = 'items') => savingPins() ? (saved.ui[PIN_KEY[t]] ??= []) : sessionPinLists[t];
+const pinned = (t: PinTab, id: string) => pinsOn(t) && pinList(t).includes(id);
+const pinBtn = (t: PinTab, id: string, name: string) => {
+  if (!pinsOn(t)) return '';
+  const on = pinList(t).includes(id);
+  return `<button class="item-pin row-pin keep" data-pin="${esc(id)}" data-pin-tab="${t}" aria-pressed="${on}" aria-label="${on ? 'Unpin' : 'Pin'} ${esc(name)}" title="${on ? 'Unpin' : 'Pin to the top'}">${ICON.pin}</button>`;
+};
+function togglePin(id: string, t: PinTab = 'items') {
+  const list = pinList(t);
   const at = list.indexOf(id);
   if (at >= 0) list.splice(at, 1); else list.push(id);
   if (savingPins()) save();
-  renderItems();
+  renderPane();
 }
 function setSavePins(on: boolean) {
   if (on === savingPins()) return;
-  if (on) { saved.ui.pins = [...sessionPins]; saved.ui.savePins = true; }
-  else { sessionPins = [...(saved.ui.pins ?? [])]; delete saved.ui.pins; saved.ui.savePins = false; }
+  for (const [t] of PIN_TABS) {
+    const k = PIN_KEY[t];
+    if (on) saved.ui[k] = [...sessionPinLists[t]];
+    else { sessionPinLists[t] = [...(saved.ui[k] ?? [])]; delete saved.ui[k]; }
+  }
+  saved.ui.savePins = on;
   save();
 }
 function clearPins() {
-  if (savingPins()) saved.ui.pins = []; else sessionPins = [];
+  for (const [t] of PIN_TABS) { if (savingPins()) saved.ui[PIN_KEY[t]] = []; else sessionPinLists[t] = []; }
   save();
 }
+const anyPins = () => PIN_TABS.some(([t]) => pinList(t).length);
 
 function renderItems() {
   const pane = $('#pane');
@@ -1272,33 +1370,39 @@ function renderItems() {
   const scrollTop = $('#itemScroll', pane)?.scrollTop ?? 0;
   const have = owned();
   const words = itemQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const [areaGame, areaGroup] = itemArea ? itemArea.split(/:(.*)/) : [];
   const list = catalog().filter(i => {
     const hid = !!saved.edits.items[i.id]?.hidden;
     if (hid && !editMode) return false;
-    if (itemGame !== 'all' && i.game !== itemGame && i.game !== 'shared') return false;
-    if (saved.ui.haveOnly && !countOf(i, have)) return false;
-    if (words.length && !words.every(w => `${itemLabel(i.id)} ${i.group}`.toLowerCase().includes(w))) return false;
+    if (areaGame && (!inGame(i, areaGame as 'oot' | 'mm') || i.group !== areaGroup)) return false;
     return true;
   });
+  const keep = (v: ItemView) => (!saved.ui.haveOnly || viewOn(v, have))
+    && (!words.length || words.every(w => `${v.name} ${itemLabel(v.i.id)} ${v.i.group}`.toLowerCase().includes(w)));
   const sections: string[] = [];
-  const pins = pinList();
-  const pinned = list.filter(i => pins.includes(i.id)).sort((a, b) => pins.indexOf(a.id) - pins.indexOf(b.id));
-  if (pinned.length) {
+  const pins = pinsOn('items') ? pinList('items') : [];
+  const pinnedViews = list.flatMap(itemViews).filter(v => pins.includes(v.key) && keep(v)).sort((a, b) => pins.indexOf(a.key) - pins.indexOf(b.key));
+  if (pinnedViews.length && !itemArea) {
     const shut = collapsed('i:pinned');
     sections.push(`<section class="items pinned"><div class="section-head"><button class="caret keep" data-collapse="i:pinned" aria-expanded="${!shut}" aria-label="Show or hide pinned items"></button><h2>Pinned</h2></div>
-      ${shut ? '' : `<div class="item-grid">${pinned.map(i => itemTile(i, have)).join('')}</div>`}</section>`);
+      ${shut ? '' : `<div class="item-grid">${pinnedViews.map(v => itemTile(v, have)).join('')}</div>`}</section>`);
   }
-  for (const game of ['oot', 'mm', 'shared'] as const) {
-    const mine = list.filter(i => i.game === game && !pins.includes(i.id));
-    if (!mine.length) continue;
-    const groups = new Map<string, CatalogItem[]>();
-    for (const i of mine) (groups.get(i.group) ?? groups.set(i.group, []).get(i.group)!).push(i);
+  for (const game of ['oot', 'mm'] as const) {
+    if (itemGame !== 'all' && game !== itemGame) continue;
+    if (areaGame && areaGame !== game) continue;
+    const mine = list.filter(i => inGame(i, game));
+    const groups = new Map<string, ItemView[]>();
+    for (const i of mine) {
+      const views = itemViews(i).filter(v => keep(v) && (itemArea || !pins.includes(v.key)));
+      if (views.length) (groups.get(i.group) ?? groups.set(i.group, []).get(i.group)!).push(...views);
+    }
+    if (!groups.size) continue;
     const body = [...groups].sort((a, b) => ITEM_GROUP_ORDER.indexOf(a[0]) - ITEM_GROUP_ORDER.indexOf(b[0])).map(([g, rows]) => {
       const shut = collapsed(`i:${game}:${g}`);
       return `<div class="item-group"><div class="section-head"><button class="caret keep" data-collapse="i:${esc(game)}:${esc(g)}" aria-expanded="${!shut}" aria-label="Show or hide these items"></button><h3>${esc(g)}</h3></div>
-        ${shut ? '' : `<div class="item-grid">${sortIn(`i:${game}:${g}`, rows, i => i.id).map(i => itemTile(i, have)).join('')}</div>`}</div>`;
+        ${shut ? '' : `<div class="item-grid">${sortIn(`i:${game}:${g}`, rows, v => v.key).map(v => itemTile(v, have)).join('')}</div>`}</div>`;
     }).join('');
-    sections.push(`<section class="items ${game}"><div class="section-head"><h2>${{ oot: 'Hyrule', mm: 'Termina', shared: 'Shared' }[game]}</h2></div>${body}</section>`);
+    sections.push(`<section class="items ${game}"><div class="section-head"><h2>${game === 'oot' ? 'Hyrule' : 'Termina'}</h2></div>${body}</section>`);
   }
   const loggedCount = Object.keys(seed.found).length;
   const status = !logicShown() || !logicOn() ? '' : logicError ? `<p>OoTMM couldn't work out logic for these settings: ${esc(logicError)}</p>`
@@ -1332,20 +1436,24 @@ function renderItems() {
   }
 }
 
-function itemTile(i: CatalogItem, have: Record<string, number>) {
+function itemTile(v: ItemView, have: Record<string, number>) {
+  const { i, level } = v;
   const n = countOf(i, have);
   const at = foundAt(i.id);
   const hid = !!saved.edits.items[i.id]?.hidden;
-  const counter = i.max > 4
+  const on = viewOn(v, have);
+  const counter = level ? '' : i.max > 4
     ? `<input type="number" class="item-num" min="0" max="${i.max}" value="${n}" data-item-num="${esc(i.id)}" aria-label="How many ${esc(itemLabel(i.id))}">`
     : i.max > 1 ? `<span class="item-n">${n}/${i.max}</span>` : '';
-  const pin = pinList().includes(i.id);
-  return `<div class="item ${i.game}${n ? ' on' : ''}${hid ? ' ghost' : ''}${pin ? ' is-pinned' : ''}">
-    <button class="item-pin keep" data-pin="${esc(i.id)}" aria-pressed="${pin}" aria-label="${pin ? 'Unpin' : 'Pin'} ${esc(itemLabel(i.id))}" title="${pin ? 'Unpin' : 'Pin to the top'}">${ICON.pin}</button>
-    <button class="item-btn" data-item="${esc(i.id)}" data-edit="item:${esc(i.id)}" aria-pressed="${n > 0}">
+  const sub = level ? (level <= i.start ? 'Starting item' : level > 1 ? `Step ${level} of ${i.max}` : '')
+    : at.length ? `<span>at</span> ${esc(at.map(checkLabel).join(', '))}` : i.start ? 'Starting item' : '';
+  const pin = pinned('items', v.key);
+  return `<div class="item ${i.game}${on ? ' on' : ''}${hid ? ' ghost' : ''}${pin ? ' is-pinned' : ''}">
+    ${pinBtn('items', v.key, v.name)}
+    <button class="item-btn" data-item="${esc(i.id)}"${level ? ` data-item-level="${level}"` : ''} data-edit="item:${esc(i.id)}" aria-pressed="${on}">
       <span class="seal">${ICON.tick}</span>
-      <span class="nm"><span class="t">${esc(itemLabel(i.id))}</span>${at.length ? `<span class="s"><span>at</span> ${esc(at.map(checkLabel).join(', '))}</span>` : i.start ? '<span class="s">Starting item</span>' : ''}</span>
-    </button>${counter}${n > i.start && i.max <= 4 ? `<button class="item-minus" data-item-minus="${esc(i.id)}" aria-label="Take one away">−</button>` : ''}</div>`;
+      <span class="nm"><span class="t">${esc(v.name)}</span>${sub ? `<span class="s">${sub}</span>` : ''}</span>
+    </button>${counter}${!level && n > i.start && i.max <= 4 ? `<button class="item-minus" data-item-minus="${esc(i.id)}" aria-label="Take one away">−</button>` : ''}</div>`;
 }
 
 function setItemCount(id: string, n: number) {
@@ -1549,7 +1657,7 @@ function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?:
       <span class="nm"><span class="t">${esc(shown)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}
         ${to ? `<span class="leads"${to.startsWith('text:') ? '' : ` data-edit="dest:${esc(to)}"`}>Leads to ${esc(dest)}</span>` : ''}${noteHtml(e.id)}</span>
       ${hid ? '<span class="tag" data-text>Hidden</span>' : to ? '' : '<span class="ty" data-text>Add</span>'}
-    </button>${laterBtn(e.id, e.title)}</div>`;
+    </button>${pinBtn('entrances', e.id, e.title)}${laterBtn(e.id, e.title)}</div>`;
 }
 
 function renderEntrances() {
@@ -1589,8 +1697,10 @@ function renderEntrances() {
     }
     return true;
   });
+  const pinIds = pinsOn('entrances') ? pinList('entrances') : [];
+  const pinRows = list.filter(e => pinIds.includes(e.id)).sort((a, b) => pinIds.indexOf(a.id) - pinIds.indexOf(b.id));
   const byGroup = new Map<string, EntranceEntry[]>();
-  for (const e of list) { const g = entrGroup(e); (byGroup.get(g) ?? byGroup.set(g, []).get(g)!).push(e); }
+  for (const e of list) { if (pinIds.includes(e.id)) continue; const g = entrGroup(e); (byGroup.get(g) ?? byGroup.set(g, []).get(g)!).push(e); }
   const rank = (e: EntranceEntry) => { const i = ENTR_PINNED.findIndex(p => p.id === entrGroup(e)); return i >= 0 ? i - 100 : regionRank(e.group, e.game, e.dungeon); };
   const body = [...byGroup.values()].sort((a, b) => rank(a[0]) - rank(b[0])).map(rows => {
     const gid = entrGroup(rows[0]);
@@ -1607,6 +1717,9 @@ function renderEntrances() {
       <span class="head-acts"><button class="linkish edit-only keep" data-add-entrance="${esc(gid)}">Add an entrance</button></span></div>
       ${shut ? '' : dirGroups(sortIn('e:' + gid, rows, e => e.id), dests)}</section>`;
   }).join('');
+  const pinShut = collapsed('e:pinned');
+  const pinHtml = !pinRows.length ? '' : `<section class="pins-sec"><div class="section-head"><button class="caret keep" data-collapse="e:pinned" aria-expanded="${!pinShut}" aria-label="Show or hide pinned entrances"></button><h2>Pinned</h2><span class="c">${pinRows.filter(e => seed.entrances[e.id]).length}/${pinRows.length}</span></div>
+      ${pinShut ? '' : `<div class="rows">${pinRows.map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
 
   const { found, total } = entranceStats();
   pane.innerHTML = `<div class="toolbar">
@@ -1624,7 +1737,7 @@ function renderEntrances() {
       </div>
       <div class="chips" role="group" aria-label="Filter by kind of entrance">${chips}</div>
     </div>
-    <div class="scroll" id="entrScroll">${body || (entrRegion === LATER && !words.length ? `<div class="empty"><h3>Nothing to check later yet</h3>Tap the clock on any entrance or check to put it on this list. Tap it again to take it off.</div>` : '') || `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more entrances.${saved.ui.hideFound ? ' Logged entrances are hidden too.' : ''}</div>`}</div>`;
+    <div class="scroll" id="entrScroll">${pinHtml + body || (entrRegion === LATER && !words.length ? `<div class="empty"><h3>Nothing to check later yet</h3>Tap the clock on any entrance or check to put it on this list. Tap it again to take it off.</div>` : '') || `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more entrances.${saved.ui.hideFound ? ' Logged entrances are hidden too.' : ''}</div>`}</div>`;
   $('#entrScroll').scrollTop = scrollTop;
   if (hadFocus) {
     const i = $('#entrSearch', pane) as HTMLInputElement;
@@ -1869,10 +1982,11 @@ function setSettingsRaw(change: (s: any) => void) {
 }
 
 const settingsNav = () => `<div class="seg subnav" role="group" aria-label="Settings sections">
-  ${([['game', 'Randomizer'], ['look', 'Appearance'], ['edits', 'Your edits']] as const).map(([k, l]) => `<button class="keep" data-setview="${k}" aria-pressed="${settingsView === k}">${l}</button>`).join('')}</div>`;
+  ${([['game', 'Randomizer Settings'], ['look', 'App Settings'], ['pins', 'Pins'], ['edits', 'Your edits']] as const).map(([k, l]) => `<button class="keep" data-setview="${k}" aria-pressed="${settingsView === k}">${l}</button>`).join('')}</div>`;
 
 function renderSettings() {
   if (settingsView === 'look') return renderLook();
+  if (settingsView === 'pins') return renderPinsView();
   if (settingsView === 'edits') return renderYourEdits();
   const pane = $('#pane');
   const q = settingsQuery.trim().toLowerCase();
@@ -1921,6 +2035,21 @@ function renderSettings() {
   renderCount();
 }
 
+function renderPinsView() {
+  const sw = (label: string, on: boolean, attr: string, desc: string) => `<div class="set"><div class="lab"><b>${label}</b></div>
+    <div class="ctl"><button class="switch keep" role="switch" aria-checked="${on}" aria-label="${esc(label)}" ${attr}></button></div><div class="desc">${desc}</div></div>`;
+  $('#pane').innerHTML = `<div class="toolbar">${settingsNav()}</div>
+    <div class="scroll"><div class="page">
+      <div class="box"><h3>Pins on each tab</h3>
+        <p>A pin button on a check, entrance or item puts it in a Pinned section at the top of its tab.</p>
+        ${PIN_TABS.map(([t, name]) => sw(`${name} pins`, pinsOn(t), `data-pin-tab-toggle="${t}"`, `${pinList(t).length} pinned on ${name}.${pinsOn(t) ? '' : ' Off: the pin buttons and the Pinned section are hidden, and your pins are kept.'}`)).join('')}
+      </div>
+      <div class="box"><h3>Saving pins</h3>
+        ${sw('Save pins', savingPins(), 'data-save-pins', 'Keeps your pins between visits. Turn it off and pins last until you close the app.')}
+        <div class="btns"><button class="btn alt keep" data-clear-pins${anyPins() ? '' : ' disabled'}>Unpin all</button></div></div>
+    </div></div>`;
+}
+
 function renderLook() {
   const cur = skinById(saved.ui.skin);
   const cards = SKINS.map(s => `<button class="skin-card" data-skin-set="${s.id}" aria-pressed="${s.id === cur.id}" style="background:${s.tokens.bg};color:${s.tokens.ink};border-color:${s.id === cur.id ? s.tokens.gold : s.tokens.faint}">
@@ -1937,11 +2066,7 @@ function renderLook() {
         <div class="seg" role="group" aria-label="Text size">${seg('scale-set', String(saved.ui.scale ?? 1), [['0.9', 'Small'], ['1', 'Normal'], ['1.12', 'Large'], ['1.25', 'Extra large']])}</div></div>
       <div class="box"><h3>List spacing</h3>
         <div class="seg" role="group" aria-label="List spacing">${seg('compact-set', saved.ui.compact ? '1' : '0', [['0', 'Comfortable'], ['1', 'Compact']])}</div></div>
-      <div class="box"><h3>Item pins</h3>
-        <div class="set" style="border:0;padding:0"><div class="lab"><b>Save pins</b></div>
-        <div class="ctl"><button class="switch keep" role="switch" aria-checked="${savingPins()}" aria-label="Save pins" data-save-pins></button></div>
-        <div class="desc">Keeps the items you pin on the Items tab between visits. Turn it off and pins last until you close the app.</div></div>
-        <div class="btns"><button class="btn alt keep" data-clear-pins${pinList().length ? '' : ' disabled'}>Unpin all</button></div></div>
+
       <div class="box"><h3>Colors and fonts</h3><p>Change any color or the heading font on the current theme.</p>
         <div class="btns"><button class="btn keep" data-open-colors>Edit colors and fonts</button></div></div>
       <div class="box"><h3>OoTMM Checklist</h3><p>In Edit mode, tap the name above to rename the app. It shows in the window title.</p>
@@ -2623,8 +2748,33 @@ function loadBackup(text: string) {
 /* ---------- Notes tab ---------- */
 
 const notesView = (): Required<NotesView> => ({ size: 'letter', zoom: 1, paper: false, ...saved.ui.notes });
+/* Formatting that is either on or off where the cursor is. Their buttons light up while on, and a second press turns them off. */
+const DOC_TOGGLES = ['bold', 'italic', 'underline', 'strikeThrough', 'insertUnorderedList', 'insertOrderedList', 'checklist', 'justifyLeft', 'justifyCenter', 'justifyRight'];
 const docBtn = (cmd: string, label: string, inner: string, arg = '') =>
-  `<button class="keep" data-doc="${cmd}"${arg ? ` data-arg="${esc(arg)}"` : ''} title="${esc(label)}" aria-label="${esc(label)}">${inner}</button>`;
+  `<button class="keep" data-doc="${cmd}"${arg ? ` data-arg="${esc(arg)}"` : ''} title="${esc(label)}" aria-label="${esc(label)}"${DOC_TOGGLES.includes(cmd) ? ' aria-pressed="false"' : ''}>${inner}</button>`;
+/** Lights up the toolbar buttons for the formatting under the cursor. */
+function updateDocState() {
+  const page = document.getElementById('docPage');
+  if (!page) return;
+  const sel = getSelection();
+  const at = sel?.anchorNode instanceof Element ? sel.anchorNode : sel?.anchorNode?.parentElement;
+  if (!at || !page.contains(at)) return;
+  const inCheck = !!at.closest('ul.doc-check');
+  const state = (cmd: string) => {
+    if (cmd === 'checklist') return inCheck;
+    if (cmd === 'insertUnorderedList') return !inCheck && !!at.closest('ul');
+    try { return document.queryCommandState(cmd); } catch { return false; }
+  };
+  for (const b of document.querySelectorAll<HTMLElement>('.doc-tools [data-doc]')) if (b.hasAttribute('aria-pressed')) b.setAttribute('aria-pressed', String(state(b.dataset.doc!)));
+  /* Highlight is on when the text under the cursor sits inside a highlighted span of the note. */
+  let lit = false;
+  for (let n: HTMLElement | null = at as HTMLElement; n && n !== page; n = n.parentElement) {
+    const bg = n.style?.backgroundColor;
+    if (bg && !/^(transparent|rgba\(0, 0, 0, 0\)|initial|inherit)$/.test(bg)) { lit = true; break; }
+  }
+  document.querySelector('.doc-color.hl-tool')?.classList.toggle('on', lit);
+}
+let docStateHooked = false;
 function renderNotes() {
   const v = notesView();
   const sel = (attr: string, label: string, opts: [string, string][], cur = '') =>
@@ -2638,11 +2788,11 @@ function renderNotes() {
       ${sel('doc-size', 'Text size', [['', 'Size'], ['2', 'Small'], ['3', 'Normal'], ['4', 'Large'], ['5', 'Larger'], ['6', 'Huge']])}${sep}
       ${docBtn('bold', 'Bold (Ctrl+B)', '<b>B</b>')}${docBtn('italic', 'Italic (Ctrl+I)', '<i>I</i>')}${docBtn('underline', 'Underline (Ctrl+U)', '<u>U</u>')}${docBtn('strikeThrough', 'Strikethrough', '<s>S</s>')}
       <label class="doc-color keep" title="Text color"><span style="border-bottom:3px solid #e05050">A</span><input type="color" class="keep" data-doc-color="foreColor" value="#e05050" aria-label="Text color"></label>
-      <label class="doc-color keep" title="Highlight"><span class="hl">ab</span><input type="color" class="keep" data-doc-color="hiliteColor" value="#f2d24b" aria-label="Highlight color"></label>${sep}
+      <label class="doc-color hl-tool keep" title="Highlight. Press again on highlighted text to take it off" data-doc-hl><span class="hl">ab</span><input type="color" class="keep" data-doc-color="hiliteColor" value="#f2d24b" aria-label="Highlight color"></label>${sep}
       ${docBtn('insertUnorderedList', 'Bulleted list', '•≡')}${docBtn('insertOrderedList', 'Numbered list', '1≡')}${docBtn('checklist', 'Checklist', '☑')}
       ${docBtn('outdent', 'Decrease indent', '⇤')}${docBtn('indent', 'Increase indent', '⇥')}${sep}
       ${docBtn('justifyLeft', 'Align left', '⫷')}${docBtn('justifyCenter', 'Center', '≡')}${docBtn('justifyRight', 'Align right', '⫸')}${sep}
-      ${docBtn('insertHorizontalRule', 'Line', '―')}${docBtn('stamp', 'Insert date and time', '🕒')}${docBtn('removeFormat', 'Clear formatting', '⌫')}
+      ${docBtn('insertHorizontalRule', 'Line', '―')}${docBtn('removeFormat', 'Clear formatting', '⌫')}
     </div>
     <div class="doc-tools doc-view" aria-label="Page">
       ${sel('doc-page', 'Page size', PAGE_SIZES, v.size)}
@@ -2655,6 +2805,7 @@ function renderNotes() {
     </div></div>`;
   try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older browsers use font tags */ }
   updateDocCount();
+  if (!docStateHooked) { docStateHooked = true; document.addEventListener('selectionchange', updateDocState); }
 }
 function updateDocCount() {
   const page = $('#docPage'), out = $('#docCount');
@@ -2677,15 +2828,24 @@ function docCommand(cmd: string, arg?: string) {
   const page = $('#docPage');
   if (!page) return;
   page.focus();
-  if (cmd === 'stamp') document.execCommand('insertText', false, new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }));
-  else if (cmd === 'checklist') {
+  if (cmd === 'checklist') {
     const sel = getSelection();
-    let ul = (sel?.anchorNode instanceof Element ? sel.anchorNode : sel?.anchorNode?.parentElement)?.closest('ul');
-    if (!ul || !page.contains(ul)) { document.execCommand('insertUnorderedList'); ul = (getSelection()?.anchorNode as Node | null)?.parentElement?.closest('ul') ?? null; }
-    if (ul && page.contains(ul)) ul.classList.toggle('doc-check');
+    const ul = (sel?.anchorNode instanceof Element ? sel.anchorNode : sel?.anchorNode?.parentElement)?.closest('ul');
+    if (ul && page.contains(ul) && ul.classList.contains('doc-check')) {
+      /* Turning a checklist off takes the lines out of the list, like the other list buttons, instead of leaving bullets. */
+      document.execCommand('insertUnorderedList');
+      const left = (getSelection()?.anchorNode as Node | null)?.parentElement?.closest('ul');
+      if (left && page.contains(left) && left.classList.contains('doc-check') && !left.querySelector('li')) left.remove();
+    } else if (ul && page.contains(ul)) ul.classList.add('doc-check');
+    else {
+      document.execCommand('insertUnorderedList');
+      const made = (getSelection()?.anchorNode as Node | null)?.parentElement?.closest('ul');
+      if (made && page.contains(made)) made.classList.add('doc-check');
+    }
   } else if (cmd === 'formatBlock') document.execCommand('formatBlock', false, `<${arg}>`);
   else document.execCommand(cmd, false, arg);
   saveDoc();
+  updateDocState();
 }
 /** Puts pasted or dropped content in as cleaned formatting. */
 function docInsert(e: ClipboardEvent | DragEvent) {
@@ -2769,6 +2929,7 @@ function applyTheme() {
   if (saved.ui.font) root.style.setProperty('--display', saved.ui.font);
   if (saved.ui.seal) root.style.setProperty('--clip', saved.ui.seal);
   if (saved.ui.noPattern) root.style.setProperty('--pattern', 'none');
+  applyRailWidth();
   root.style.setProperty('--scale', String(saved.ui.scale ?? 1));
   document.body.classList.toggle('compact', !!saved.ui.compact);
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', saved.edits.colors[skin.id]?.bg ?? skin.tokens.bg);
@@ -2798,12 +2959,46 @@ function queueText() {
   queueMicrotask(applyText);
 }
 
+/* The sidebar's width, dragged from its right edge on wider screens. Phones keep the full-width layout. */
+const RAIL_MIN = 220, RAIL_MAX = 560, RAIL_DEFAULT = 318;
+function applyRailWidth() {
+  const w = saved.ui.railW;
+  if (w) document.documentElement.style.setProperty('--rail-w', `${Math.max(RAIL_MIN, Math.min(RAIL_MAX, w))}px`);
+  else document.documentElement.style.removeProperty('--rail-w');
+}
+function hookRailSize(app: HTMLElement) {
+  let from: { x: number; w: number } | null = null;
+  app.addEventListener('pointerdown', e => {
+    const h = (e.target as HTMLElement).closest('.rail-size');
+    if (!h) return;
+    e.preventDefault();
+    (h as HTMLElement).setPointerCapture(e.pointerId);
+    from = { x: e.clientX, w: $('.rail').getBoundingClientRect().width };
+    document.documentElement.classList.add('rail-sizing');
+  });
+  app.addEventListener('pointermove', e => {
+    if (!from) return;
+    saved.ui.railW = Math.round(Math.max(RAIL_MIN, Math.min(RAIL_MAX, from.w + e.clientX - from.x)));
+    applyRailWidth();
+  });
+  const end = () => { if (!from) return; from = null; document.documentElement.classList.remove('rail-sizing'); save(); };
+  app.addEventListener('pointerup', end);
+  app.addEventListener('pointercancel', end);
+  app.addEventListener('dblclick', e => { if ((e.target as HTMLElement).closest('.rail-size')) { delete saved.ui.railW; applyRailWidth(); save(); } });
+  app.addEventListener('keydown', e => {
+    if (!(e.target as HTMLElement).classList?.contains('rail-size') || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    const w = saved.ui.railW ?? RAIL_DEFAULT;
+    saved.ui.railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, w + (e.key === 'ArrowRight' ? 16 : -16)));
+    applyRailWidth(); save();
+  });
+}
 const applyThemeFontReset = () => document.documentElement.style.removeProperty('--display');
 
 function events() {
   const app = $('#app');
   let searchTimer = 0;
   new MutationObserver(queueText).observe(app, { childList: true, subtree: true });
+  hookRailSize(app);
   /* Long-press a check (or right-click it) to rename it without turning on Edit mode. */
   let pressTimer = 0, pressedOpen = false, pressAt = [0, 0];
   const checkAt = (t: EventTarget | null) => (t as HTMLElement | null)?.closest?.<HTMLElement>('.row[data-id] .tick-btn')?.closest<HTMLElement>('.row')?.dataset.id;
@@ -2829,6 +3024,13 @@ function events() {
   /* The tap that ends a long-press doesn't also tick the check. */
   app.addEventListener('click', e => { if (pressedOpen && checkAt(e.target)) { pressedOpen = false; e.preventDefault(); e.stopPropagation(); } }, true);
   app.addEventListener('click', editCapture, true);
+  /* Highlight works like the other buttons: on highlighted text, a press takes the highlight off instead of picking a color. */
+  app.addEventListener('click', e => {
+    const hl = (e.target as HTMLElement).closest?.('.hl-tool.on');
+    if (!hl || editMode) return;
+    e.preventDefault(); e.stopPropagation();
+    docCommand('hiliteColor', 'transparent');
+  }, true);
   /* Notes page: clean what's pasted or dropped, and tick checklist lines by their box. */
   const inDoc = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('#docPage');
   app.addEventListener('paste', e => { if (inDoc(e.target)) docInsert(e); });
@@ -2940,7 +3142,7 @@ function events() {
     if ('openColors' in d) { openColors(); return; }
     if (d.addCheck !== undefined) { addCheck(d.addCheck); return; }
     if (d.addEntrance !== undefined) { addEntrance(d.addEntrance); return; }
-    if (d.collapse && /^r[ce]:/.test(d.collapse)) {
+    if (d.collapse && /^r[cei]:/.test(d.collapse)) {
       const open = saved.ui.railOpen ?? [];
       saved.ui.railOpen = open.includes(d.collapse) ? open.filter(x => x !== d.collapse) : [...open, d.collapse];
       save(); renderRail();
@@ -2949,7 +3151,7 @@ function events() {
     if (d.collapse) {
       const cur = saved.ui.collapsed ?? [];
       saved.ui.collapsed = cur.includes(d.collapse) ? cur.filter(x => x !== d.collapse) : [...cur, d.collapse];
-      save(); if (/^r[ce]:/.test(d.collapse)) renderRail(); else renderPane();
+      save(); if (/^r[cei]:/.test(d.collapse)) renderRail(); else renderPane();
       return;
     }
     if (d.setview) { settingsView = d.setview as typeof settingsView; renderSettings(); return; }
@@ -3040,16 +3242,26 @@ function events() {
     if (d.found) { openItemPicker(d.found); return; }
     if (d.pickItem) { logFound(pickingItemFor!, d.pickItem); return; }
     if (d.itemGame) { itemGame = d.itemGame as typeof itemGame; renderItems(); return; }
-    if (d.pin) { togglePin(d.pin); return; }
-    if ('savePins' in d) { setSavePins(!savingPins()); renderLook(); return; }
-    if ('clearPins' in d) { clearPins(); renderLook(); toast('All items unpinned.'); return; }
+    if (d.pin) { togglePin(d.pin, (d.pinTab as PinTab) || 'items'); return; }
+    if (d.pinTabToggle) { const t = d.pinTabToggle as PinTab; saved.ui.pinOff = { ...saved.ui.pinOff, [t]: pinsOn(t) }; save(); renderPinsView(); return; }
+    if ('savePins' in d) { setSavePins(!savingPins()); renderPinsView(); return; }
+    if ('clearPins' in d) { clearPins(); renderPinsView(); toast('Everything unpinned.'); return; }
+    if ('itemArea' in d) {
+      itemArea = d.itemArea || null; itemQuery = ''; phoneView = 'pane';
+      renderRail(); renderTabs(); renderItems();
+      $('#itemScroll')?.scrollTo(0, 0);
+      return;
+    }
     if ('haveonly' in d) { saved.ui.haveOnly = !saved.ui.haveOnly; save(); renderItems(); return; }
     if (d.item) {
       const i = catalogById().get(d.item);
       if (!i) return;
       snap();
       const n = countOf(i);
-      setItemCount(i.id, n >= i.max ? i.start : n + 1);
+      const k = Number(d.itemLevel) || 0;
+      /* A level tile, like Ocarina of Time: tapping it gives that level, tapping a level you have takes it back off. */
+      if (k) setItemCount(i.id, n >= k ? Math.max(i.start, k - 1) : k);
+      else setItemCount(i.id, n >= i.max ? i.start : n + 1);
       afterItemChange();
       return;
     }
