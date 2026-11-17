@@ -413,3 +413,19 @@ details.box[open] { display: grid; gap: 9px; }
 .dir-arrow { color: var(--dir); font-weight: 700; font-size: 1.05rem; width: 1.1em; text-align: center; }
 .dir-name { color: var(--dir); font-weight: 600; font-size: .9rem; letter-spacing: .06em; text-transform: uppercase; }
 .dir-hint { color: var(--muted); font-size: .85rem; }
+
+/* Sidebar headings fold their areas away */
+.group.fold { display: flex; align-items: center; gap: 2px; width: 100%; text-align: left; padding-left: 2px; cursor: pointer; }
+.group.fold .caret { width: 20px; height: 20px; flex: none; }
+.group.fold .caret::before { border-top-color: currentColor; left: 4px; top: 7px; }
+.group.fold:hover { filter: brightness(1.15); }
+
+/* Check later: a clock on every check and entrance, and its list at the top of the sidebar */
+.later { flex: none; width: 34px; height: 40px; display: grid; place-items: center; color: var(--muted); opacity: .45; }
+.later svg { width: 19px; height: 19px; }
+.later:hover { opacity: 1; }
+.later.on { opacity: 1; color: var(--warn); }
+.row.is-later { box-shadow: inset 3px 0 0 var(--warn); }
+.reg.later-reg .n { display: inline-flex; align-items: center; gap: 7px; }
+.reg.later-reg svg { width: 17px; height: 17px; color: var(--muted); flex: none; }
+.reg.later-reg.has svg, .reg.later-reg.has .c { color: var(--warn); }

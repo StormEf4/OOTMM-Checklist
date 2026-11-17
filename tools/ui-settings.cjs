@@ -11,6 +11,8 @@ const shot = '.cache/shots/';
   fs.mkdirSync(shot, { recursive: true });
   await new Promise(r => srv.listen(8937, r));
   const b = await chromium.launch();
+  /* Showing logic is switched off in the app for now; these tests keep checking it. */
+  { const nc = b.newContext.bind(b); b.newContext = async o => { const c = await nc(o); await c.addInitScript(() => { window.__OOTMM_LOGIC__ = true; }); return c; }; }
   const errs = [];
   const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
   const p = await ctx.newPage(); p.on('pageerror', e => errs.push(String(e))); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
