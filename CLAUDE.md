@@ -71,9 +71,9 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 2. When `dist/desktop` changes on `main`, the `Windows installer` workflow builds the installer and publishes it as the
    newest GitHub Release. The installer is over GitHub's 100 MB file limit, so never commit it. To build it locally,
    run `npm run package:win`.
-3. Republish the hosted page from `dist/artifact/ootmm-checklist.html` to
-   https://claude.ai/artifact/9mUJwKrCFE88AprUDRHoe1 with capabilities `db`, `user` and `downloads`.
-4. The `Firebase site` workflow publishes `dist/web` and `firestore.rules` to Firebase on changes to main, once the
+3. The `Firebase site` workflow publishes `dist/web` and `firestore.rules` to Firebase on changes to main, once the
    `FIREBASE_SERVICE_ACCOUNT` secret and `firebase-config.json` are set.
-5. Note in the release which things weren't tested. The installer hasn't been run on real Windows or a real phone
+4. Note in the release which things weren't tested. The installer hasn't been run on real Windows or a real phone
    unless the owner has confirmed it.
+5. Don't republish the Claude hosted page (https://claude.ai/artifact/9mUJwKrCFE88AprUDRHoe1). Since Nov 17, 2026 the
+   owner supports only the Windows app and the phone site. The build still writes `dist/artifact/`, but nothing ships it.
