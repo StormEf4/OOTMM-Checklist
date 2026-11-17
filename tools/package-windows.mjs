@@ -75,6 +75,7 @@ SectionEnd
 
 const nsisHome = process.env.NSIS_HOME ?? path.join(pack, 'nsis/nsis-bundle/windows');
 const makensis = process.env.MAKENSIS ?? path.join(pack, 'nsis/nsis-bundle/linux/x64/makensis');
-chmodSync(makensis, 0o755);
+/* The bundled copy can lose its run bit when unpacked. A system makensis (MAKENSIS set) is already runnable and may not be ours to change. */
+if (!process.env.MAKENSIS) chmodSync(makensis, 0o755);
 execFileSync(makensis, ['-V2', nsi], { stdio: 'inherit', env: { ...process.env, NSISDIR: nsisHome } });
 console.log(`Installer: ${out} (${(statSync(out).size / 1e6).toFixed(1)} MB)`);
