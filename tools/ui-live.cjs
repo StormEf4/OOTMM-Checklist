@@ -58,13 +58,18 @@ const MOCK = who => `
 
   /* A shares, B joins */
   await tab(a, 'seeds');
-  ok('live box shows on the hosted page', !!(await a.$('[data-live-start]')));
+  ok('the Seeds tab has no live box', !(await a.$('[data-live-start]')));
+  await tab(a, 'coop');
+  ok('live box shows on the Coop tab', !!(await a.$('[data-live-start]')));
   await a.click('[data-live-start]'); await a.waitForSelector('.live-code');
   const code = await a.textContent('.live-code');
   ok('sharing gives a code', /^LIVE-[A-Z0-9]+$/.test(code), code);
   await until(() => store.size > 0);
-  await tab(bb, 'seeds'); await bb.fill('#liveJoin', code); await bb.click('[data-live-join]'); await bb.waitForTimeout(800);
+  await tab(bb, 'coop'); await bb.fill('#liveJoin', code); await bb.click('[data-live-join]'); await bb.waitForTimeout(800);
   ok('partner joins the seed', (await bb.evaluate(() => { const s = JSON.parse(localStorage.getItem('ootmm-checklist-v1')); return s.seeds.find(x => x.id === s.current).live; })) === code.slice(5).toLowerCase());
+
+  await tab(a, 'coop');
+  ok('the Coop tab lists the live seed', /LIVE-/.test(await a.textContent('#coopList')));
 
   /* Ticks go both ways */
   const KS = 'OOT Kokiri Forest Kokiri Sword Chest', MIDO = "OOT Mido's House Top Left", MIDO2 = "OOT Mido's House Top Right";
@@ -102,7 +107,7 @@ const MOCK = who => `
   ok('after a reload B still follows A', await until(async () => !(await isDone(bb, MIDO))));
 
   /* Stop */
-  await tab(bb, 'seeds'); await bb.click('[data-live-stop]'); await bb.waitForTimeout(300);
+  await tab(bb, 'coop'); await bb.click('[data-live-stop]'); await bb.waitForTimeout(300);
   await tick(a, KS);
   await bb.waitForTimeout(1500);
   ok('after stopping, B no longer changes', !(await isDone(bb, KS)));

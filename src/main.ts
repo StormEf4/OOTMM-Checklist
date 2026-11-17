@@ -152,7 +152,7 @@ let checks: CheckEntry[] = [];
 let lastResult: ComputeResult | null = null;
 let doneSet = new Set<string>();
 let skipSet = new Set<string>();
-let tab: 'list' | 'entrances' | 'notes' | 'items' | 'settings' | 'seeds' = 'list';
+let tab: 'list' | 'entrances' | 'notes' | 'items' | 'settings' | 'seeds' | 'coop' = 'list';
 let region: string | null = null;
 let phoneView: 'rail' | 'pane' = 'rail';
 let query = '';
@@ -406,7 +406,7 @@ function startLive() {
   save();
   liveFollow();
   livePush();
-  renderSeeds();
+  renderPane();
 }
 async function joinLive(code: string) {
   const room = roomFromCode(code);
@@ -436,15 +436,14 @@ function stopLive() {
   seed.liveClock = undefined;
   save();
   liveFollow();
-  renderSeeds();
+  renderPane();
   toast('This seed is no longer live on this device. Your progress stays here.');
 }
 function liveBoxHtml() {
   if (!hostedDb) return '';
   if (seed.live) return `<div class="box live-box"><h3>Playing live</h3>
-      <p>This seed is shared live. Ticks, skips, found items, entrances, hints, settings and notes show up for everyone in it within a second or two.</p>
+      <p>This seed is shared live.</p>
       <p>Your partner joins with this code: <b class="live-code">${esc(liveCode(seed.live))}</b></p>
-      <p class="fine">They need this page shared with them as an Editor, from the page's Share menu. If you both type in the Notes page at the same moment, the last one to type wins.</p>
       <p class="fine">Status: <span id="liveStatus">${esc(liveStatus || 'Connecting')}</span></p>
       <div class="btns"><button class="btn alt keep" data-live-copy>Copy code</button><button class="btn danger keep" data-live-stop>Stop playing live on this device</button></div>
     </div>`;
@@ -759,6 +758,7 @@ const ICON = {
   pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6l-1 6 4 3v2H6v-2l4-3z"/><path d="M12 14v7"/></svg>',
   list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 6.5l1.5 1.5L9 5.5M5 12.5l1.5 1.5L9 11.5M5 18.5l1.5 1.5L9 17.5M12.5 7h7M12.5 13h7M12.5 19h7"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>',
+  coop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8.5" cy="8" r="3"/><circle cx="16.5" cy="9" r="2.5"/><path d="M3 20c0-3.3 2.5-5.5 5.5-5.5S14 16.7 14 20M14.5 14.6c.6-.2 1.3-.3 2-.3 2.6 0 4.5 1.9 4.5 4.7"/></svg>',
   seeds: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M9 4v5h6V4M9 20v-6h6v6"/></svg>',
   entrances: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 21V6a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v15M3 21h18"/><circle cx="14.5" cy="12.5" r=".9" fill="currentColor" stroke="none"/></svg>',
   items: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9h14l-1.2 11H6.2z"/><path d="M9 9V7a3 3 0 0 1 6 0v2"/></svg>',
@@ -769,7 +769,7 @@ const ICON = {
   tick: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>',
 };
 
-const TAB_LABELS: Record<string, string> = { list: 'Checks', entrances: 'Entrances', notes: 'Notes', items: 'Items', settings: 'Settings', seeds: 'Seeds' };
+const TAB_LABELS: Record<string, string> = { list: 'Checks', entrances: 'Entrances', notes: 'Notes', items: 'Items', settings: 'Settings', seeds: 'Seeds', coop: 'Coop' };
 const pen = (edit: string) => `<span class="pen" data-edit="${esc(edit)}" role="button" aria-label="Edit">${ICON.pen}</span>`;
 function tabs() {
   return Object.entries(TAB_LABELS).map(([k, label]) =>
@@ -1877,12 +1877,39 @@ export function readTransferCode(code: string): Seed {
 
 /* ---------- Seeds page ---------- */
 
+/* ---------- Coop page ----------
+   Everything about playing a seed live with a partner. Live play needs the hosted page's shared database. */
+function renderCoop() {
+  const head = `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Coop</h2></div></div>`;
+  if (!hostedDb) {
+    $('#pane').innerHTML = `${head}<div class="scroll"><div class="page">
+      <div class="box"><h3>Coop runs on the hosted page</h3>
+        <p>Playing a seed live with a partner needs a shared server, and only the hosted page on Claude has one. Open the hosted page, then use this tab there to share a seed or join your partner's.</p>
+        <p class="fine">This app can still move a seed between devices with a transfer code on the Seeds tab, but changes don't sync on their own.</p>
+        <div class="btns"><button class="btn alt keep" data-tab="seeds">Go to Seeds</button></div></div>
+    </div></div>`;
+    return;
+  }
+  const liveSeeds = saved.seeds.filter(s => s.live);
+  const list = liveSeeds.map(s => `<div class="seed${s.id === seed.id ? ' on' : ''}">
+      <button class="nmz" data-open-coop="${s.id}" data-edit="seed:${s.id}">${esc(s.name)}</button>
+      <div class="meta">${s.id === seed.id ? 'Open now, ' : ''}code <span class="live-code">${esc(liveCode(s.live!))}</span>, ${s.done.length.toLocaleString()} ${s.done.length === 1 ? 'check' : 'checks'} done</div></div>`).join('');
+  $('#pane').innerHTML = `${head}<div class="scroll"><div class="page">
+    ${liveBoxHtml()}
+    ${liveSeeds.length ? `<div class="box"><h3>Your live seeds</h3><p>Seeds on this device that are shared live. Open one to play it together.</p><div id="coopList">${list}</div></div>` : ''}
+    <div class="box"><h3>How coop works</h3>
+      <p>Ticks, skips, found items, item counts, entrances, check notes, settings and the Notes page sync within a second or two.</p>
+      <p>Each change is timed, so changes made at the same moment on both sides both survive. If you both type in the Notes page at once, the last one to type wins.</p>
+      <p class="fine">Your partner opens this same hosted page and joins with your code. To save changes, they need the page shared with them as an Editor from the page's Share menu. Stopping on one device leaves the seed and its progress there.</p></div>
+  </div></div>`;
+}
+
 function renderSeeds() {
   const seedsHtml = [...saved.seeds].sort((a, b) => b.updated - a.updated).map(s => {
     const on = s.id === seed.id;
     return `<div class="seed${on ? ' on' : ''}">
       <button class="nmz" data-open="${s.id}" data-edit="seed:${s.id}">${esc(s.name)}</button>
-      <div class="meta">${s.live ? '<span class="tag live-tag">Live</span> ' : ''}${on ? 'Open now, ' : ''}${s.done.length.toLocaleString()} ${s.done.length === 1 ? 'check' : 'checks'} done${Object.keys(s.entrances ?? {}).length ? `, ${Object.keys(s.entrances).length} entrances logged` : ''}</div>
+      <div class="meta">${on ? 'Open now, ' : ''}${s.done.length.toLocaleString()} ${s.done.length === 1 ? 'check' : 'checks'} done${Object.keys(s.entrances ?? {}).length ? `, ${Object.keys(s.entrances).length} entrances logged` : ''}</div>
       <div class="btns">
         <button class="btn alt" data-rename="${s.id}">Rename</button>
         <button class="btn danger" data-del="${s.id}"${saved.seeds.length < 2 ? ' disabled' : ''}>Delete</button>
@@ -1894,7 +1921,6 @@ function renderSeeds() {
       <div class="btns"><button class="btn" data-new>Start a new seed</button><button class="btn alt" data-dupe>Copy settings to a new seed</button><button class="btn danger" data-reset>Clear progress on this seed</button></div>
       <div id="seedList">${seedsHtml}</div>
     </div>
-    ${liveBoxHtml()}
     <div class="box">
       <h3>Move a seed to another device</h3>
       <p>Copy the code here, then paste it on your other device. It picks up your settings and progress. When you switch back, paste a new code and the same seed updates.</p>
@@ -2526,6 +2552,7 @@ function renderPane() {
   else if (tab === 'items') renderItems();
   else if (tab === 'notes') renderNotes();
   else if (tab === 'settings') renderSettings();
+  else if (tab === 'coop') renderCoop();
   else renderSeeds();
 }
 
@@ -2772,6 +2799,7 @@ function events() {
     if (d.compactSet) { saved.ui.compact = d.compactSet === '1'; applyTheme(); save(); renderLook(); return; }
     if ('backup' in d) { saveBackup(); return; }
     if (d.doc) { docCommand(d.doc, d.arg); return; }
+    if (d.openCoop) { save(); openSeed(d.openCoop); save(); renderAll(); return; }
     if ('liveStart' in d) { startLive(); return; }
     if ('liveStop' in d) { stopLive(); return; }
     if ('liveJoin' in d) { joinLive(($('#liveJoin') as HTMLInputElement).value); return; }

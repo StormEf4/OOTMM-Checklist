@@ -52,16 +52,16 @@ The **Notes** tab is one page of notes per seed, edited like a word processor. I
 Pick Letter, A4 or Fit to screen, zoom from 75% to 150%, or switch to white paper. Notes save as you type. They travel in
 transfer codes and backups. Pasted content is cleaned down to that formatting. Older plain notes move over on their own.
 
-## Playing live (hosted page)
+## Coop (hosted page)
 
-On the hosted page, **Seeds > Play together live** shares the open seed under a LIVE- code. Your partner opens the same
+On the hosted page, the **Coop** tab shares the open seed under a LIVE- code, lists your live seeds, and explains how syncing works. Your partner opens the same
 hosted page and joins with the code. To save changes, your partner needs the page shared with them as an Editor from
 the page's Share menu.
 
 Ticks, skips, found items, item counts, entrances, check notes, settings and the Notes page all sync within a
 second or two. Each change is timed, so changes made at the same moment on both sides both survive. If two people type
 in the Notes page at once, the last one to type wins. The Windows app and phone site don't have live play, because
-there's no shared server behind them. The code is in `src/live.ts`.
+there's no shared server behind them. Their Coop tab says so and points to transfer codes. The code is in `src/live.ts`.
 
 ## Check names
 
