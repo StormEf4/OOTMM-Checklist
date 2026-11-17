@@ -10,8 +10,9 @@ import { itemName } from '@ootmm/names';
 import { DEFAULT_SETTINGS, SETTINGS, compute, enableFastMode, exportSettings, importSettings, makeSettings, serial } from './engine/engine';
 import { computeLogic } from './engine/logic';
 import { checklistNormalDungeons } from '@ootmm/logic';
-import { PAGES, slotView } from './cube';
-import { menuIcon } from './menu-icons';
+import { PAGES, alt, slotView } from './cube';
+import { menuIcon as drawnIcon } from './menu-icons';
+import { customIcons, iconFolderAvailable, loadIcons, openIconFolder, putIcon, readIconFile, removeAllIcons, removeIcon } from './icon-store';
 import { MAP_SPOTS } from './mapspots';
 import { NAME_STYLES, playerName, type NameStyle } from './names';
 import { connectFirebase, firebaseReady, type LiveDb } from './firebase';
@@ -943,10 +944,18 @@ function renderDial() {
    and a button to switch games. */
 let cubeSel = -1;
 let cubeSpin = '';
+/** A slot's icon: the player's own picture when they set one in Edit mode, otherwise the drawn one. */
+function menuIcon(id: string) {
+  const own = customIcons.get(id) ?? customIcons.get(alt(id));
+  return own ? `<img class="mi mi-own" src="${own}" alt="" draggable="false">` : drawnIcon(id);
+}
+let iconsLoaded = false;
+
 function renderCube() {
   const box = document.getElementById('cube');
   if (!box) return;
   if ($('.brand').dataset.meter !== 'menu') { box.innerHTML = ''; return; }
+  if (!iconsLoaded) { iconsLoaded = true; loadIcons().then(() => { if (customIcons.size) renderCube(); }); }
   const game = saved.ui.cubeGame ?? 'oot';
   const pages = PAGES[game];
   const page = pages.find(p => p.id === saved.ui.cubePage) ?? pages[0];
@@ -959,7 +968,7 @@ function renderCube() {
   });
   const nameOf = (i: number) => { const v = views[i]; return v ? (v.on ? v.name + (v.n ? ` ×${v.n}` : '') : `${v.name}: not found yet`) : ''; };
   const slots = views.map((v, i) =>
-    `<button class="slot keep${v.on ? ' on' : ''}${i === cubeSel ? ' sel' : ''}" data-cube-slot="${i}" aria-label="${esc(nameOf(i))}" title="${esc(nameOf(i))}">${menuIcon(v.icon)}${v.n ? `<i>${v.n}</i>` : ''}</button>`).join('');
+    `<button class="slot${editMode ? '' : ' keep'}${v.on ? ' on' : ''}${i === cubeSel ? ' sel' : ''}" data-cube-slot="${i}" data-edit="icon:${esc(v.icon)}" aria-label="${esc(nameOf(i))}" title="${esc(editMode ? 'Change this icon' : nameOf(i))}">${menuIcon(v.icon)}${v.n ? `<i>${v.n}</i>` : ''}</button>`).join('');
   const got = views.filter(v => v.on).length;
   const turn = (d: number) => pages[(at + d + pages.length) % pages.length].id;
   const spin = cubeSpin; cubeSpin = '';
@@ -1523,6 +1532,38 @@ function logFound(checkId: string, itemId: string) {
   toast(`Logged ${itemLabel(itemId)}. The check is marked done.`, true);
 }
 
+/* Edit mode: change an item menu icon to a picture of the player's own. Saved on the device, so later versions keep it. */
+function editIcon(id: string) {
+  const label = itemLabel(id);
+  let picked = '';
+  const preview = () => `<div class="icon-edit-row">
+      <div class="icon-prev"><span>Now</span><div class="slot on">${menuIcon(id)}</div></div>
+      <div class="icon-prev"><span>New</span><div class="slot on" id="iconNew">${picked ? `<img class="mi mi-own" src="${picked}" alt="">` : ''}</div></div>
+    </div>`;
+  openSheet('Change this icon', label, `
+    <div id="iconPrev">${preview()}</div>
+    <label class="btn alt keep icon-pick">Choose a picture<input type="file" id="iconFile" accept="image/png,image/webp,image/jpeg,image/gif" hidden></label>
+    <p class="fine">PNG works best. Your picture stays on this device and every later version of the app keeps it.${iconFolderAvailable() ? ' On Windows it is saved in the app\'s icons folder.' : ''}</p>
+    <div class="btns">
+      <button class="btn" data-act="save">Save</button>
+      ${customIcons.has(id) ? '<button class="btn danger" data-act="reset">Put back the original icon</button>' : ''}
+    </div>`, {
+    async save() {
+      if (!picked) return toast('Choose a picture first.');
+      try { await putIcon(id, picked); } catch { return toast("That picture couldn't be saved."); }
+      closeSheet(); renderCube(); toast('Icon saved. Later versions of the app keep it.', true);
+    },
+    async reset() { await removeIcon(id).catch(() => {}); closeSheet(); renderCube(); toast('Original icon is back.'); },
+  });
+  const input = document.getElementById('iconFile') as HTMLInputElement;
+  input.onchange = async () => {
+    const f = input.files?.[0];
+    if (!f) return;
+    try { picked = await readIconFile(f); } catch { return toast("That file isn't a picture this app can read."); }
+    $('#iconPrev').innerHTML = preview();
+  };
+}
+
 function editItem(id: string) {
   const i = catalogById().get(id);
   if (!i) return;
@@ -2052,6 +2093,7 @@ function renderPinsView() {
 }
 
 function renderLook() {
+  if (!iconsLoaded) { iconsLoaded = true; loadIcons().then(() => { if (customIcons.size) { renderCube(); if (tab === 'settings' && settingsView === 'look') renderLook(); } }); }
   const cur = skinById(saved.ui.skin);
   const cards = SKINS.map(s => `<button class="skin-card" data-skin-set="${s.id}" aria-pressed="${s.id === cur.id}" style="background:${s.tokens.bg};color:${s.tokens.ink};border-color:${s.id === cur.id ? s.tokens.gold : s.tokens.faint}">
     <span class="skin-swatches">${['gold', 'oot', 'mm', 'heart'].map(t => `<i style="background:${s.tokens[t]}"></i>`).join('')}</span>
@@ -2063,6 +2105,9 @@ function renderLook() {
       <div class="box"><h3>Check names</h3>${namesSliderHtml()}<div class="btns"><button class="btn alt keep" data-setview="edits">Rename checks</button></div></div>
       <div class="box"><h3>Progress display</h3>
         <div class="seg" role="group" aria-label="Progress display">${seg('meter-set', saved.ui.meter ?? '', [['', 'Theme default'], ['hearts', 'Heart containers'], ['clock', 'Three-day clock'], ['menu', 'Item menu'], ['none', 'Numbers only']])}</div></div>
+      <div class="box"><h3>Item menu icons</h3><p>In Edit mode, tap any icon in the item menu to change it to a picture of your own. Your pictures stay on this device, and every later version of the app keeps them.</p>
+        <p class="fine" id="iconCount">${customIcons.size ? `${customIcons.size} ${customIcons.size === 1 ? 'icon' : 'icons'} changed.` : 'No icons changed yet.'}</p>
+        <div class="btns">${iconFolderAvailable() ? '<button class="btn alt keep" data-open-icons>Open icons folder</button>' : ''}${customIcons.size ? '<button class="btn danger keep" data-reset-icons>Put back every original icon</button>' : ''}</div></div>
       <div class="box"><h3>Text size</h3>
         <div class="seg" role="group" aria-label="Text size">${seg('scale-set', String(saved.ui.scale ?? 1), [['0.9', 'Small'], ['1', 'Normal'], ['1.12', 'Large'], ['1.25', 'Extra large']])}</div></div>
       <div class="box"><h3>List spacing</h3>
@@ -2546,6 +2591,7 @@ function openEditor(target: string) {
   else if (kind === 'tab') editTab(id);
   else if (kind === 'meter') editMeter();
   else if (kind === 'item') editItem(id);
+  else if (kind === 'icon') editIcon(id);
   else if (kind === 'stone') editStone(id);
   else if (kind === 'text') openTextEditor(id, null);
 }
@@ -3159,6 +3205,12 @@ function events() {
     if (d.skinSet) { saved.ui.skin = d.skinSet; saved.ui.font = undefined; applyTheme(); save(); renderDial(); renderLook(); return; }
     if (d.cubePage) { cubeSpin = el.getAttribute('aria-label') === 'Previous page' ? ' spin-l' : ' spin-r'; cubeSel = -1; saved.ui.cubePage = d.cubePage; save(); renderCube(); return; }
     if (d.cubeGame) { cubeSpin = ' spin-r'; cubeSel = -1; saved.ui.cubeGame = d.cubeGame as 'oot' | 'mm'; saved.ui.cubePage = undefined; save(); renderCube(); return; }
+    if ('openIcons' in d) { openIconFolder(); return; }
+    if ('resetIcons' in d) {
+      if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Tap again to put them all back'; return; }
+      removeAllIcons().catch(() => {}).then(() => { renderCube(); renderLook(); toast('Every original icon is back.'); });
+      return;
+    }
     if (d.cubeSlot !== undefined) { cubeSel = cubeSel === Number(d.cubeSlot) ? -1 : Number(d.cubeSlot); renderCube(); return; }
     if (d.meterSet !== undefined) { saved.ui.meter = d.meterSet || undefined; save(); renderDial(); renderLook(); return; }
     if (d.scaleSet) { saved.ui.scale = Number(d.scaleSet); applyTheme(); save(); renderLook(); return; }

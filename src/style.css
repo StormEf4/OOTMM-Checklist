@@ -516,3 +516,12 @@ details.box[open] { display: grid; gap: 9px; }
 .row-pin { width: 32px; height: 40px; }
 .row:not(:hover):not(:focus-within) .row-pin[aria-pressed="false"] { opacity: .35; }
 .pins-sec .section-head h2 { color: var(--gold); }
+
+/* The player's own item menu icons, and the Edit mode window that changes them */
+.slot .mi-own { width: 72%; height: 72%; object-fit: contain; image-rendering: auto; filter: grayscale(1) brightness(.55) opacity(.55); }
+.slot.on .mi-own { filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .7)); }
+.editing .cube .slot { cursor: pointer; outline: 1px dashed color-mix(in srgb, var(--frame) 60%, transparent); outline-offset: -3px; }
+.icon-edit-row { display: flex; gap: 18px; align-items: end; margin: 4px 0 12px; }
+.icon-prev { display: grid; gap: 4px; justify-items: center; font-size: .8rem; color: var(--muted); }
+.icon-prev .slot { --frame: var(--gold); --frame-hi: color-mix(in srgb, var(--gold) 55%, #fff); --sock: color-mix(in srgb, var(--panel) 50%, #000); width: 72px; }
+.icon-pick { display: inline-flex; cursor: pointer; }
