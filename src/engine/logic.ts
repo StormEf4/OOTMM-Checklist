@@ -117,6 +117,8 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
    */
   const consumable = (item: any) => ItemGroups.CONSUMABLES.has(item) && !itemProperties.license.has(item);
   const family = new Map<string, string>();
+  /* Double Defense doesn't open checks, but the hearts display shows it, so it can be logged too. */
+  const tracked = (item: any) => itemProperties.important.has(item) || /_DEFENSE_UPGRADE$/.test(item.id);
   const add = (item: any, n: number) => {
     let id: string = item.id;
     if (consumable(item)) {
@@ -125,7 +127,7 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
       max.set(id, 1);
       return;
     }
-    if (itemProperties.important.has(item)) max.set(id, (max.get(id) ?? 0) + n);
+    if (tracked(item)) max.set(id, (max.get(id) ?? 0) + n);
   };
   for (const [pi, n] of allItems as Map<any, number>) add(pi.item, n);
   /*
@@ -147,7 +149,7 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
   for (const [pi, n] of startingItems as Map<any, number>) {
     const id = consumable(pi.item) ? family.get(familyOf(pi.item.id)) ?? pi.item.id : pi.item.id;
     start.set(id, (start.get(id) ?? 0) + n);
-    if (!max.has(id) && itemProperties.important.has(pi.item)) max.set(id, n);
+    if (!max.has(id) && tracked(pi.item)) max.set(id, n);
     if (max.has(id)) start.set(id, Math.min(start.get(id)!, max.get(id)!));
   }
   const catalog: CatalogItem[] = [...max].map(([id, n]) => ({

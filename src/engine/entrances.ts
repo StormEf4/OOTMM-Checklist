@@ -115,9 +115,27 @@ export function shuffledEntrances(state: any): EntranceData {
     }
   }
 
-  const regionOf = (area: string) => world.areas[area]?.region as string | undefined;
+  /* Some rooms, like the Goron Shop or the Astral Observatory passage, sit in areas that OoTMM gives no region.
+     Those take the region of the nearest area they lead to, so they list under the place the player walks in from. */
+  const ownRegion = (area: string) => world.areas[area]?.region as string | undefined;
+  const regionOf = (area: string) => {
+    if (validRegion(ownRegion(area))) return ownRegion(area);
+    const seen = new Set([area]);
+    let ring = [area];
+    for (let step = 0; step < 3 && ring.length; step++) {
+      const next: string[] = [];
+      for (const a of ring) for (const b of Object.keys(world.areas[a]?.exits ?? {})) {
+        if (seen.has(b) || /GLOBAL/.test(b)) continue;
+        seen.add(b);
+        if (validRegion(ownRegion(b))) return ownRegion(b);
+        next.push(b);
+      }
+      ring = next;
+    }
+    return undefined;
+  };
   const groupOf = (e: any) => {
-    const near = e.type.endsWith('-exit') ? [regionOf(e.to), regionOf(e.from)] : [regionOf(e.from), regionOf(e.to)];
+    const near = e.type.endsWith('-exit') ? [ownRegion(e.to), ownRegion(e.from), regionOf(e.to), regionOf(e.from)] : [ownRegion(e.from), ownRegion(e.to), regionOf(e.from), regionOf(e.to)];
     return near.find(validRegion) ?? 'NONE';
   };
 

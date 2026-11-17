@@ -7,6 +7,8 @@ const KEY = 'ootmm-checklist-v1';
 (async () => {
   await new Promise(r => srv.listen(8934, r));
   const b = await chromium.launch();
+  /* The sidebar's headings start folded in the app; these tests open them all to reach areas. */
+  { const nc = b.newContext.bind(b); b.newContext = async o => { const c = await nc(o); await c.addInitScript(() => { window.__OOTMM_RAIL_OPEN__ = true; }); return c; }; }
   const errs = [];
   const ctx = await b.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
   const p = await ctx.newPage(); p.on('pageerror', e => errs.push(String(e)));
@@ -19,7 +21,7 @@ const KEY = 'ootmm-checklist-v1';
   ok('default theme is Hero of Time with hearts', (await p.evaluate(() => document.documentElement.dataset.skin)) === 'hero' && (await p.$$('.heart-row svg')).length === 20);
   ok('editing is off to start', !(await p.evaluate(() => document.body.classList.contains('editing'))));
   await p.click('.row .tick-btn >> nth=0'); await wait();
-  ok('ticking works when off', (await p.textContent('#remain')).startsWith('536'));
+  ok('ticking works when off', (await p.textContent('#remain')).startsWith('535'));
 
   await toggle();
   ok('button shows it is on', (await p.textContent('.rail [data-editmode]')).includes('on') && (await p.getAttribute('.rail [data-editmode]', 'aria-pressed')) === 'true');

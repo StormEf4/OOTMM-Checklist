@@ -30,6 +30,8 @@ const MODULES = {
 (async () => {
   await new Promise(r => srv.listen(PORT, r));
   const b = await chromium.launch();
+  /* The sidebar's headings start folded in the app; these tests open them all to reach areas. */
+  { const nc = b.newContext.bind(b); b.newContext = async o => { const c = await nc(o); await c.addInitScript(() => { window.__OOTMM_RAIL_OPEN__ = true; }); return c; }; }
   const errs = [];
   const open = async (who, config = true, online = true) => {
     const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
