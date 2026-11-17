@@ -54,7 +54,7 @@ transfer codes and backups. Pasted content is cleaned down to that formatting. O
 
 ## Coop
 
-The **Coop** tab shares the open seed under a LIVE- code, lists your live seeds, and explains how syncing works. Your
+The **Coop** tab shares the open seed under a LIVE- code, and lists your live seeds. Your
 partner joins with the code. Ticks, skips, found items, item counts, entrances, check notes, settings and the Notes page
 all sync within a second or two. Each change is timed, so changes made at the same moment on both sides both survive. If
 two people type in the Notes page at once, the last one to type wins. The merging is in `src/live.ts`.
