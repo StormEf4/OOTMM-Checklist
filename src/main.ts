@@ -10,6 +10,7 @@ import { itemName } from '@ootmm/names';
 import { DEFAULT_SETTINGS, SETTINGS, compute, enableFastMode, exportSettings, importSettings, makeSettings, serial } from './engine/engine';
 import { computeLogic } from './engine/logic';
 import { checklistNormalDungeons } from '@ootmm/logic';
+import { PAGES, slotView } from './cube';
 import { MAP_SPOTS } from './mapspots';
 import { NAME_STYLES, playerName, type NameStyle } from './names';
 import { connectFirebase, firebaseReady, type LiveDb } from './firebase';
@@ -103,7 +104,7 @@ type Edits = {
 type Saved = {
   v: 1; seeds: Seed[]; current: string; custom: CustomCheck[]; edits: Edits;
   ui: {
-    skin?: string; theme?: string; meter?: string; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
+    skin?: string; theme?: string; meter?: string; cubeGame?: 'oot' | 'mm'; cubePage?: string; railOpen?: string[]; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
     showLocked?: boolean; changesOnly?: boolean; collapsed?: string[];
     logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; haveOnly?: boolean; hideWritten?: boolean;
     /** Which check names show. Custom puts the player's renames on top of nameBase. */
@@ -745,8 +746,10 @@ const ENTR_DIRS = [
   { dir: 'other', name: 'Other', hint: '', arrow: '•', cut: null, lead: '' },
 ] as const;
 const entranceHidden = (e: EntranceEntry) => !!(saved.edits.entrances[e.id]?.hidden || saved.edits.areas[e.group]?.hidden);
-const counted = (c: CheckEntry) => !c.fixed && !c.junk && !skipSet.has(c.id) && !seed.skippedRegions.includes(c.region) && !checkHidden(c);
-const shown = (c: CheckEntry) => (saved.ui.showLocked || (!c.fixed && !c.junk)) && (editMode || !checkHidden(c));
+const counted = (c: CheckEntry) => !OFF_LIST(c) && !c.fixed && !c.junk && !skipSet.has(c.id) && !seed.skippedRegions.includes(c.region) && !checkHidden(c);
+/* Left off the Checks tab at the owner's request: starting items and the Gerudo card are tracked on the Items tab. */
+const OFF_LIST = (c: CheckEntry) => c.region === 'POCKET' || c.id === 'OOT Gerudo Member Card';
+const shown = (c: CheckEntry) => !OFF_LIST(c) && (saved.ui.showLocked || (!c.fixed && !c.junk)) && (editMode || !checkHidden(c));
 
 const regionRank = (id: string, game: string, dungeon: boolean) =>
   (id === 'NONE' || id === 'POCKET' ? 4e5 : game === 'oot' ? 0 : 2e5) + (dungeon ? 1e5 : 0) + (saved.edits.areas[id]?.order ?? REGION_ORDER.get(id) ?? 5e4);
@@ -846,6 +849,7 @@ function shell() {
           <div class="legend" id="legend"></div>
         </div>
         <div class="hearts" id="hearts" data-edit="meter"></div>
+        <div class="cube" id="cube"></div>
       </div>
       <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
         <clipPath id="hq1"><rect width="12" height="12"/></clipPath>
@@ -889,9 +893,14 @@ function renderTabs() {
 }
 
 const HEART = 'M12 21.300C5.600 16.500 1.500 12.800 1.500 8.200 1.500 5 4 2.800 6.900 2.800c2 0 3.900 1 5.100 2.800 1.200-1.800 3.100-2.800 5.100-2.800 2.900 0 5.400 2.200 5.400 5.400 0 4.600-4.100 8.300-10.500 13.100z';
-function heartRow(fraction: number, cls: string) {
+/* Double Defense gives the hearts a bold gold outline, the way the games show it. */
+function hasDoubleDefense(game: 'oot' | 'mm') {
+  const have = owned(), items = catalogById();
+  return [`${game.toUpperCase()}_DEFENSE_UPGRADE`, 'SHARED_DEFENSE_UPGRADE'].some(id => { const i = items.get(id); return (i ? countOf(i, have) : have[id] ?? 0) > 0; });
+}
+function heartRow(fraction: number, cls: 'oot' | 'mm') {
   const pieces = Math.floor(fraction * 40 + 1e-9);
-  return `<div class="heart-row ${cls}">${Array.from({ length: 10 }, (_, i) => {
+  return `<div class="heart-row ${cls}${hasDoubleDefense(cls) ? ' dd' : ''}">${Array.from({ length: 10 }, (_, i) => {
     const q = Math.max(0, Math.min(4, pieces - i * 4));
     const fill = q === 0 ? '' : `<path class="hf" d="${HEART}"${q < 4 ? ` clip-path="url(#hq${q})"` : ''}/>`;
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path class="he" d="${HEART}"/>${fill}</svg>`;
@@ -912,6 +921,7 @@ function renderDial() {
   const meter = saved.ui.meter || skinById(saved.ui.skin).meter;
   $('.brand').dataset.meter = meter;
   $('#hearts').innerHTML = meter === 'hearts' ? (t.oot ? heartRow(t.ootDone / t.oot, 'oot') : '') + (t.mm ? heartRow(t.mmDone / t.mm, 'mm') : '') : '';
+  renderCube();
   $('#dialPct').textContent = `${Math.floor(pct * 100)}%`;
   $('#seedName').textContent = seed.name;
   $('.seed-btn').dataset.edit = 'seed:' + seed.id;
@@ -923,9 +933,52 @@ function renderDial() {
   $('#legend').innerHTML = [t.oot ? `<b class="o">Hyrule ${t.ootDone}/${t.oot}</b>` : '', t.mm ? `<b class="m">Termina ${t.mmDone}/${t.mm}</b>` : ''].join('');
 }
 
+/* The item menu display: one page of a game's pause menu at a time, with arrows to turn the page like the games' cube,
+   and a button to switch games. */
+let cubeSel = -1;
+let cubeSpin = '';
+function renderCube() {
+  const box = document.getElementById('cube');
+  if (!box) return;
+  if ($('.brand').dataset.meter !== 'menu') { box.innerHTML = ''; return; }
+  const game = saved.ui.cubeGame ?? 'oot';
+  const pages = PAGES[game];
+  const page = pages.find(p => p.id === saved.ui.cubePage) ?? pages[0];
+  const at = pages.indexOf(page);
+  const items = catalogById(), have = owned();
+  const count = (id: string) => { const i = items.get(id); return i ? countOf(i, have) : 0; };
+  const views = page.slots.map(sl => {
+    const v = slotView(sl, count);
+    return { ...v, name: /^[A-Z]+_[A-Z0-9_]+$/.test(v.name) ? itemLabel(v.name) : v.name };
+  });
+  const nameOf = (i: number) => { const v = views[i]; return v ? (v.on ? v.name + (v.n ? ` ×${v.n}` : '') : `${v.name}: not found yet`) : ''; };
+  const slots = views.map((v, i) =>
+    `<button class="slot keep${v.on ? ' on' : ''}${i === cubeSel ? ' sel' : ''}" data-cube-slot="${i}" aria-label="${esc(nameOf(i))}"><span class="sl">${esc(v.label)}</span>${v.n ? `<i>${v.n}</i>` : ''}</button>`).join('');
+  const got = views.filter(v => v.on).length;
+  const turn = (d: number) => pages[(at + d + pages.length) % pages.length].id;
+  const spin = cubeSpin; cubeSpin = '';
+  box.innerHTML = `<div class="cube-face ${game}${spin}">
+    <div class="cube-head">
+      <button class="cube-turn keep" data-cube-page="${turn(-1)}" aria-label="Previous page">◀</button>
+      <span class="cube-name">${page.name}</span>
+      <button class="cube-turn keep" data-cube-page="${turn(1)}" aria-label="Next page">▶</button>
+      <button class="cube-game keep" data-cube-game="${game === 'oot' ? 'mm' : 'oot'}" title="Switch to the ${game === 'oot' ? 'Majora\'s Mask' : 'Ocarina of Time'} menu">${game === 'oot' ? 'OoT' : 'MM'}<span aria-hidden="true">⇄</span></button>
+    </div>
+    ${catalog().length ? `<div class="slots" style="--cols:${page.cols}">${slots}</div>` : '<div class="cube-wait">Loading items</div>'}
+    <div class="cube-foot"><span class="cube-label" id="cubeLabel">${esc(cubeSel >= 0 ? nameOf(cubeSel) : `${got} of ${views.length} found`)}</span>
+      <span class="cube-dots" aria-hidden="true">${pages.map(p => `<i class="${p === page ? 'on' : ''}"></i>`).join('')}</span></div>
+  </div>`;
+  /* Like the games, pointing at an item names it along the bottom. */
+  box.onmouseover = e => { const b = (e.target as HTMLElement).closest<HTMLElement>('[data-cube-slot]'); if (b) $('#cubeLabel').textContent = nameOf(Number(b.dataset.cubeSlot)); };
+  box.onmouseleave = () => { const l = document.getElementById('cubeLabel'); if (l) l.textContent = cubeSel >= 0 ? nameOf(cubeSel) : `${got} of ${views.length} found`; };
+}
+
 /* A sidebar heading that folds its areas away. Folded headings are saved with the other collapsed sections. */
+/* Sidebar headings start folded, so a new player sees a short list; the ones they open are saved. */
+/* Browser tests that click areas set __OOTMM_RAIL_OPEN__ to start with every heading open. */
+const railShut = (key: string) => !(globalThis as any).__OOTMM_RAIL_OPEN__ && !(saved.ui.railOpen ?? []).includes(key);
 function railGroup(key: string, name: string, cls: string, rows: () => string) {
-  const shut = collapsed(key);
+  const shut = railShut(key);
   return `<button class="group fold keep ${cls}" data-collapse="${esc(key)}" aria-expanded="${!shut}"><span class="caret" aria-hidden="true"></span>${esc(name)}</button>${shut ? '' : rows()}`;
 }
 
@@ -1788,7 +1841,7 @@ function extraSettingsHtml(q: string) {
   const junkAdd = !hit('junk locations') && !junkRows.length ? '' : `<div class="set wide"><div class="lab"><b>Add a junk location</b></div>
     <div class="ctl"><input type="text" list="junkChecks" id="junkAdd" aria-label="Check to mark as junk" placeholder="Start typing a check"><button class="btn alt" data-junk-add>Add</button></div>
     <div class="desc">Checks that always hold junk on this seed.</div>
-    <datalist id="junkChecks">${(lastResult?.checks ?? []).filter(c => !c.fixed && !S.junkLocations.includes(c.id)).map(c => `<option value="${esc(`${c.regionName}: ${c.name}`)}"></option>`).join('')}</datalist></div>`;
+    <datalist id="junkChecks">${(lastResult?.checks ?? []).filter(c => !c.fixed && !OFF_LIST(c) && !S.junkLocations.includes(c.id)).map(c => `<option value="${esc(`${c.regionName}: ${c.name}`)}"></option>`).join('')}</datalist></div>`;
 
   return section('x.tricks', 'Tricks', trickRows(false))
     + section('x.glitches', 'Glitches', trickRows(true))
@@ -1879,7 +1932,7 @@ function renderLook() {
       <div class="box"><h3>Theme</h3><div class="skin-grid">${cards}</div></div>
       <div class="box"><h3>Check names</h3>${namesSliderHtml()}<div class="btns"><button class="btn alt keep" data-setview="edits">Rename checks</button></div></div>
       <div class="box"><h3>Progress display</h3>
-        <div class="seg" role="group" aria-label="Progress display">${seg('meter-set', saved.ui.meter ?? '', [['', 'Theme default'], ['hearts', 'Heart containers'], ['clock', 'Three-day clock'], ['none', 'Numbers only']])}</div></div>
+        <div class="seg" role="group" aria-label="Progress display">${seg('meter-set', saved.ui.meter ?? '', [['', 'Theme default'], ['hearts', 'Heart containers'], ['clock', 'Three-day clock'], ['menu', 'Item menu'], ['none', 'Numbers only']])}</div></div>
       <div class="box"><h3>Text size</h3>
         <div class="seg" role="group" aria-label="Text size">${seg('scale-set', String(saved.ui.scale ?? 1), [['0.9', 'Small'], ['1', 'Normal'], ['1.12', 'Large'], ['1.25', 'Extra large']])}</div></div>
       <div class="box"><h3>List spacing</h3>
@@ -2262,9 +2315,9 @@ function editTab(k: string) {
 function editMeter() {
   const set = (v?: string) => { snap(); saved.ui.meter = v; commit(); };
   openSheet('Edit the progress display', '', `<div class="btns">
-    <button class="btn alt" data-act="hearts">Heart containers</button><button class="btn alt" data-act="clock">Three-day clock</button><button class="btn alt" data-act="none">Numbers only</button><button class="btn alt" data-act="auto">Theme default</button>
+    <button class="btn alt" data-act="hearts">Heart containers</button><button class="btn alt" data-act="clock">Three-day clock</button><button class="btn alt" data-act="menu">Item menu</button><button class="btn alt" data-act="none">Numbers only</button><button class="btn alt" data-act="auto">Theme default</button>
     <button class="btn alt" data-act="colors">Change its colors</button></div>`, {
-    hearts() { set('hearts'); }, clock() { set('clock'); }, none() { set('none'); }, auto() { set(undefined); },
+    hearts() { set('hearts'); }, clock() { set('clock'); }, menu() { set('menu'); }, none() { set('none'); }, auto() { set(undefined); },
     colors() { closeSheet(); openColors(); },
   });
 }
@@ -2646,6 +2699,8 @@ function docInsert(e: ClipboardEvent | DragEvent) {
 }
 
 function renderPane() {
+  renderCube();
+  if ($('.brand')?.dataset.meter === 'hearts') renderDial();
   if (tab === 'list') renderChecks();
   else if (tab === 'entrances') renderEntrances();
   else if (tab === 'items') renderItems();
@@ -2885,6 +2940,12 @@ function events() {
     if ('openColors' in d) { openColors(); return; }
     if (d.addCheck !== undefined) { addCheck(d.addCheck); return; }
     if (d.addEntrance !== undefined) { addEntrance(d.addEntrance); return; }
+    if (d.collapse && /^r[ce]:/.test(d.collapse)) {
+      const open = saved.ui.railOpen ?? [];
+      saved.ui.railOpen = open.includes(d.collapse) ? open.filter(x => x !== d.collapse) : [...open, d.collapse];
+      save(); renderRail();
+      return;
+    }
     if (d.collapse) {
       const cur = saved.ui.collapsed ?? [];
       saved.ui.collapsed = cur.includes(d.collapse) ? cur.filter(x => x !== d.collapse) : [...cur, d.collapse];
@@ -2893,6 +2954,9 @@ function events() {
     }
     if (d.setview) { settingsView = d.setview as typeof settingsView; renderSettings(); return; }
     if (d.skinSet) { saved.ui.skin = d.skinSet; saved.ui.font = undefined; applyTheme(); save(); renderDial(); renderLook(); return; }
+    if (d.cubePage) { cubeSpin = el.getAttribute('aria-label') === 'Previous page' ? ' spin-l' : ' spin-r'; cubeSel = -1; saved.ui.cubePage = d.cubePage; save(); renderCube(); return; }
+    if (d.cubeGame) { cubeSpin = ' spin-r'; cubeSel = -1; saved.ui.cubeGame = d.cubeGame as 'oot' | 'mm'; saved.ui.cubePage = undefined; save(); renderCube(); return; }
+    if (d.cubeSlot !== undefined) { cubeSel = cubeSel === Number(d.cubeSlot) ? -1 : Number(d.cubeSlot); renderCube(); return; }
     if (d.meterSet !== undefined) { saved.ui.meter = d.meterSet || undefined; save(); renderDial(); renderLook(); return; }
     if (d.scaleSet) { saved.ui.scale = Number(d.scaleSet); applyTheme(); save(); renderLook(); return; }
     if (d.compactSet) { saved.ui.compact = d.compactSet === '1'; applyTheme(); save(); renderLook(); return; }

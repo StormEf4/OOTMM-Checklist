@@ -14,6 +14,8 @@ const diffs = [];
 (async () => {
   await new Promise(r => srv.listen(PORT, r));
   const b = await chromium.launch();
+  /* The sidebar's headings start folded in the app; these tests open them all to reach areas. */
+  { const nc = b.newContext.bind(b); b.newContext = async o => { const c = await nc(o); await c.addInitScript(() => { window.__OOTMM_RAIL_OPEN__ = true; }); return c; }; }
   for (const base of data.baselines) {
     if (only && !base.cases.some(c => only.test(`${base.name} | ${c.key}`))) continue;
     const p = await (await b.newContext({ viewport: { width: 1280, height: 900 } })).newPage();

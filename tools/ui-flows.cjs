@@ -6,6 +6,8 @@ const ok = (name, cond, extra = '') => { console.log(`${cond ? 'PASS' : 'FAIL'} 
 (async () => {
   await new Promise(r => srv.listen(8932, r));
   const b = await chromium.launch();
+  /* The sidebar's headings start folded in the app; these tests open them all to reach areas. */
+  { const nc = b.newContext.bind(b); b.newContext = async o => { const c = await nc(o); await c.addInitScript(() => { window.__OOTMM_RAIL_OPEN__ = true; }); return c; }; }
   const errs = [];
   const open = async o => { const c = await b.newContext(o); const p = await c.newPage(); p.on('pageerror', e => errs.push(String(e))); await p.goto('http://localhost:8932/'); await p.waitForSelector('#regions .reg[data-region^="OOT_"]'); return p; };
   const pc = await open({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' });
@@ -15,7 +17,7 @@ const ok = (name, cond, extra = '') => { console.log(`${cond ? 'PASS' : 'FAIL'} 
   await tab(pc, 'settings');
   await pc.fill('#importText', 'v2.q1ZKzi8PzihNS8tJ9c8vUbIqKSpNrQUA');
   await pc.click('[data-import]'); await pc.waitForTimeout(700);
-  ok('settings string import', (await pc.textContent('#countPill')).includes('546'), await pc.textContent('#countPill'));
+  ok('settings string import', (await pc.textContent('#countPill')).includes('545'), await pc.textContent('#countPill'));
 
   // real spoiler log: settings, MQ rolls, pre-completed dungeons
   await pc.setInputFiles('#importFile', '.cache/spoiler-sample.txt'); await pc.waitForTimeout(1200);
@@ -67,7 +69,7 @@ const ok = (name, cond, extra = '') => { console.log(`${cond ? 'PASS' : 'FAIL'} 
   await ph.tap('[data-copycode]'); await ph.waitForTimeout(200);
   const back = await ph.inputValue('#codeBox');
   await pc.fill('#codeBox', back); await pc.click('[data-readcode]'); await pc.waitForTimeout(800);
-  ok('code back on PC updates the same seed', (await pc.$$eval('.seed .nmz', e => e.length)) === 1 && (await pc.textContent('#remain')) === '515 of 517 left', await pc.textContent('#remain'));
+  ok('code back on PC updates the same seed', (await pc.$$eval('.seed .nmz', e => e.length)) === 1 && (await pc.textContent('#remain')) === '514 of 516 left', await pc.textContent('#remain'));
   await pc.fill('#codeBox', 'garbage'); await pc.click('[data-readcode]'); await pc.waitForTimeout(150);
   ok('bad code explains itself', (await pc.textContent('#toast')).includes('transfer code'), await pc.textContent('#toast'));
 

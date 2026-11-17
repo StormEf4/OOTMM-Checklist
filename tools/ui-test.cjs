@@ -7,6 +7,8 @@ const shot = '.cache/shots/';
 (async () => {
   await new Promise(r => srv.listen(8931, r));
   const b = await chromium.launch();
+  /* The sidebar's headings start folded in the app; these tests open them all to reach areas. */
+  { const nc = b.newContext.bind(b); b.newContext = async o => { const c = await nc(o); await c.addInitScript(() => { window.__OOTMM_RAIL_OPEN__ = true; }); return c; }; }
   const errs = [];
   const open = async (opts) => { const c = await b.newContext(opts); const p = await c.newPage(); p.on('pageerror', e => errs.push(String(e))); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); }); await p.goto('http://localhost:8931/'); await p.waitForSelector('.reg[data-region="OOT_KOKIRI_FOREST"]', { timeout: 20000 }); return p; };
 
