@@ -40,7 +40,7 @@ const MODULES = {
       store.set(p, d);
       for (const pg of pages) pg.evaluate(([p2, d2]) => window.__fbFire?.(p2, d2), [p, d]).catch(() => {});
     });
-    if (config) await ctx.addInitScript(() => { window.__OOTMM_FIREBASE__ = { apiKey: 'test-key', projectId: 'test-project', appId: 'x' }; });
+    await ctx.addInitScript(on => { window.__OOTMM_FIREBASE__ = on ? { apiKey: 'test-key', projectId: 'test-project', appId: 'x' } : {}; }, config);
     await ctx.route('https://www.gstatic.com/firebasejs/**', route => {
       if (!online) return route.abort();
       const m = route.request().url().split('/').pop();
