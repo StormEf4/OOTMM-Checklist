@@ -1,0 +1,48 @@
+# Publishes the phone site (dist/web) to Firebase Hosting and updates the Coop security rules in firestore.rules.
+# It needs the FIREBASE_SERVICE_ACCOUNT secret and a filled-in firebase-config.json. Until then it skips itself.
+name: Firebase site
+
+on:
+  push:
+    branches: [main]
+    paths: ['dist/web/**', 'firestore.rules', 'firebase.json', 'firebase-config.json', '.github/workflows/firebase.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firebase
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check setup
+        id: setup
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          project=$(node -p "require('./firebase-config.json').projectId || ''")
+          if [ -z "$SA" ] || [ -z "$project" ]; then
+            echo "::notice::Skipping: add the FIREBASE_SERVICE_ACCOUNT secret and fill in firebase-config.json first."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "project=$project" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy the site and rules
+        if: steps.setup.outputs.ready == 'true'
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx --yes firebase-tools@13 deploy --only hosting,firestore:rules --project "${{ steps.setup.outputs.project }}" --non-interactive
+          rm -f "$RUNNER_TEMP/sa.json"
+          echo "Live at https://${{ steps.setup.outputs.project }}.web.app" >> "$GITHUB_STEP_SUMMARY"
