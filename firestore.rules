@@ -1,0 +1,18 @@
+rules_version = '2';
+// Coop rooms. A room's name is its LIVE code, so only someone who has the code can open it.
+// Every device signs in anonymously first, and nobody can list rooms or touch anything else.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /live/{room} {
+      allow get: if request.auth != null && room.matches('[a-z0-9]{12,40}');
+      allow create, update: if request.auth != null && room.matches('[a-z0-9]{12,40}')
+        && request.resource.data.keys().hasOnly(['v', 'updated', 'blob'])
+        && request.resource.data.blob is string
+        && request.resource.data.blob.size() < 900000;
+      allow list, delete: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

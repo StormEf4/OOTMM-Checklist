@@ -52,16 +52,36 @@ The **Notes** tab is one page of notes per seed, edited like a word processor. I
 Pick Letter, A4 or Fit to screen, zoom from 75% to 150%, or switch to white paper. Notes save as you type. They travel in
 transfer codes and backups. Pasted content is cleaned down to that formatting. Older plain notes move over on their own.
 
-## Coop (hosted page)
+## Coop
 
-On the hosted page, the **Coop** tab shares the open seed under a LIVE- code, lists your live seeds, and explains how syncing works. Your partner opens the same
-hosted page and joins with the code. To save changes, your partner needs the page shared with them as an Editor from
-the page's Share menu.
+The **Coop** tab shares the open seed under a LIVE- code, lists your live seeds, and explains how syncing works. Your
+partner joins with the code. Ticks, skips, found items, item counts, entrances, check notes, settings and the Notes page
+all sync within a second or two. Each change is timed, so changes made at the same moment on both sides both survive. If
+two people type in the Notes page at once, the last one to type wins. The merging is in `src/live.ts`.
 
-Ticks, skips, found items, item counts, entrances, check notes, settings and the Notes page all sync within a
-second or two. Each change is timed, so changes made at the same moment on both sides both survive. If two people type
-in the Notes page at once, the last one to type wins. The Windows app and phone site don't have live play, because
-there's no shared server behind them. Their Coop tab says so and points to transfer codes. The code is in `src/live.ts`.
+Coop needs a shared server, and there are two:
+
+- **The hosted page on Claude** uses the page's own database. Your partner opens the same page, and needs it shared with
+  them as an Editor from the page's Share menu.
+- **The Windows app and the phone site** use your own free Firebase project (`src/firebase.ts`). Players sign in to
+  nothing: each device gets an anonymous ID, and only someone with a room's code can open it. The Firebase libraries load
+  from Google the first time Coop is used. Without a project, the Coop tab says it isn't set up.
+
+Codes from one server don't work on the other.
+
+### Setting up Firebase
+
+1. At [console.firebase.google.com](https://console.firebase.google.com), add a project. Analytics can be off.
+2. **Build > Firestore Database > Create database**, in production mode.
+3. **Build > Authentication > Get started**, then turn on **Anonymous**.
+4. **Project settings > Your apps > Web**, register an app, and put its `firebaseConfig` values in
+   `firebase-config.json`. They're public by design. Rebuild.
+5. **Project settings > Service accounts > Generate new private key**. Add the file's contents to the GitHub repository
+   as the Actions secret `FIREBASE_SERVICE_ACCOUNT`. Keep it private.
+
+After that, the `Firebase site` workflow publishes `dist/web` to `https://<project>.web.app` and the rules in
+`firestore.rules` on every change to main. The free plan allows 20,000 writes and 50,000 reads a day, far more than
+coop uses.
 
 ## Check names
 

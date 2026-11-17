@@ -42,7 +42,8 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `src/main.ts`: the app and Edit mode
 - `src/textlayer.ts`: makes any on-screen text editable
 - `src/skins.ts`: themes
-- `src/notes.ts`: the Notes tab's cleaning of formatted notes. `src/live.ts`: live play merging on the hosted page
+- `src/notes.ts`: the Notes tab's cleaning of formatted notes. `src/live.ts`: Coop live play merging. `src/firebase.ts`:
+  Coop's server outside the hosted page, set by `firebase-config.json`, with rules in `firestore.rules`
 - `desktop/`: the Windows window (Electron)
 - `tools/`: build, tests and packaging
 - `dist/web/`: the built phone site, and `dist/desktop/`: the built Windows app files. Both are committed
@@ -60,7 +61,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
     about an hour over 3 shards. `LOGIC_RETRY=<file of case names>` retries skipped cases with looser placement rules.
   - `node tools/ui-toggles-data.mjs`, then `tools/ui-toggles.cjs`, uses every settings control in the browser.
 - Random shop prices are expected to differ in the logic sweep: the app counts shops at their normal price.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`: browser tests. Run with
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 
@@ -72,5 +73,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
    run `npm run package:win`.
 3. Republish the hosted page from `dist/artifact/ootmm-checklist.html` to
    https://claude.ai/artifact/9mUJwKrCFE88AprUDRHoe1 with capabilities `db`, `user` and `downloads`.
-4. Note in the release which things weren't tested. The installer hasn't been run on real Windows or a real phone
+4. The `Firebase site` workflow publishes `dist/web` and `firestore.rules` to Firebase on changes to main, once the
+   `FIREBASE_SERVICE_ACCOUNT` secret and `firebase-config.json` are set.
+5. Note in the release which things weren't tested. The installer hasn't been run on real Windows or a real phone
    unless the owner has confirmed it.

@@ -12,6 +12,7 @@ import { computeLogic } from './engine/logic';
 import { checklistNormalDungeons } from '@ootmm/logic';
 import { MAP_SPOTS } from './mapspots';
 import { NAME_STYLES, playerName, type NameStyle } from './names';
+import { connectFirebase, firebaseReady, type LiveDb } from './firebase';
 import { PAGE_SIZES, ZOOMS, cleanNotes, textToNotes, type NotesView } from './notes';
 import { flatten, liveCode, merge, roomFromCode, sameState, stamp, unflatten, type LiveState } from './live';
 import { ROLLABLE, ROLLED_CHOICES, UNKNOWN_MEANS_ALL, parseSpoilerHeader } from './engine/spoiler';
@@ -285,7 +286,8 @@ async function connectHostedStore() {
       applyTheme();
       openSeed(saved.current);
     }
-    hostedDb = db;
+    liveDb = db;
+    liveWhere = 'claude';
     liveFollow();
     remoteSave = json => {
       const blob = uint8ArrayToBase64(deflateRaw(new TextEncoder().encode(json), { level: 9 }), { urlSafe: true });
@@ -296,14 +298,27 @@ async function connectHostedStore() {
 
 /* ---------- Live play (hosted page) ---------- */
 
-let hostedDb: any = null;
+let liveDb: any = null;
+/** Where live rooms are kept: the Claude hosted page's own db, or the owner's Firebase project everywhere else. */
+let liveWhere: '' | 'claude' | 'firebase' = '';
+let fireState: 'idle' | 'connecting' | 'failed' = 'idle';
+/** Outside the hosted page, connects to Firebase the first time Coop is needed. */
+async function useFirebase() {
+  if (liveDb || __TARGET__ === 'artifact' || !firebaseReady() || fireState === 'connecting') return;
+  fireState = 'connecting';
+  const db: LiveDb | null = await connectFirebase();
+  if (liveDb) return;
+  if (db) { liveDb = db; liveWhere = 'firebase'; fireState = 'idle'; liveFollow(); }
+  else fireState = 'failed';
+  if (tab === 'coop') renderPane();
+}
 let liveUnsub: (() => void) | null = null;
 let liveRoom = '';
 let liveRemote: LiveState | null = null;
 let livePushTimer = 0, livePushing = false, livePushAgain = false;
 let liveStatus = '';
 const liveBase = new Map<string, Record<string, string>>();
-const liveDoc = (room: string) => hostedDb.doc('live/' + room);
+const liveDoc = (room: string) => liveDb.doc('live/' + room);
 const liveLocal = (): LiveState => ({ flat: flatten(seed), clock: seed.liveClock ??= {} });
 const encodeLive = (st: LiveState) => ({ v: 1, updated: Date.now(), blob: uint8ArrayToBase64(deflateRaw(new TextEncoder().encode(JSON.stringify(st)), { level: 6 }), { urlSafe: true }) });
 function decodeLive(data: any): LiveState | null {
@@ -326,13 +341,13 @@ function liveStamp() {
   queueLivePush();
 }
 function queueLivePush() {
-  if (!hostedDb || !seed.live) return;
+  if (!liveDb || !seed.live) return;
   clearTimeout(livePushTimer);
   livePushTimer = window.setTimeout(livePush, 300);
 }
 /** One write at a time: this device's state merged with the latest from the room. */
 async function livePush() {
-  if (!hostedDb || !seed.live) return;
+  if (!liveDb || !seed.live) return;
   if (livePushing) { livePushAgain = true; return; }
   livePushing = true;
   const room = seed.live;
@@ -344,7 +359,8 @@ async function livePush() {
     if (seed.live === room) liveRemote = state;
     setLiveStatus('Synced');
   } catch (e: any) {
-    if (e?.code === 'invalid_argument') setLiveStatus("Your changes can't be shared from here. The page's owner needs to invite you as an Editor.");
+    if (e?.code === 'permission-denied') setLiveStatus("The coop server turned this change away. Stop and share the seed again.");
+    else if (e?.code === 'invalid_argument') setLiveStatus("Your changes can't be shared from here. The page's owner needs to invite you as an Editor.");
     else { setLiveStatus('Not synced yet. Trying again.'); window.setTimeout(queueLivePush, 1500 + Math.random() * 1500); }
   } finally {
     livePushing = false;
@@ -353,7 +369,7 @@ async function livePush() {
 }
 /** Follows the open seed's live room, if it has one. */
 function liveFollow() {
-  const room = hostedDb && seed?.live ? seed.live : '';
+  const room = liveDb && seed?.live ? seed.live : '';
   if (room === liveRoom) return;
   liveUnsub?.(); liveUnsub = null; liveRemote = null; liveRoom = room;
   if (!room) { setLiveStatus(''); return; }
@@ -398,8 +414,8 @@ function applyLive(st: LiveState) {
   scheduleLogic();
 }
 function startLive() {
-  if (!hostedDb) return;
-  seed.live = uid() + uid();
+  if (!liveDb) return;
+  seed.live = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => (b % 36).toString(36)).join('');
   const now = Date.now();
   seed.liveClock = {};
   for (const k of Object.keys(flatten(seed))) seed.liveClock[k] = now;
@@ -410,7 +426,7 @@ function startLive() {
 }
 async function joinLive(code: string) {
   const room = roomFromCode(code);
-  if (!hostedDb || !room) { toast('Type the LIVE- code your partner sent.'); return; }
+  if (!liveDb || !room) { toast('Type the LIVE- code your partner sent.'); return; }
   let remote: LiveState | null = null;
   try {
     const snap = await liveDoc(room).get();
@@ -440,7 +456,7 @@ function stopLive() {
   toast('This seed is no longer live on this device. Your progress stays here.');
 }
 function liveBoxHtml() {
-  if (!hostedDb) return '';
+  if (!liveDb) return '';
   if (seed.live) return `<div class="box live-box"><h3>Playing live</h3>
       <p>This seed is shared live.</p>
       <p>Your partner joins with this code: <b class="live-code">${esc(liveCode(seed.live))}</b></p>
@@ -1881,10 +1897,20 @@ export function readTransferCode(code: string): Seed {
    Everything about playing a seed live with a partner. Live play needs the hosted page's shared database. */
 function renderCoop() {
   const head = `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Coop</h2></div></div>`;
-  if (!hostedDb) {
+  if (!liveDb && __TARGET__ !== 'artifact' && firebaseReady()) {
+    if (fireState === 'idle') useFirebase();
     $('#pane').innerHTML = `${head}<div class="scroll"><div class="page">
-      <div class="box"><h3>Coop runs on the hosted page</h3>
-        <p>Playing a seed live with a partner needs a shared server, and only the hosted page on Claude has one. Open the hosted page, then use this tab there to share a seed or join your partner's.</p>
+      ${fireState === 'failed'
+        ? `<div class="box"><h3>Can't reach the coop server</h3><p>Coop needs an internet connection. Check yours, then try again.</p>
+          <div class="btns"><button class="btn keep" data-coop-retry>Try again</button></div></div>`
+        : '<div class="box"><h3>Connecting to coop</h3><p>Getting the coop server ready. This takes a moment the first time.</p></div>'}
+    </div></div>`;
+    return;
+  }
+  if (!liveDb) {
+    $('#pane').innerHTML = `${head}<div class="scroll"><div class="page">
+      <div class="box"><h3>Coop isn't set up in this version</h3>
+        <p>Playing a seed live needs a shared server. This build doesn't have one connected. The hosted page on Claude, and builds made with a Firebase project, do.</p>
         <p class="fine">This app can still move a seed between devices with a transfer code on the Seeds tab, but changes don't sync on their own.</p>
         <div class="btns"><button class="btn alt keep" data-tab="seeds">Go to Seeds</button></div></div>
     </div></div>`;
@@ -1900,7 +1926,9 @@ function renderCoop() {
     <div class="box"><h3>How coop works</h3>
       <p>Ticks, skips, found items, item counts, entrances, check notes, settings and the Notes page sync within a second or two.</p>
       <p>Each change is timed, so changes made at the same moment on both sides both survive. If you both type in the Notes page at once, the last one to type wins.</p>
-      <p class="fine">Your partner opens this same hosted page and joins with your code. To save changes, they need the page shared with them as an Editor from the page's Share menu. Stopping on one device leaves the seed and its progress there.</p></div>
+      <p class="fine">${liveWhere === 'claude'
+        ? "Your partner opens this same hosted page and joins with your code. To save changes, they need the page shared with them as an Editor from the page's Share menu."
+        : 'Your partner joins with your code from the Windows app or the phone site, signed in to nothing. Anyone with the code can join, so share it only with your partner. Codes from the hosted page on Claude only work there.'} Stopping on one device leaves the seed and its progress there.</p></div>
   </div></div>`;
 }
 
@@ -2800,6 +2828,7 @@ function events() {
     if ('backup' in d) { saveBackup(); return; }
     if (d.doc) { docCommand(d.doc, d.arg); return; }
     if (d.openCoop) { save(); openSeed(d.openCoop); save(); renderAll(); return; }
+    if ('coopRetry' in d) { fireState = 'idle'; renderPane(); return; }
     if ('liveStart' in d) { startLive(); return; }
     if ('liveStop' in d) { stopLive(); return; }
     if ('liveJoin' in d) { joinLive(($('#liveJoin') as HTMLInputElement).value); return; }
@@ -3040,6 +3069,7 @@ function boot() {
     if (source) { startWorker(source, 'checks'); startWorker(source, 'logic'); }
     openSeed(saved.current);
     connectHostedStore();
+    if (saved.seeds.some(s => s.live)) useFirebase();
     /* Ask the browser to keep this site's storage instead of clearing it when space runs low. */
     navigator.storage?.persist?.().catch(() => {});
     addEventListener('pagehide', flushSave);
