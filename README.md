@@ -3,6 +3,9 @@
 A checklist for the OoTMM combo randomizer that shows only the checks your settings put on a seed.
 One codebase builds the Windows app and the phone web app.
 
+**Windows:** [download the latest installer](https://github.com/StormEf4/OOTMM-Checklist/releases/latest/download/OoTMM-Checklist-Setup.exe)
+and run it. It installs for your account and doesn't need administrator rights.
+
 The checklist runs OoTMM's own world code, the same steps as its internal `locationList()`: every location
 in the built world, minus the ones locked to their vanilla item. The app doesn't keep its own copy of the
 rules, so a rebuild picks up changes in the randomizer.
@@ -176,8 +179,10 @@ settings. Then add it to your Home Screen from Safari or Chrome.
 
 ## Packaging notes
 
-The installer is about 104 MB, which is over GitHub's 100 MB file limit, so it's attached to each GitHub Release
-instead of stored in the repository. Download it from Releases, or build it with `npm run package:win`.
+The installer is about 104 MB, which is over GitHub's 100 MB file limit, so it isn't stored in the repository. The
+`Windows installer` workflow in `.github/workflows/installer.yml` builds it from `dist/desktop` whenever that
+changes on `main`, and publishes it as the newest Release. The download link above always gives that one. To build it
+yourself, run `npm run package:win`.
 
 
 `npm run package:win` needs `unzip` and the NSIS compiler. On Linux, the `nsis-bundle` from

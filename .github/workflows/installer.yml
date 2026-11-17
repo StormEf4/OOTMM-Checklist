@@ -1,0 +1,49 @@
+# Builds the Windows installer from the committed dist/desktop app and publishes it as the newest GitHub Release,
+# so the download link in the README always gives the latest version.
+name: Windows installer
+
+on:
+  push:
+    branches: [main]
+    paths: ['dist/desktop/**', 'tools/package-windows.mjs', 'icons/**', '.github/workflows/installer.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: installer
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install NSIS
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq nsis unzip
+      - name: Build the installer
+        run: node tools/package-windows.mjs
+        env:
+          MAKENSIS: /usr/bin/makensis
+          NSIS_HOME: /usr/share/nsis
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v1.1.${{ github.run_number }}"
+          size=$(stat -c %s dist/OoTMM-Checklist-Setup.exe)
+          sum=$(sha256sum dist/OoTMM-Checklist-Setup.exe | cut -d' ' -f1)
+          cat > notes.md <<NOTES
+          Built automatically from \`main\` at ${GITHUB_SHA::7}: $(git log -1 --format=%s)
+
+          Download **OoTMM-Checklist-Setup.exe** below and run it. It installs for your Windows account and doesn't need administrator rights. Your saved seeds and names carry over from older versions.
+
+          Not tested on real Windows unless a release note says so.
+
+          Installer: ${size} bytes, sha256 \`${sum}\`
+          NOTES
+          gh release create "$tag" dist/OoTMM-Checklist-Setup.exe --title "OoTMM Checklist $tag" --notes-file notes.md --target "$GITHUB_SHA" --latest
