@@ -71,24 +71,14 @@ const shot = '.cache/shots/';
   await p.click('.rail .tab[data-tab=items]'); await p.waitForSelector('.item-btn');
   ok('a logged item counts in Items', (await p.locator('.item.on', { hasText: 'Boomerang' }).count()) > 0 && (await p.locator('.item', { hasText: 'Boomerang' }).first().textContent()).includes('at'));
 
-  /* Hints */
-  await p.click('.rail .tab[data-tab=hints]'); await p.waitForSelector('[data-hint]');
-  const stones = await p.$$('[data-hint]');
-  ok('hints tab lists gossip stones', stones.length > 40, `${stones.length} stones`);
-  await p.click('[data-hint] >> nth=0'); await p.waitForSelector('#hintText');
-  await p.fill('#hintText', 'They say that Lake Hylia is a foolish choice.'); await p.click('.layer:last-child [data-act=save]'); await wait();
-  ok('a written hint shows on its stone', (await p.textContent('#hintScroll')).includes('foolish choice'));
-  ok('wording marks it foolish', (await p.$$('.row.hint .htag.foolish')).length === 1);
-  ok('the area is tagged in the rail', (await p.textContent('.reg[data-region="OOT_LAKE_HYLIA"]')).includes('Foolish'));
-  await p.click('[data-add-hint]'); await p.waitForSelector('#hintFrom');
-  await p.fill('#hintFrom', 'Shop sign'); await p.fill('#hintText', 'Deku Theater has something');
-  await p.fill('#hintCheck', 'Lost Woods: Skull Kid'); await p.fill('#hintItem', 'Lens of Truth');
-  await p.click('.layer:last-child [data-act=save]'); await wait();
-  ok('your own hints are listed', (await p.textContent('#hintScroll')).includes('Shop sign'));
-  await p.screenshot({ path: shot + 'hints.png' });
-  await p.click('.reg[data-region="OOT_LOST_WOODS"]'); await wait();
-  ok('an item hint shows on its check', (await p.textContent('.row[data-id="OOT Lost Woods Skull Kid"]')).includes('Lens of Truth'));
-
+  /* Hints tab is gone; item pins */
+  ok('there is no Hints tab', !(await p.$('.rail .tab[data-tab=hints]')));
+  const firstName = await p.textContent('.item-btn .t >> nth=3');
+  await p.click('.item-pin >> nth=3'); await wait(300);
+  ok('a pinned item moves to the top', (await p.textContent('.items.pinned')).includes(firstName) && (await p.$$('.items.pinned .item')).length === 1);
+  ok('pins save by default', (await store()).ui.pins.length === 1);
+  await p.screenshot({ path: shot + 'pins.png' });
+  await p.click('.rail .tab[data-tab=list]'); await wait(300);
   /* Map */
   await p.click('[data-checks-view=map]'); await p.waitForSelector('.map-grid .tile');
   ok('map shows overworld tiles', (await p.$$('.map-grid .tile')).length > 40);
@@ -110,16 +100,15 @@ const shot = '.cache/shots/';
   await p.click('.item-btn .t >> nth=0'); await p.waitForSelector('#edName');
   await p.fill('#edName', 'My item'); await p.click('.layer:last-child [data-act=save]'); await wait();
   ok('edit mode renames an item', (await p.textContent('#itemScroll')).includes('My item'));
-  await p.click('.rail .tab[data-tab=hints]'); await p.waitForSelector('[data-hint]');
-  await p.click('[data-hint] .t >> nth=1'); await p.waitForSelector('[data-act=write]');
-  await p.fill('#edName', 'Talking rock'); await p.click('.layer:last-child [data-act=save]'); await wait();
-  ok('edit mode renames a stone', (await p.textContent('#hintScroll')).includes('Talking rock'));
+  await p.click('.items.pinned .item-pin'); await wait(300);
+  ok('pins work in edit mode', !(await p.$('.items.pinned')) && !(await p.$('.layer')));
+  await p.click('.item-pin >> nth=0'); await wait(300);
   await p.click('.rail [data-editmode]'); await wait();
 
 
   /* Saves and transfer */
   await p.reload(); await p.waitForSelector('.row'); await waitLogic();
-  ok('items and hints survive a reload', (await reach()) >= more && (await store()).seeds[0].hints && Object.keys((await store()).seeds[0].hints).length === 2);
+  ok('items and pins survive a reload', (await reach()) >= more && (await store()).ui.pins.length === 1);
   await p.click('.rail .tab[data-tab=seeds]'); await p.waitForSelector('[data-copycode]');
   await p.evaluate(() => { navigator.clipboard.writeText = () => Promise.reject(new Error('x')); });
   await p.click('[data-copycode]'); await p.waitForFunction(() => document.querySelector('#codeBox').value.startsWith('OOTMM1.'), null, { timeout: 10000 });
@@ -129,7 +118,7 @@ const shot = '.cache/shots/';
   await q.click('.rail .tab[data-tab=seeds]'); await q.fill('#codeBox', code); await q.click('[data-readcode]'); await q.waitForTimeout(800);
   const t2 = await q.evaluate(k => JSON.parse(localStorage.getItem(k)), KEY);
   const n2 = t2.seeds.find(x => x.id === t2.current);
-  ok('transfer code carries items and hints', Object.keys(n2.found).length === 1 && Object.keys(n2.hints).length === 2 && Object.keys(n2.have).length > 0);
+  ok('transfer code carries items', Object.keys(n2.found).length === 1 && Object.keys(n2.have).length > 0);
 
   /* Older saves without the new fields */
   const c3 = await b.newContext({ viewport: { width: 1280, height: 800 } }); const o = await c3.newPage(); o.on('pageerror', e => errs.push(String(e)));
@@ -142,8 +131,20 @@ const shot = '.cache/shots/';
   }, [KEY, old]);
   await o.reload(); await o.waitForSelector('.row');
   await o.click('.rail .tab[data-tab=items]'); await o.waitForSelector('.item-btn', { timeout: 60000 });
-  await o.click('.rail .tab[data-tab=hints]'); await o.waitForSelector('[data-hint]');
   ok('older saves open the new tabs', true);
+
+  /* Save pins off */
+  await p.click('.rail .tab[data-tab=settings]'); await p.click('[data-setview=look]'); await p.waitForSelector('[data-save-pins]');
+  await p.click('[data-save-pins]'); await wait(300);
+  ok('turning Save pins off drops them from the save', (await store()).ui.savePins === false && !(await store()).ui.pins);
+  await p.click('.rail .tab[data-tab=items]'); await p.waitForSelector('.item-btn');
+  ok('pins still show until the app closes', !!(await p.$('.items.pinned')));
+  await p.click('.rail .tab[data-tab=settings]'); await p.click('[data-setview=look]'); await p.waitForSelector('[data-save-pins]');
+  await p.click('[data-save-pins]'); await wait(300);
+  ok('turning it back on saves them', (await store()).ui.pins.length === 1);
+  await p.click('[data-clear-pins]'); await wait(300);
+  ok('Unpin all clears them', (await store()).ui.pins.length === 0);
+  await p.click('[data-setview=game]'); await wait(300);
 
   /* Pre-completed dungeons */
   await p.click('.rail .tab[data-tab=settings]'); await p.waitForSelector('#setSearch');
@@ -177,8 +178,6 @@ const shot = '.cache/shots/';
   await m.click('.bottom .tab[data-tab=items]'); await m.waitForSelector('.item-btn', { timeout: 60000 });
   ok('no sideways scroll on phone items', await m.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await m.screenshot({ path: shot + 'phone-items.png' });
-  await m.click('.bottom .tab[data-tab=hints]'); await m.waitForSelector('[data-hint]');
-  await m.screenshot({ path: shot + 'phone-hints.png' });
   await m.click('.bottom .tab[data-tab=list]'); await m.click('.reg >> nth=0'); await m.click('[data-checks-view=map]'); await m.waitForSelector('.map-grid .tile');
   ok('no sideways scroll on phone map', await m.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await m.screenshot({ path: shot + 'phone-map.png' });

@@ -25,8 +25,9 @@ const PORT = Number(process.env.PORT ?? 8940);
   const old = await p.innerHTML('#docPage');
   ok('older plain notes move over as text', old.includes('Old note line 1') && old.includes('Old &lt;b&gt;line&lt;/b&gt; 2'), old);
   await p.click('.rail .tab[data-tab=seeds]');
-  ok('the Seeds tab points to Notes', !!(await p.$('#pane [data-tab=notes]')) && !(await p.$('#seedPad')));
-  await p.click('#pane [data-tab=notes]'); await p.waitForSelector('#docPage');
+  const seedsText = await p.textContent('#pane');
+  ok('the Seeds tab has no notes or phone sections', !/Notes for this seed|Using this on your phone|Keep it on your phone/.test(seedsText) && !(await p.$('#seedPad')));
+  await p.click('.rail .tab[data-tab=notes]'); await p.waitForSelector('#docPage');
 
   /* Formatting */
   await p.click('#docPage'); await p.keyboard.press('Control+End'); await p.keyboard.press('Enter');
@@ -52,6 +53,12 @@ const PORT = Number(process.env.PORT ?? 8940);
 
   /* Page options */
   await p.selectOption('[data-doc-page]', 'a4'); await p.selectOption('[data-doc-zoom]', '1.25'); await p.click('[data-doc-paper]');
+  const gaps = () => p.evaluate(() => { const d = document.querySelector('.doc-scroll').getBoundingClientRect(), g = document.getElementById('docPage').getBoundingClientRect(); return [Math.round(g.left - d.left), Math.round(d.right - g.right), Math.round(g.width)]; });
+  const g125 = await gaps();
+  ok('the page is centered at 125%', Math.abs(g125[0] - g125[1]) <= 2 && g125[0] >= 0, g125.join(' '));
+  await p.selectOption('[data-doc-zoom]', '1'); const g100 = await gaps();
+  ok('zoom makes the page bigger, still centered', g125[2] > g100[2] && Math.abs(g100[0] - g100[1]) <= 2, `${g100.join(' ')} vs ${g125.join(' ')}`);
+  await p.selectOption('[data-doc-zoom]', '1.25');
   ok('page size, zoom and paper apply', await p.evaluate(() => { const d = document.querySelector('.doc-desk'); return d.classList.contains('size-a4') && d.classList.contains('paper') && d.style.getPropertyValue('--zoom') === '1.25'; }));
 
   /* Pasting is cleaned */
