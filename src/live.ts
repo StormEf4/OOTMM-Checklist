@@ -6,14 +6,14 @@ export type LiveState = { flat: Record<string, string>; clock: Record<string, nu
 
 type SeedLike = {
   name: string; settings: string; done: string[]; skipped: string[]; skippedRegions: string[];
-  rolled: Record<string, string[]>; preCompleted?: string[]; entrances: Record<string, string>; notes: Record<string, string>;
+  rolled: Record<string, string[]>; preCompleted?: string[]; entrances: Record<string, string>; later?: string[]; notes: Record<string, string>;
   pad: string; doc?: string; found: Record<string, string>; have: Record<string, number>; hints: Record<string, unknown>;
 };
 
 const MAPS: [string, keyof SeedLike, boolean][] = [
   ['e', 'entrances', false], ['t', 'notes', false], ['f', 'found', false], ['v', 'have', true], ['i', 'hints', true], ['r', 'rolled', true],
 ];
-const SETS: [string, keyof SeedLike][] = [['d', 'done'], ['k', 'skipped'], ['g', 'skippedRegions']];
+const SETS: [string, keyof SeedLike][] = [['d', 'done'], ['k', 'skipped'], ['g', 'skippedRegions'], ['l', 'later']];
 const SCALARS: [string, keyof SeedLike, boolean][] = [['s', 'settings', false], ['n', 'name', false], ['w', 'doc', false], ['p', 'pad', false], ['q', 'preCompleted', true]];
 
 /** A seed's shared state as one string per key. */

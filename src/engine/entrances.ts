@@ -59,14 +59,20 @@ function entranceDir(type: string): EntranceEntry['dir'] {
   return 'other';
 }
 
+/* OoTMM names each warp song entrance by the song's first word. */
+const WARP_SONGS: Record<string, string> = {
+  Minuet: 'Minuet of Forest', Bolero: 'Bolero of Fire', Serenade: 'Serenade of Water',
+  Requiem: 'Requiem of Spirit', Nocturne: 'Nocturne of Shadow', Prelude: 'Prelude of Light',
+};
+
 function describeSource(e: any) {
   const from = clean(e.from), to = clean(e.to);
   switch (e.type) {
     case 'spawn-child': return { title: 'Child spawn', sub: 'Where child Link starts' };
     case 'spawn-adult': return { title: 'Adult spawn', sub: 'Where adult Link starts' };
     case 'wallmaster': return { title: from, sub: 'Where this Wallmaster drops you' };
-    case 'one-way-song': return { title: `Warp song to ${to}`, sub: '' };
-    case 'one-way-statue': return { title: `Soaring to ${to.replace(/^Owl /, '')}`, sub: '' };
+    case 'one-way-song': { const song = WARP_SONGS[e.debug?.[1]]; return { title: song ?? `Warp song to ${to}`, sub: song ? `normally warps to ${to}` : '' }; }
+    case 'one-way-statue': return { title: `SOS (${to.replace(/^Owl /, '')})`, sub: '' };
     case 'one-way-water-void': return { title: from, sub: 'Falling in the water' };
     case 'boss': return { title: `Boss door: ${e.debug?.[1] ?? to}`, sub: `in ${from}` };
   }

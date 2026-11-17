@@ -7,7 +7,7 @@ const ok = (name, cond, extra = '') => { console.log(`${cond ? 'PASS' : 'FAIL'} 
   await new Promise(r => srv.listen(8932, r));
   const b = await chromium.launch();
   const errs = [];
-  const open = async o => { const c = await b.newContext(o); const p = await c.newPage(); p.on('pageerror', e => errs.push(String(e))); await p.goto('http://localhost:8932/'); await p.waitForSelector('#regions .reg:nth-child(3)'); return p; };
+  const open = async o => { const c = await b.newContext(o); const p = await c.newPage(); p.on('pageerror', e => errs.push(String(e))); await p.goto('http://localhost:8932/'); await p.waitForSelector('#regions .reg[data-region^="OOT_"]'); return p; };
   const pc = await open({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' });
   const tab = (p, t) => p.click(`.rail .tab[data-tab=${t}]`);
 

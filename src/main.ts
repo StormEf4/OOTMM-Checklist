@@ -65,6 +65,8 @@ type Seed = {
   /** Dungeons OoTMM pre-completed on this seed, by OoTMM's short names (DT, Water, WF...). */
   preCompleted?: string[];
   entrances: Record<string, string>;
+  /** Checks and entrances the player marked to come back to later. */
+  later?: string[];
   notes: Record<string, string>;
   /** Plain text of the seed's notes, kept for older versions of the app. */
   pad: string;
@@ -189,7 +191,7 @@ let itemPickQuery = '';
 /* ---------- Saving ---------- */
 
 function newSeed(name: string, settings?: string): Seed {
-  return { id: uid(), name, settings: settings ?? exportSettings(DEFAULT_SETTINGS), done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, notes: {}, pad: '', doc: '', found: {}, have: {}, hints: {}, updated: Date.now() };
+  return { id: uid(), name, settings: settings ?? exportSettings(DEFAULT_SETTINGS), done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, later: [], notes: {}, pad: '', doc: '', found: {}, have: {}, hints: {}, updated: Date.now() };
 }
 
 function load(raw?: string | null): Saved {
@@ -204,7 +206,7 @@ function load(raw?: string | null): Saved {
         ui.skin ??= ui.theme === 'dark' ? 'termina' : ui.theme === 'light' ? 'day' : 'hero';
         ui.names ??= 'custom'; ui.nameBase ??= 'original';
         ui.savePins ??= true;
-        for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; s.doc ??= textToNotes(s.pad); s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
+        for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.later ??= []; s.notes ??= {}; s.pad ??= ''; s.doc ??= textToNotes(s.pad); s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
         const edits = { ...blankEdits(), ...v.edits };
         edits.tabs = edits.tabs.filter(t => t !== 'hints');
         return { ...v, custom: v.custom ?? [], edits, ui };
@@ -581,8 +583,11 @@ function owned(): Record<string, number> {
   return out;
 }
 const countOf = (i: CatalogItem, have = owned()) => Math.min(i.max, i.start + (have[i.id] ?? 0));
-const logicOn = () => !saved.ui.logicOff;
-const logicReady = () => logicOn() && !!logicOut && !logicError;
+/* Showing what's in logic is switched off for now (Nov 2026), to come back refined later. Logic still runs, because the
+   Items tab's list comes from it. The browser tests set __OOTMM_LOGIC__ to keep checking the hidden parts. */
+const logicShown = () => !!(globalThis as any).__OOTMM_LOGIC__;
+const logicOn = () => !logicShown() || !saved.ui.logicOff;
+const logicReady = () => logicShown() && logicOn() && !!logicOut && !logicError;
 const inLogic = (c: CheckEntry) => reachSet.has(c.id);
 
 let logicTimer = 0;
@@ -779,7 +784,7 @@ function filtered() {
     if (typeFilter.size && !typeFilter.has(c.type)) return false;
     if (saved.ui.hideDone && doneSet.has(c.id)) return false;
     if (saved.ui.logicOnly && logicReady() && !doneSet.has(c.id) && !inLogic(c)) return false;
-    if (region && !q.length && c.region !== region) return false;
+    if (region && !q.length && (region === LATER ? !isLater(c.id) : c.region !== region)) return false;
     if (q.length) {
       const hay = `${c.id} ${c.name} ${otherNames.get(c.id) ?? ''} ${regionLabel(c)} ${seed.notes[c.id] ?? ''}`.toLowerCase();
       if (!q.every(w => hay.includes(w))) return false;
@@ -802,6 +807,7 @@ const ICON = {
   hints: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 21V9a5 5 0 0 1 10 0v12M4.5 21h15"/><path d="M10 11.5h4M10 15h4"/></svg>',
   bag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9h14l-1.2 11H6.2z"/><path d="M9 9V7a3 3 0 0 1 6 0v2"/></svg>',
   pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg>',
+  later: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg>',
   tick: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>',
 };
 
@@ -917,6 +923,12 @@ function renderDial() {
   $('#legend').innerHTML = [t.oot ? `<b class="o">Hyrule ${t.ootDone}/${t.oot}</b>` : '', t.mm ? `<b class="m">Termina ${t.mmDone}/${t.mm}</b>` : ''].join('');
 }
 
+/* A sidebar heading that folds its areas away. Folded headings are saved with the other collapsed sections. */
+function railGroup(key: string, name: string, cls: string, rows: () => string) {
+  const shut = collapsed(key);
+  return `<button class="group fold keep ${cls}" data-collapse="${esc(key)}" aria-expanded="${!shut}"><span class="caret" aria-hidden="true"></span>${esc(name)}</button>${shut ? '' : rows()}`;
+}
+
 function renderRail() {
   if (tab === 'entrances') return renderEntranceRail();
   const stats = regionStats();
@@ -933,10 +945,11 @@ function renderRail() {
     `<button class="reg keep${total && done === total ? ' complete' : ''}${saved.edits.areas[id]?.hidden ? ' ghost' : ''}" data-region="${esc(id)}" aria-current="${cur}">
       <span class="n">${esc(name)}${areaTags(hinted.get(id))}${reach && !skipped ? `<i class="lg" title="Checks you can get now">${reach}</i>` : ''}</span><span class="c">${skipped ? 'Skipped' : `${done}/${total}`}</span>${id ? pen('area:' + id) : ''}
       <span class="bar"><i style="width:${total ? (done / total) * 100 : 0}%"></i></span></button>`;
-  let html = row('', 'All areas', t.done, t.all, region === null, false, t.reach);
+  let html = row('', 'All areas', t.done, t.all, region === null, false, t.reach)
+    + laterRow(checks.filter(c => isLater(c.id) && shown(c)).length, region === LATER, 'data-region');
   for (const [name, cls, rows] of groups) {
     if (!rows.length) continue;
-    html += `<div class="group ${cls}">${name}</div>` + rows.map(r => row(r.id, r.name, r.done, r.total, region === r.id, r.skipped, r.reach)).join('');
+    html += railGroup('rc:' + name, name, cls, () => rows.map(r => row(r.id, r.name, r.done, r.total, region === r.id, r.skipped, r.reach)).join(''));
   }
   html += '<button class="linkish edit-only keep add-area" data-add-check="">Add an area</button>';
   const box = $('#regions');
@@ -959,8 +972,9 @@ const rowHtml = (c: CheckEntry) => {
   const itemLine = (found ? `<span class="found"><span>Found:</span> <b>${esc(itemLabel(found))}</b></span>` : hint ? `<span class="hinted"><span>Hint:</span> <b>${esc(itemLabel(hint))}</b></span>` : '')
     + (logic === ' outlogic' ? opensHtml(c.id) : '');
   const age = logic === ' inlogic' ? logicOut?.ages[c.id] : undefined;
-  return `<div class="row ${c.game}${isDone ? ' done' : ''}${hid ? ' ghost' : ''}${logic}" data-id="${esc(c.id)}">
+  return `<div class="row ${c.game}${isDone ? ' done' : ''}${hid ? ' ghost' : ''}${logic}${isLater(c.id) ? ' is-later' : ''}" data-id="${esc(c.id)}">
     <button class="tick-btn" aria-pressed="${isDone}" data-edit="check:${esc(c.id)}"><span class="seal">${ICON.tick}</span><span class="nm"><span class="t">${esc(c.name)}</span>${itemLine}${noteHtml(c.id)}</span>${tag}${age ? `<span class="tag age" data-text>${age === 'child' ? 'Child' : 'Adult'}</span>` : ''}${logic === ' inlogic' ? '<span class="lgdot" title="In logic now" aria-label="In logic now"></span>' : ''}<span class="ty" data-text>${esc(TYPE_ONE[c.type] ?? c.type)}</span></button>
+    ${laterBtn(c.id, c.name)}
     <button class="bag${found ? ' has' : ''}" data-found="${esc(c.id)}" aria-label="What was here" title="Log the item you found here">${ICON.bag}</button>
     <button class="skip" aria-label="${isSkip ? 'Restore' : 'Skip'} ${esc(c.name)}" title="${isSkip ? 'Put back on the list' : 'Not on this seed: skip it'}">${isSkip ? '+' : '×'}</button>
   </div>`;
@@ -996,6 +1010,14 @@ const sortIn = <T,>(key: string, rows: T[], idOf: (x: T) => string) => {
   const at = new Map(order.map((id, i) => [id, i]));
   return [...rows].sort((a, b) => (at.get(idOf(a)) ?? 1e6) - (at.get(idOf(b)) ?? 1e6));
 };
+/* The "Check later" list: any check or entrance the player wants to come back to. It shows as its own entry at the
+   top of the Checks and Entrances sidebars. */
+const LATER = '@later';
+const isLater = (id: string) => (seed.later ?? []).includes(id);
+const laterBtn = (id: string, name: string) => { const on = isLater(id);
+  return `<button class="later${on ? ' on' : ''}" data-later="${esc(id)}" aria-pressed="${on}" aria-label="${on ? 'Take off' : 'Add to'} the Check later list: ${esc(name)}" title="${on ? 'On your Check later list. Tap to take it off' : 'Check later: add to your list to come back to'}">${ICON.later}</button>`; };
+const laterRow = (n: number, cur: boolean, attr: string) =>
+  `<button class="reg keep later-reg${n ? ' has' : ''}" ${attr}="${LATER}" aria-current="${cur}"><span class="n">${ICON.later}Check later</span><span class="c">${n}</span></button>`;
 const collapsed = (id: string) => (saved.ui.collapsed ?? []).includes(id);
 
 function renderChecks() {
@@ -1010,7 +1032,7 @@ function renderChecks() {
   const typeCounts = new Map<string, number>();
   for (const c of checks) {
     if (!shown(c)) continue;
-    if (region && c.region !== region) continue;
+    if (region && (region === LATER ? !isLater(c.id) : c.region !== region)) continue;
     typeCounts.set(c.type, (typeCounts.get(c.type) ?? 0) + (doneSet.has(c.id) ? 0 : 1));
   }
   const chips = [...typeCounts].sort((a, b) => b[1] - a[1]).map(([t, n]) =>
@@ -1039,10 +1061,11 @@ function renderChecks() {
   }
 
   const rolls = rolling().filter(unanswered);
-  const banner = rolls.length ? `<div class="banner"><div><strong>This seed rolls some settings at random.</strong> Tell the checklist what came up so its list and logic match your seed. Opening your spoiler log fills this in.</div>
+  const banner = rolls.length ? `<div class="banner"><div><strong>This seed rolls some settings at random.</strong> Tell the checklist what came up so its list matches your seed. Opening your spoiler log fills this in.</div>
     <div class="btns"><button class="btn alt" data-goto="settings">Set what this seed rolled</button>${rolls.some(k => !ROLLED_CHOICES.includes(k)) ? '<button class="btn alt" data-roll-none>All stayed normal</button>' : ''}</div></div>` : '';
 
   const empty = !checks.length ? `<div class="empty"><h3>${computing ? 'Reading your settings' : 'No checks yet'}</h3></div>`
+    : !body && region === LATER && !query.trim() ? `<div class="empty"><h3>Nothing to check later yet</h3>Tap the clock on any check or entrance to put it on this list. Tap it again to take it off.</div>`
     : !body ? `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more checks.${saved.ui.hideDone ? ' Finished checks are hidden too.' : ''}</div>` : '';
 
   pane.innerHTML = `<div class="toolbar">
@@ -1052,7 +1075,7 @@ function renderChecks() {
         <div class="seg" role="group" aria-label="Game">
           ${(['all', 'oot', 'mm'] as const).map(g => `<button data-game="${g}" aria-pressed="${gameFilter === g}">${{ all: 'Both', oot: 'OoT', mm: 'MM' }[g]}</button>`).join('')}
         </div>
-        <div class="seg"><button data-hidedone aria-pressed="${!!saved.ui.hideDone}">Hide done</button>${logicOn() ? `<button data-logiconly aria-pressed="${!!saved.ui.logicOnly}">In logic</button>` : ''}</div>
+        <div class="seg"><button data-hidedone aria-pressed="${!!saved.ui.hideDone}">Hide done</button>${logicShown() && logicOn() ? `<button data-logiconly aria-pressed="${!!saved.ui.logicOnly}">In logic</button>` : ''}</div>
         ${viewSeg()}
         ${logicPill()}
       </div>
@@ -1080,7 +1103,7 @@ function itemHintFor(_checkId: string): string | undefined {
 const viewSeg = () => `<div class="seg" role="group" aria-label="View">
   <button class="keep" data-checks-view="list" aria-pressed="${saved.ui.checksView !== 'map'}">List</button><button class="keep" data-checks-view="map" aria-pressed="${saved.ui.checksView === 'map'}">Map</button></div>`;
 function logicPill() {
-  if (!logicOn()) return '';
+  if (!logicShown() || !logicOn()) return '';
   if (logicError) return '<span class="pill" id="logicPill">Logic unavailable</span>';
   if (!logicOut || logicBusy) return '<span class="pill" id="logicPill">Working out logic</span>';
   return `<span class="pill" id="logicPill"><b>${totals().reach.toLocaleString()}</b> in logic now</span>`;
@@ -1225,7 +1248,7 @@ function renderItems() {
     sections.push(`<section class="items ${game}"><div class="section-head"><h2>${{ oot: 'Hyrule', mm: 'Termina', shared: 'Shared' }[game]}</h2></div>${body}</section>`);
   }
   const loggedCount = Object.keys(seed.found).length;
-  const status = !logicOn() ? '' : logicError ? `<p>OoTMM couldn't work out logic for these settings: ${esc(logicError)}</p>`
+  const status = !logicShown() || !logicOn() ? '' : logicError ? `<p>OoTMM couldn't work out logic for these settings: ${esc(logicError)}</p>`
     : !logicOut ? '<p>Working out logic for these settings. The first time takes a few seconds.</p>'
     : `<p><b>${totals().reach.toLocaleString()}</b> checks are in logic with what you have.${logicOut.shuffled ? ` Shuffled entrances count once you log them: ${logicOut.logged} of ${logicOut.shuffled} logged.` : ''}</p>${logicOut.pricesShuffled ? '<p class="fine">Prices are random on this seed, so shops are treated as their normal price.</p>' : ''}`;
   pane.innerHTML = `<div class="toolbar">
@@ -1239,9 +1262,9 @@ function renderItems() {
     </div>
     <div class="scroll" id="itemScroll"><div class="page wide">
       <div class="box">
-        <div class="set" style="border:0;padding:0"><div class="lab"><b>Show what's in logic</b></div>
+        ${!logicShown() ? `<p>Tap an item to add one. Logging what you find at a check with the bag button counts it here too.${loggedCount ? ` You've logged ${loggedCount} at checks.` : ''}</p>` : `<div class="set" style="border:0;padding:0"><div class="lab"><b>Show what's in logic</b></div>
         <div class="ctl"><button class="switch" role="switch" aria-checked="${logicOn()}" aria-label="Show what's in logic" data-logic-toggle></button></div>
-        <div class="desc">Uses OoTMM's own logic to mark the checks you can get with the items below. Tap an item to add one. Logging what you find at a check with the bag button counts it here too.${loggedCount ? ` You've logged ${loggedCount} at checks.` : ''}</div></div>
+        <div class="desc">Uses OoTMM's own logic to mark the checks you can get with the items below. Tap an item to add one. Logging what you find at a check with the bag button counts it here too.${loggedCount ? ` You've logged ${loggedCount} at checks.` : ''}</div></div>`}
         ${status}
         ${Object.keys(seed.have).length || loggedCount ? '<div class="btns"><button class="btn danger" data-clear-items>Clear items on this seed</button></div>' : ''}
       </div>
@@ -1431,10 +1454,11 @@ function renderEntranceRail() {
     ['Termina dungeons', 'mm', groups.filter(g => g.game === 'mm' && g.dungeon)],
     ['Other', '', groups.filter(g => g.id === 'NONE')],
   ];
-  let html = total ? row('', 'All entrances', found, total, entrRegion === null) : '';
+  let html = total ? row('', 'All entrances', found, total, entrRegion === null)
+    + laterRow(entranceData().list.filter(e => isLater(e.id)).length, entrRegion === LATER, 'data-entr-region') : '';
   for (const [name, cls, rows] of sets) {
     if (!rows.length) continue;
-    html += `<div class="group ${cls}">${name}</div>` + rows.map(r => row(r.id, r.name, r.found, r.total, entrRegion === r.id)).join('');
+    html += railGroup('re:' + name, name, cls, () => rows.map(r => row(r.id, r.name, r.found, r.total, entrRegion === r.id)).join(''));
   }
   html += '<button class="linkish edit-only keep add-area" data-add-entrance="">Add an entrance</button>';
   const box = $('#regions');
@@ -1466,13 +1490,13 @@ function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?:
   const shown = cut ? e.title.replace(cut, '') : e.title;
   const dest = to ? destLabel(to, dests) : '';
   const hid = !!saved.edits.entrances[e.id]?.hidden;
-  return `<div class="row entr ${e.game}${to ? ' done' : ''}${hid ? ' ghost' : ''}">
+  return `<div class="row entr ${e.game}${to ? ' done' : ''}${hid ? ' ghost' : ''}${isLater(e.id) ? ' is-later' : ''}">
     <button class="entr-btn" data-entr="${esc(e.id)}" data-edit="entr:${esc(e.id)}" aria-label="${esc(e.title)}: ${to ? `leads to ${esc(dest)}` : 'not logged yet'}">
       <span class="seal">${ICON.tick}</span>
       <span class="nm"><span class="t">${esc(shown)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}
         ${to ? `<span class="leads"${to.startsWith('text:') ? '' : ` data-edit="dest:${esc(to)}"`}>Leads to ${esc(dest)}</span>` : ''}${noteHtml(e.id)}</span>
       ${hid ? '<span class="tag" data-text>Hidden</span>' : to ? '' : '<span class="ty" data-text>Add</span>'}
-    </button></div>`;
+    </button>${laterBtn(e.id, e.title)}</div>`;
 }
 
 function renderEntrances() {
@@ -1495,7 +1519,7 @@ function renderEntrances() {
   const words = entrQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const kinds = new Map<string, number>();
   const vis = visibleEntrances();
-  for (const e of vis) if (words.length || !entrRegion || entrGroup(e) === entrRegion) kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + (seed.entrances[e.id] ? 0 : 1));
+  for (const e of vis) if (words.length || !entrRegion || (entrRegion === LATER ? isLater(e.id) : entrGroup(e) === entrRegion)) kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + (seed.entrances[e.id] ? 0 : 1));
   const chips = [...kinds].sort((a, b) => b[1] - a[1]).map(([k, n]) =>
     `<button class="chip" data-kind="${esc(k)}" aria-pressed="${entrKinds.has(k)}">${esc(k)} ${n}</button>`).join('');
 
@@ -1504,7 +1528,7 @@ function renderEntrances() {
     if (entrDir !== 'all' && e.dir !== entrDir) return false;
     if (entrKinds.size && !entrKinds.has(e.kind)) return false;
     if (saved.ui.hideFound && seed.entrances[e.id]) return false;
-    if (entrRegion && !words.length && entrGroup(e) !== entrRegion) return false;
+    if (entrRegion && !words.length && (entrRegion === LATER ? !isLater(e.id) : entrGroup(e) !== entrRegion)) return false;
     if (words.length) {
       const to = seed.entrances[e.id];
       const hay = `${e.title} ${e.sub} ${areaName(e.group, e.groupName)} ${to ? destLabel(to, dests) : ''} ${seed.notes[e.id] ?? ''}`.toLowerCase();
@@ -1547,7 +1571,7 @@ function renderEntrances() {
       </div>
       <div class="chips" role="group" aria-label="Filter by kind of entrance">${chips}</div>
     </div>
-    <div class="scroll" id="entrScroll">${body || `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more entrances.${saved.ui.hideFound ? ' Logged entrances are hidden too.' : ''}</div>`}</div>`;
+    <div class="scroll" id="entrScroll">${body || (entrRegion === LATER && !words.length ? `<div class="empty"><h3>Nothing to check later yet</h3>Tap the clock on any entrance or check to put it on this list. Tap it again to take it off.</div>` : '') || `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more entrances.${saved.ui.hideFound ? ' Logged entrances are hidden too.' : ''}</div>`}</div>`;
   $('#entrScroll').scrollTop = scrollTop;
   if (hadFocus) {
     const i = $('#entrSearch', pane) as HTMLInputElement;
@@ -1686,14 +1710,14 @@ function rolledHtml() {
     if (ROLLED_CHOICES.includes(key)) {
       const chips = def.values.filter((x: any) => x.value !== 'random').map((x: any) =>
         `<button class="chip" data-rolled="${esc(key)}" data-val="${esc(x.value)}" aria-pressed="${seed.rolled[key]?.[0] === x.value}">${esc(x.name)}</button>`).join('');
-      const note = seed.rolled[key]?.length ? '' : ' Until you set this, logic only counts checks you can reach whichever one it was.';
+      const note = seed.rolled[key]?.length || !logicShown() ? '' : ' Until you set this, logic only counts checks you can reach whichever one it was.';
       return `<div class="box"><h3>What this seed rolled: ${esc(def.name)}</h3><p>Pick the one this seed came up with.${note}</p><div class="setvals">${chips}</div></div>`;
     }
     const fixedOn: string[] = v.type === 'random-mixed' ? v.set ?? [] : [];
     const fixedOff: string[] = v.type === 'random-mixed' ? v.unset ?? [] : [];
     const chips = def.values.filter((x: any) => !fixedOn.includes(x.value) && !fixedOff.includes(x.value)).map((x: any) =>
       `<button class="chip" data-rolled="${esc(key)}" data-val="${esc(x.value)}" aria-pressed="${(seed.rolled[key] ?? []).includes(x.value)}">${esc(x.name)}</button>`).join('');
-    const note = seed.rolled[key] === undefined && UNKNOWN_MEANS_ALL.has(key) ? ' Until you set this, logic counts every one as on.' : '';
+    const note = seed.rolled[key] === undefined && UNKNOWN_MEANS_ALL.has(key) && logicShown() ? ' Until you set this, logic counts every one as on.' : '';
     return `<div class="box"><h3>What this seed rolled: ${esc(def.name)}</h3><p>Turn on each one that came up on this seed. The rest are off.${note}</p><div class="setvals">${chips}</div></div>`;
   }).join('');
 }
@@ -1931,7 +1955,7 @@ function unpackIds(p: { b: string; x: string[] }) {
 }
 
 export function makeTransferCode(s: Seed) {
-  const body = JSON.stringify({ h: dataHash, o: s.origin ?? s.id, n: s.name, s: s.settings, d: packIds(s.done), k: packIds(s.skipped), r: s.rolled, q: s.preCompleted ?? [], g: s.skippedRegions, c: saved.custom, e: s.entrances, t: s.notes, p: s.pad, w: s.doc ?? '', f: s.found, v: s.have, i: s.hints, x: saved.edits });
+  const body = JSON.stringify({ h: dataHash, o: s.origin ?? s.id, n: s.name, s: s.settings, d: packIds(s.done), k: packIds(s.skipped), r: s.rolled, q: s.preCompleted ?? [], g: s.skippedRegions, c: saved.custom, e: s.entrances, l: s.later ?? [], t: s.notes, p: s.pad, w: s.doc ?? '', f: s.found, v: s.have, i: s.hints, x: saved.edits });
   return 'OOTMM1.' + uint8ArrayToBase64(deflateRaw(new TextEncoder().encode(body), { level: 9 }), { urlSafe: true });
 }
 export function readTransferCode(code: string): Seed {
@@ -1941,7 +1965,7 @@ export function readTransferCode(code: string): Seed {
   if (body.h !== dataHash) throw new Error('This code came from a different build of the checklist. Use the same version on both devices.');
   for (const c of (body.c ?? []) as CustomCheck[]) if (!saved.custom.some(x => x.id === c.id)) saved.custom.push(c);
   if (body.x) saved.edits = mergeEdits(saved.edits, body.x);
-  return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, preCompleted: body.q ?? [], entrances: body.e ?? {}, notes: body.t ?? {}, pad: body.p ?? '', doc: cleanNotes(body.w ?? textToNotes(body.p ?? '')), found: body.f ?? {}, have: body.v ?? {}, hints: body.i ?? {}, updated: Date.now() };
+  return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, preCompleted: body.q ?? [], entrances: body.e ?? {}, later: body.l ?? [], notes: body.t ?? {}, pad: body.p ?? '', doc: cleanNotes(body.w ?? textToNotes(body.p ?? '')), found: body.f ?? {}, have: body.v ?? {}, hints: body.i ?? {}, updated: Date.now() };
 }
 
 /* ---------- Seeds page ---------- */
@@ -2864,7 +2888,7 @@ function events() {
     if (d.collapse) {
       const cur = saved.ui.collapsed ?? [];
       saved.ui.collapsed = cur.includes(d.collapse) ? cur.filter(x => x !== d.collapse) : [...cur, d.collapse];
-      save(); renderPane();
+      save(); if (/^r[ce]:/.test(d.collapse)) renderRail(); else renderPane();
       return;
     }
     if (d.setview) { settingsView = d.setview as typeof settingsView; renderSettings(); return; }
@@ -2916,6 +2940,14 @@ function events() {
     }
     if (d.entr) { openPicker(d.entr); return; }
     if (d.pick) { pickDest(d.pick); return; }
+    if (d.later !== undefined) {
+      snap();
+      const id = d.later, list = seed.later ?? [];
+      seed.later = list.includes(id) ? list.filter(x => x !== id) : [...list, id];
+      if (seed.later.includes(id)) toast('Added to Check later. Find it at the top of the sidebar.', true);
+      save(); renderRail(); renderPane();
+      return;
+    }
     if (d.entrGame) { entrGame = d.entrGame as typeof entrGame; renderEntrances(); return; }
     if (d.entrDir) { entrDir = d.entrDir as typeof entrDir; renderEntrances(); return; }
     if ('hidefound' in d) { saved.ui.hideFound = !saved.ui.hideFound; save(); renderEntrances(); return; }
