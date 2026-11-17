@@ -34,6 +34,33 @@ rules, so a rebuild picks up changes in the randomizer.
 - **Map.** Switch the Checks tab to Map for a sketch of Hyrule and Termina with each area's progress. Gold areas have
   checks in logic. In Edit mode, tap an area to move it.
 
+## Notes
+
+The **Notes** tab is one page of notes per seed, edited like a word processor. It has:
+
+- undo and redo
+- headings and quotes
+- fonts and text sizes
+- bold, italic, underline and strikethrough
+- text and highlight colors
+- bulleted, numbered and tick-box lists, and indenting
+- alignment
+- a dividing line, today's date and time, and clear formatting
+
+Pick Letter, A4 or Fit to screen, zoom from 75% to 150%, or switch to white paper. Notes save as you type. They travel in
+transfer codes and backups. Pasted content is cleaned down to that formatting. Older plain notes move over on their own.
+
+## Playing live (hosted page)
+
+On the hosted page, **Seeds > Play together live** shares the open seed under a LIVE- code. Your partner opens the same
+hosted page and joins with the code. To save changes, your partner needs the page shared with them as an Editor from
+the page's Share menu.
+
+Ticks, skips, found items, item counts, entrances, hints, check notes, settings and the Notes page all sync within a
+second or two. Each change is timed, so changes made at the same moment on both sides both survive. If two people type
+in the Notes page at once, the last one to type wins. The Windows app and phone site don't have live play, because
+there's no shared server behind them. The code is in `src/live.ts`.
+
 ## Check names
 
 **Settings > Your edits > Check names** has a three-way slider:

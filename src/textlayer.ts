@@ -42,7 +42,7 @@ export function applyLayer(root: Element, layer: TextLayer) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const parent = node.parentElement;
-    if (!parent || parent.closest('[data-locked], textarea')) continue;
+    if (!parent || parent.closest('[data-locked], textarea, [contenteditable]')) continue;
     const orig = originalOf(node);
     const next = translate(orig, layer);
     if (next !== null) {
@@ -56,7 +56,7 @@ export function applyLayer(root: Element, layer: TextLayer) {
     if (how) hideTarget(parent, how).classList.add('ghost');
   }
   root.querySelectorAll(ATTRS.map(a => `[${a}]`).join(',')).forEach(el => {
-    if (el.closest('[data-locked]')) return;
+    if (el.closest('[data-locked], [contenteditable]')) return;
     for (const attr of ATTRS) {
       if (!el.hasAttribute(attr)) continue;
       const orig = originalAttr(el, attr);
