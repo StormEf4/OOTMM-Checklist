@@ -106,6 +106,8 @@ type Saved = {
     /** Which check names show. Custom puts the player's renames on top of nameBase. */
     names?: NameStyle; nameBase?: 'original' | 'player';
     notes?: NotesView;
+    /** Items pinned to the top of the Items tab. Kept here only while savePins is on. */
+    pins?: string[]; savePins?: boolean;
   };
 };
 
@@ -150,7 +152,7 @@ let checks: CheckEntry[] = [];
 let lastResult: ComputeResult | null = null;
 let doneSet = new Set<string>();
 let skipSet = new Set<string>();
-let tab: 'list' | 'entrances' | 'notes' | 'items' | 'hints' | 'settings' | 'seeds' = 'list';
+let tab: 'list' | 'entrances' | 'notes' | 'items' | 'settings' | 'seeds' = 'list';
 let region: string | null = null;
 let phoneView: 'rail' | 'pane' = 'rail';
 let query = '';
@@ -179,7 +181,6 @@ let logicBusy = false;
 let logicError = '';
 let itemQuery = '';
 let itemGame: 'all' | 'oot' | 'mm' = 'all';
-let hintQuery = '';
 let pickingItemFor: string | null = null;
 let itemPickQuery = '';
 
@@ -200,8 +201,11 @@ function load(raw?: string | null): Saved {
         const ui = v.ui ?? {};
         ui.skin ??= ui.theme === 'dark' ? 'termina' : ui.theme === 'light' ? 'day' : 'hero';
         ui.names ??= 'custom'; ui.nameBase ??= 'original';
+        ui.savePins ??= true;
         for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.notes ??= {}; s.pad ??= ''; s.doc ??= textToNotes(s.pad); s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
-        return { ...v, custom: v.custom ?? [], edits: { ...blankEdits(), ...v.edits }, ui };
+        const edits = { ...blankEdits(), ...v.edits };
+        edits.tabs = edits.tabs.filter(t => t !== 'hints');
+        return { ...v, custom: v.custom ?? [], edits, ui };
       }
     } catch { /* falls through to a fresh start */ }
   }
@@ -752,6 +756,7 @@ function filtered() {
 /* ---------- Shell ---------- */
 
 const ICON = {
+  pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6l-1 6 4 3v2H6v-2l4-3z"/><path d="M12 14v7"/></svg>',
   list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 6.5l1.5 1.5L9 5.5M5 12.5l1.5 1.5L9 11.5M5 18.5l1.5 1.5L9 17.5M12.5 7h7M12.5 13h7M12.5 19h7"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>',
   seeds: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M9 4v5h6V4M9 20v-6h6v6"/></svg>',
@@ -764,7 +769,7 @@ const ICON = {
   tick: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>',
 };
 
-const TAB_LABELS: Record<string, string> = { list: 'Checks', entrances: 'Entrances', notes: 'Notes', items: 'Items', hints: 'Hints', settings: 'Settings', seeds: 'Seeds' };
+const TAB_LABELS: Record<string, string> = { list: 'Checks', entrances: 'Entrances', notes: 'Notes', items: 'Items', settings: 'Settings', seeds: 'Seeds' };
 const pen = (edit: string) => `<span class="pen" data-edit="${esc(edit)}" role="button" aria-label="Edit">${ICON.pen}</span>`;
 function tabs() {
   return Object.entries(TAB_LABELS).map(([k, label]) =>
@@ -1028,18 +1033,12 @@ function renderChecks() {
 
 /* ---------- Logic, hints and the map, shared by several pages ---------- */
 
+/* The Hints tab is gone. Saved hints stay in the seed data, but no longer tag areas or checks. */
 function areaHints() {
-  const out = new Map<string, Set<'woth' | 'foolish'>>();
-  for (const h of Object.values(seed.hints)) {
-    if ((h.kind !== 'woth' && h.kind !== 'foolish') || !h.area) continue;
-    const id = resolveArea(h.area).id;
-    (out.get(id) ?? out.set(id, new Set()).get(id)!).add(h.kind);
-  }
-  return out;
+  return new Map<string, Set<'woth' | 'foolish'>>();
 }
 const areaTags = (set?: Set<string>) => !set ? '' : [...set].map(k => k === 'woth' ? '<span class="htag woth" data-text>Path</span>' : '<span class="htag foolish" data-text>Foolish</span>').join('');
-function itemHintFor(checkId: string) {
-  for (const h of Object.values(seed.hints)) if (h.kind === 'item' && h.check === checkId && h.item) return h.item;
+function itemHintFor(_checkId: string): string | undefined {
   return undefined;
 }
 const viewSeg = () => `<div class="seg" role="group" aria-label="View">
@@ -1131,6 +1130,28 @@ const checkLabel = (id: string) => {
   return c ? `${regionLabel(c)}: ${c.name}` : id.replace(/^(OOT|MM) /, '');
 };
 
+/* Item pins. With Save pins on they live in saved.ui and come back on every visit; with it off they last until the page closes. */
+let sessionPins: string[] = [];
+const savingPins = () => saved.ui.savePins !== false;
+const pinList = () => savingPins() ? (saved.ui.pins ??= []) : sessionPins;
+function togglePin(id: string) {
+  const list = pinList();
+  const at = list.indexOf(id);
+  if (at >= 0) list.splice(at, 1); else list.push(id);
+  if (savingPins()) save();
+  renderItems();
+}
+function setSavePins(on: boolean) {
+  if (on === savingPins()) return;
+  if (on) { saved.ui.pins = [...sessionPins]; saved.ui.savePins = true; }
+  else { sessionPins = [...(saved.ui.pins ?? [])]; delete saved.ui.pins; saved.ui.savePins = false; }
+  save();
+}
+function clearPins() {
+  if (savingPins()) saved.ui.pins = []; else sessionPins = [];
+  save();
+}
+
 function renderItems() {
   const pane = $('#pane');
   const had = $('#itemSearch', pane) as HTMLInputElement | null;
@@ -1148,8 +1169,15 @@ function renderItems() {
     return true;
   });
   const sections: string[] = [];
+  const pins = pinList();
+  const pinned = list.filter(i => pins.includes(i.id)).sort((a, b) => pins.indexOf(a.id) - pins.indexOf(b.id));
+  if (pinned.length) {
+    const shut = collapsed('i:pinned');
+    sections.push(`<section class="items pinned"><div class="section-head"><button class="caret keep" data-collapse="i:pinned" aria-expanded="${!shut}" aria-label="Show or hide pinned items"></button><h2>Pinned</h2></div>
+      ${shut ? '' : `<div class="item-grid">${pinned.map(i => itemTile(i, have)).join('')}</div>`}</section>`);
+  }
   for (const game of ['oot', 'mm', 'shared'] as const) {
-    const mine = list.filter(i => i.game === game);
+    const mine = list.filter(i => i.game === game && !pins.includes(i.id));
     if (!mine.length) continue;
     const groups = new Map<string, CatalogItem[]>();
     for (const i of mine) (groups.get(i.group) ?? groups.set(i.group, []).get(i.group)!).push(i);
@@ -1199,7 +1227,9 @@ function itemTile(i: CatalogItem, have: Record<string, number>) {
   const counter = i.max > 4
     ? `<input type="number" class="item-num" min="0" max="${i.max}" value="${n}" data-item-num="${esc(i.id)}" aria-label="How many ${esc(itemLabel(i.id))}">`
     : i.max > 1 ? `<span class="item-n">${n}/${i.max}</span>` : '';
-  return `<div class="item ${i.game}${n ? ' on' : ''}${hid ? ' ghost' : ''}">
+  const pin = pinList().includes(i.id);
+  return `<div class="item ${i.game}${n ? ' on' : ''}${hid ? ' ghost' : ''}${pin ? ' is-pinned' : ''}">
+    <button class="item-pin keep" data-pin="${esc(i.id)}" aria-pressed="${pin}" aria-label="${pin ? 'Unpin' : 'Pin'} ${esc(itemLabel(i.id))}" title="${pin ? 'Unpin' : 'Pin to the top'}">${ICON.pin}</button>
     <button class="item-btn" data-item="${esc(i.id)}" data-edit="item:${esc(i.id)}" aria-pressed="${n > 0}">
       <span class="seal">${ICON.tick}</span>
       <span class="nm"><span class="t">${esc(itemLabel(i.id))}</span>${at.length ? `<span class="s"><span>at</span> ${esc(at.map(checkLabel).join(', '))}</span>` : i.start ? '<span class="s">Starting item</span>' : ''}</span>
@@ -1301,114 +1331,6 @@ const stoneList = (): GossipEntry[] => lastResult?.gossips ?? [];
 const stoneName = (g: GossipEntry) => saved.edits.stones[g.id]?.name ?? g.name;
 const hintKindLabel: Record<string, string> = { woth: 'Path', foolish: 'Foolish', item: 'Item', other: 'Other' };
 
-function renderHints() {
-  const pane = $('#pane');
-  const had = $('#hintSearch', pane) as HTMLInputElement | null;
-  const hadFocus = had && document.activeElement === had;
-  const caret = had?.selectionStart ?? null;
-  const scrollTop = $('#hintScroll', pane)?.scrollTop ?? 0;
-  const words = hintQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const logic = logicReady();
-  const match = (hay: string) => !words.length || words.every(w => hay.toLowerCase().includes(w));
-  const stones = stoneList().filter(g => (editMode || !saved.edits.stones[g.id]?.hidden)
-    && (!saved.ui.hideWritten || !seed.hints[g.id]?.text)
-    && match(`${stoneName(g)} ${areaName(g.region, g.regionName)} ${seed.hints[g.id]?.text ?? ''}`));
-  const byArea = new Map<string, GossipEntry[]>();
-  for (const g of stones) (byArea.get(g.region) ?? byArea.set(g.region, []).get(g.region)!).push(g);
-  const hintRow = (id: string, title: string, sub: string, game: string, reach: boolean | null, edit: string) => {
-    const h = seed.hints[id];
-    const hid = !!saved.edits.stones[id]?.hidden;
-    return `<div class="row entr hint ${game}${h?.text ? ' done' : ''}${hid ? ' ghost' : ''}">
-      <button class="entr-btn" data-hint="${esc(id)}" data-edit="${esc(edit)}">
-        <span class="seal">${ICON.tick}</span>
-        <span class="nm"><span class="t">${esc(title)}</span>${sub ? `<span class="s">${esc(sub)}</span>` : ''}
-          ${h?.text ? `<span class="leads">${esc(h.text)}</span>` : ''}</span>
-        ${h?.kind && hintKindLabel[h.kind] ? `<span class="htag ${h.kind}" data-text>${hintKindLabel[h.kind]}</span>` : ''}
-        ${hid ? '<span class="tag" data-text>Hidden</span>' : reach === true && !h?.text ? '<span class="lgdot" title="You can reach this stone now"></span>' : ''}
-        ${h?.text ? '' : '<span class="ty" data-text>Add</span>'}
-      </button></div>`;
-  };
-  const body = [...byArea.values()].sort((a, b) => regionRank(a[0].region, a[0].game, a[0].dungeon) - regionRank(b[0].region, b[0].game, b[0].dungeon)).map(rows => {
-    const gid = rows[0].region;
-    const shut = collapsed('h:' + gid);
-    return `<section><div class="section-head">
-      <button class="caret keep" data-collapse="h:${esc(gid)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
-      <h2>${esc(areaName(gid, rows[0].regionName))}</h2><span class="c">${rows.filter(g => seed.hints[g.id]?.text).length}/${rows.length}</span></div>
-      ${shut ? '' : `<div class="rows">${sortIn('h:' + gid, rows, g => g.id).map(g => hintRow(g.id, stoneName(g), '', g.game, logic ? stoneSet.has(g.id) : null, 'stone:' + g.id)).join('')}</div>`}</section>`;
-  }).join('');
-  const own = Object.entries(seed.hints).filter(([k, h]) => k.startsWith('own:') && match(`${h.from ?? ''} ${h.text}`));
-  const ownBody = `<section><div class="section-head"><h2>Other hints</h2><span class="head-acts"><button class="linkish" data-add-hint>Add a hint</button></span></div>
-    ${own.length ? `<div class="rows">${own.map(([k, h]) => hintRow(k, h.from || 'A hint', '', '', null, 'hint:' + k)).join('')}</div>` : '<p class="fine">For hints from anywhere else, like a shop sign or a fairy.</p>'}</section>`;
-  const all = stoneList().filter(g => !saved.edits.stones[g.id]?.hidden);
-  const written = all.filter(g => seed.hints[g.id]?.text).length;
-  pane.innerHTML = `<div class="toolbar">
-      <div class="toolrow">
-        <input class="search" id="hintSearch" type="search" placeholder="Search stones or what they said" aria-label="Search hints" value="${esc(hintQuery)}">
-        <div class="seg"><button data-hidewritten aria-pressed="${!!saved.ui.hideWritten}">Hide written</button></div>
-        <span class="pill"><b>${written}</b> of ${all.length} stones written</span>
-      </div>
-    </div>
-    <div class="scroll" id="hintScroll">
-      <p class="fine map-help">Tap a gossip stone to write what it said. Mark a hint as a path or foolish area and that area gets tagged everywhere. Mark an item hint and the check shows it.</p>
-      ${body || (stoneList().length ? '<div class="empty"><h3>Nothing matches</h3>Clear the search to see every stone.</div>' : `<div class="empty"><h3>${computing ? 'Reading your settings' : 'No gossip stones on these settings'}</h3></div>`)}
-      ${ownBody}
-    </div>`;
-  $('#hintScroll').scrollTop = scrollTop;
-  if (hadFocus) {
-    const i = $('#hintSearch', pane) as HTMLInputElement;
-    i.focus();
-    if (caret !== null) i.setSelectionRange(caret, caret);
-  }
-}
-
-/** Fills in what a hint is about from its wording, when the player hasn't said. */
-function readHint(text: string): { kind: HintKind; area?: string } {
-  const t = text.toLowerCase();
-  const kind: HintKind = /foolish|barren/.test(t) ? 'foolish' : /way of the hero|path (of|to)|on the path/.test(t) ? 'woth' : '';
-  const names = regionList().map(r => r.name).filter(n => t.includes(n.toLowerCase())).sort((a, b) => b.length - a.length);
-  return { kind, area: names[0] };
-}
-
-function openHint(id: string) {
-  const isOwn = id.startsWith('own:');
-  const g = stoneList().find(x => x.id === id);
-  const h: Hint = seed.hints[id] ?? { text: '' };
-  const checkOptions = checks.filter(c => !c.id.startsWith('custom:')).map(c => `<option value="${esc(checkLabel(c.id))}">`).join('');
-  const itemOptions = catalog().map(i => `<option value="${esc(itemLabel(i.id))}">`).join('');
-  openSheet(isOwn ? 'A hint' : 'What did this stone say?', g ? `${stoneName(g)}, ${areaName(g.region, g.regionName)}` : '', `
-    ${isOwn ? field('hintFrom', 'Where it came from', h.from ?? '', 'placeholder="A sign, a fairy, a shop"') : ''}
-    <label class="field"><span>What it said</span><textarea id="hintText" placeholder="Type the hint">${esc(h.text)}</textarea></label>
-    <label class="field"><span>What kind of hint</span><select id="hintKind">
-      ${([['', 'Work it out from the wording'], ['woth', 'Path: this area has something you need'], ['foolish', 'Foolish: nothing you need here'], ['item', 'Item: says what is at a spot'], ['other', 'Something else']] as const)
-        .map(([v, l]) => `<option value="${v}"${(h.kind ?? '') === v ? ' selected' : ''}>${l}</option>`).join('')}
-    </select></label>
-    ${field('hintArea', 'Area it is about', h.area ?? '', 'list="areaNames"')}<datalist id="areaNames">${regionList().map(r => `<option value="${esc(r.name)}">`).join('')}</datalist>
-    ${field('hintCheck', 'For an item hint: the spot', h.check ? checkLabel(h.check) : '', 'list="hintChecks"')}<datalist id="hintChecks">${checkOptions}</datalist>
-    ${field('hintItem', 'For an item hint: the item', h.item ? itemLabel(h.item) : '', 'list="hintItems"')}<datalist id="hintItems">${itemOptions}</datalist>
-    <div class="btns"><button class="btn" data-act="save">Save</button>${seed.hints[id] ? `<button class="btn danger" data-act="clear">${isOwn ? 'Delete this hint' : 'Clear this stone'}</button>` : ''}</div>`, {
-    save() {
-      const text = ($('#hintText') as HTMLTextAreaElement).value.trim();
-      const from = isOwn ? inputValue('hintFrom') : undefined;
-      let kind = ($('#hintKind') as HTMLSelectElement).value as HintKind;
-      let area = inputValue('hintArea');
-      const guess = readHint(text);
-      if (!kind) kind = guess.kind;
-      if (!area && (kind === 'woth' || kind === 'foolish')) area = guess.area ?? '';
-      const checkText = inputValue('hintCheck').toLowerCase();
-      const check = checkText ? checks.find(c => checkLabel(c.id).toLowerCase() === checkText || c.name.toLowerCase() === checkText)?.id : undefined;
-      const itemText = inputValue('hintItem');
-      const item = itemText ? catalog().find(i => itemLabel(i.id).toLowerCase() === itemText.toLowerCase())?.id ?? 'text:' + itemText : undefined;
-      if (check || item) kind ||= 'item';
-      if (!text && !check && !item && !area && !from) { closeSheet(); return; }
-      snap();
-      seed.hints[id] = { text, kind: kind || undefined, area: area || undefined, check, item, from: from || undefined };
-      if (checkText && !check) toast("That spot isn't on the list. Pick one from the suggestions.");
-      closeSheet(); save(); renderAll();
-    },
-    clear() { snap(); delete seed.hints[id]; closeSheet(); save(); renderAll(); },
-  });
-}
-
 function editStone(id: string) {
   const g = stoneList().find(x => x.id === id);
   if (!g) return;
@@ -1419,13 +1341,11 @@ function editStone(id: string) {
     ${field('edName', 'Name', stoneName(g))}
     <div class="btns">
       <button class="btn" data-act="save">Save</button>
-      <button class="btn alt" data-act="write">Write its hint</button>
       <button class="btn alt" data-act="up">Move up</button><button class="btn alt" data-act="down">Move down</button>
       <button class="btn alt" data-act="hide">${o.hidden ? 'Show on every seed' : 'Hide on every seed'}</button>
       ${Object.keys(o).length ? '<button class="btn danger" data-act="reset">Put back original</button>' : ''}
     </div>`, {
     save() { snap(); const v = inputValue('edName'); E.stones[id] = { ...E.stones[id], name: v && v !== g.name ? v : undefined }; commit(); },
-    write() { closeSheet(); openHint(id); },
     up() { snap(); moveInList('h:' + g.region, peers, id, -1); commit(); },
     down() { snap(); moveInList('h:' + g.region, peers, id, 1); commit(); },
     hide() { snap(); E.stones[id] = { ...o, hidden: !o.hidden }; commit(); },
@@ -1871,6 +1791,11 @@ function renderLook() {
         <div class="seg" role="group" aria-label="Text size">${seg('scale-set', String(saved.ui.scale ?? 1), [['0.9', 'Small'], ['1', 'Normal'], ['1.12', 'Large'], ['1.25', 'Extra large']])}</div></div>
       <div class="box"><h3>List spacing</h3>
         <div class="seg" role="group" aria-label="List spacing">${seg('compact-set', saved.ui.compact ? '1' : '0', [['0', 'Comfortable'], ['1', 'Compact']])}</div></div>
+      <div class="box"><h3>Item pins</h3>
+        <div class="set" style="border:0;padding:0"><div class="lab"><b>Save pins</b></div>
+        <div class="ctl"><button class="switch keep" role="switch" aria-checked="${savingPins()}" aria-label="Save pins" data-save-pins></button></div>
+        <div class="desc">Keeps the items you pin on the Items tab between visits. Turn it off and pins last until you close the app.</div></div>
+        <div class="btns"><button class="btn alt keep" data-clear-pins${pinList().length ? '' : ' disabled'}>Unpin all</button></div></div>
       <div class="box"><h3>Colors and fonts</h3><p>Change any color or the heading font on the current theme.</p>
         <div class="btns"><button class="btn keep" data-open-colors>Edit colors and fonts</button></div></div>
       <div class="box"><h3>OoTMM Checklist</h3><p>In Edit mode, tap the name above to rename the app. It shows in the window title.</p>
@@ -1963,9 +1888,6 @@ function renderSeeds() {
         <button class="btn danger" data-del="${s.id}"${saved.seeds.length < 2 ? ' disabled' : ''}>Delete</button>
       </div></div>`;
   }).join('');
-  const phoneHelp = __TARGET__ === 'desktop' ? '' : __TARGET__ === 'artifact'
-    ? `<div class="box"><h3>Using this on your phone</h3><p>Open this page on your phone while signed in to Claude. Your seeds are saved to your account here, so this page shows the same progress on every device. The Windows app keeps its own copy, so use a transfer code between the two.</p></div>`
-    : `<div class="box"><h3>Keep it on your phone</h3><p>iPhone: open this page in Safari, tap Share, then Add to Home Screen. Android: open it in Chrome, tap the menu, then Add to Home screen or Install app. It works offline after that.</p></div>`;
   $('#pane').innerHTML = `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Your seeds</h2></div></div>
   <div class="scroll"><div class="page">
     <div class="box">
@@ -1981,16 +1903,10 @@ function renderSeeds() {
       <div class="btns"><button class="btn alt" data-readcode>Load this code</button></div>
     </div>
     <div class="box">
-      <h3>Notes for this seed</h3>
-      <p>Notes now have their own tab, with headings, lists, colors and a full page to write on.</p>
-      <div class="btns"><button class="btn alt keep" data-tab="notes">Open Notes</button></div>
-    </div>
-    <div class="box">
       <h3>Back up everything</h3>
       <p>Saves every seed, your edits and your theme in one file. Load it on any device to restore them all.</p>
       <div class="btns"><button class="btn" data-backup>Save backup file</button><label class="btn alt file">Load backup file<input id="backupFile" type="file" accept=".json,application/json"></label></div>
     </div>
-    ${phoneHelp}
   </div></div>`;
 }
 
@@ -2192,7 +2108,7 @@ function editSeed(id: string) {
 function editTab(k: string) {
   const E = saved.edits;
   const key = TAB_LABELS[k];
-  const order = [...E.tabs, ...Object.keys(TAB_LABELS)].filter((x, i, a) => a.indexOf(x) === i);
+  const order = [...E.tabs, ...Object.keys(TAB_LABELS)].filter((x, i, a) => a.indexOf(x) === i && TAB_LABELS[x]);
   const move = (dir: number) => {
     snap();
     const i = order.indexOf(k), j = i + dir;
@@ -2327,7 +2243,6 @@ function openEditor(target: string) {
   else if (kind === 'meter') editMeter();
   else if (kind === 'item') editItem(id);
   else if (kind === 'stone') editStone(id);
-  else if (kind === 'hint') openHint(id);
   else if (kind === 'text') openTextEditor(id, null);
 }
 
@@ -2610,7 +2525,6 @@ function renderPane() {
   else if (tab === 'entrances') renderEntrances();
   else if (tab === 'items') renderItems();
   else if (tab === 'notes') renderNotes();
-  else if (tab === 'hints') renderHints();
   else if (tab === 'settings') renderSettings();
   else renderSeeds();
 }
@@ -2782,10 +2696,6 @@ function events() {
       itemPickQuery = t.value;
       clearTimeout(searchTimer);
       searchTimer = window.setTimeout(renderItemPickList, 100);
-    } else if (t.id === 'hintSearch') {
-      hintQuery = t.value;
-      clearTimeout(searchTimer);
-      searchTimer = window.setTimeout(renderHints, 120);
     } else if (t.id === 'docPage') {
       saveDoc();
     } else if (t.dataset.color) {
@@ -2929,6 +2839,9 @@ function events() {
     if (d.found) { openItemPicker(d.found); return; }
     if (d.pickItem) { logFound(pickingItemFor!, d.pickItem); return; }
     if (d.itemGame) { itemGame = d.itemGame as typeof itemGame; renderItems(); return; }
+    if (d.pin) { togglePin(d.pin); return; }
+    if ('savePins' in d) { setSavePins(!savingPins()); renderLook(); return; }
+    if ('clearPins' in d) { clearPins(); renderLook(); toast('All items unpinned.'); return; }
     if ('haveonly' in d) { saved.ui.haveOnly = !saved.ui.haveOnly; save(); renderItems(); return; }
     if (d.item) {
       const i = catalogById().get(d.item);
@@ -2945,9 +2858,6 @@ function events() {
       snap(); seed.have = {}; seed.found = {}; afterItemChange(); toast('Items cleared on this seed.', true);
       return;
     }
-    if (d.hint) { openHint(d.hint); return; }
-    if ('addHint' in d) { openHint('own:' + uid()); return; }
-    if ('hidewritten' in d) { saved.ui.hideWritten = !saved.ui.hideWritten; save(); renderHints(); return; }
 
     if (el.classList.contains('tick-btn')) {
       const row = el.closest<HTMLElement>('.row')!;

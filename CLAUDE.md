@@ -45,7 +45,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `src/notes.ts`: the Notes tab's cleaning of formatted notes. `src/live.ts`: live play merging on the hosted page
 - `desktop/`: the Windows window (Electron)
 - `tools/`: build, tests and packaging
-- `dist/web/`: the built phone site, committed so it's always available
+- `dist/web/`: the built phone site, and `dist/desktop/`: the built Windows app files. Both are committed
 
 ## Checking work
 
@@ -66,9 +66,10 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 
 ## Releasing
 
-1. Run the tests, then `npm run build`, and commit `dist/web`.
-2. Build `dist/OoTMM-Checklist-Setup.exe` with `npm run package:win`. It's over GitHub's 100 MB file limit, so attach it
-   to a GitHub Release. Never commit it.
+1. Run the tests, then `npm run build`, and commit `dist/web` and `dist/desktop`.
+2. When `dist/desktop` changes on `main`, the `Windows installer` workflow builds the installer and publishes it as the
+   newest GitHub Release. The installer is over GitHub's 100 MB file limit, so never commit it. To build it locally,
+   run `npm run package:win`.
 3. Republish the hosted page from `dist/artifact/ootmm-checklist.html` to
    https://claude.ai/artifact/9mUJwKrCFE88AprUDRHoe1 with capabilities `db`, `user` and `downloads`.
 4. Note in the release which things weren't tested. The installer hasn't been run on real Windows or a real phone

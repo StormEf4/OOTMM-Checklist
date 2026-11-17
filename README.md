@@ -3,11 +3,14 @@
 A checklist for the OoTMM combo randomizer that shows only the checks your settings put on a seed.
 One codebase builds the Windows app and the phone web app.
 
+**Windows:** [download the latest installer](https://github.com/StormEf4/OOTMM-Checklist/releases/latest/download/OoTMM-Checklist-Setup.exe)
+and run it. It installs for your account and doesn't need administrator rights.
+
 The checklist runs OoTMM's own world code, the same steps as its internal `locationList()`: every location
 in the built world, minus the ones locked to their vanilla item. The app doesn't keep its own copy of the
 rules, so a rebuild picks up changes in the randomizer.
 
-## Reachable checks, items, hints and the map
+## Reachable checks, items and the map
 
 - **In logic.** Checks you can get right now are marked with a gold dot, and each area shows how many. The **In logic**
   button hides the rest. It uses OoTMM's own logic and pathfinder with two things you give it: the items on the
@@ -28,9 +31,8 @@ rules, so a rebuild picks up changes in the randomizer.
 - **Pre-completed dungeons.** Pick the dungeons your seed started as beaten on the Settings tab, or open your spoiler log.
   Their areas are skipped, and logic counts what OoTMM gives you for them: cleared region states, boss souls and keys.
 - **Items.** Tap an item to add one. The list comes from your settings. The bag button on any check logs what you found
-  there, marks the check done and counts the item. Item hints and found items show on the check.
-- **Hints.** Every gossip stone on your settings, ready for you to type what it said. A hint marked Path or Foolish
-  (or worded that way) tags its area in the list and on the map. **Add a hint** covers anything that isn't a stone.
+  there, marks the check done and counts the item. Found items show on the check. The pin beside an item moves it to a
+  Pinned section at the top. **Settings > Appearance > Item pins** chooses whether pins are saved between visits.
 - **Map.** Switch the Checks tab to Map for a sketch of Hyrule and Termina with each area's progress. Gold areas have
   checks in logic. In Edit mode, tap an area to move it.
 
@@ -56,7 +58,7 @@ On the hosted page, **Seeds > Play together live** shares the open seed under a 
 hosted page and joins with the code. To save changes, your partner needs the page shared with them as an Editor from
 the page's Share menu.
 
-Ticks, skips, found items, item counts, entrances, hints, check notes, settings and the Notes page all sync within a
+Ticks, skips, found items, item counts, entrances, check notes, settings and the Notes page all sync within a
 second or two. Each change is timed, so changes made at the same moment on both sides both survive. If two people type
 in the Notes page at once, the last one to type wins. The Windows app and phone site don't have live play, because
 there's no shared server behind them. The code is in `src/live.ts`.
@@ -176,8 +178,10 @@ settings. Then add it to your Home Screen from Safari or Chrome.
 
 ## Packaging notes
 
-The installer is about 104 MB, which is over GitHub's 100 MB file limit, so it's attached to each GitHub Release
-instead of stored in the repository. Download it from Releases, or build it with `npm run package:win`.
+The installer is about 104 MB, which is over GitHub's 100 MB file limit, so it isn't stored in the repository. The
+`Windows installer` workflow in `.github/workflows/installer.yml` builds it from `dist/desktop` whenever that
+changes on `main`, and publishes it as the newest Release. The download link above always gives that one. To build it
+yourself, run `npm run package:win`.
 
 
 `npm run package:win` needs `unzip` and the NSIS compiler. On Linux, the `nsis-bundle` from
