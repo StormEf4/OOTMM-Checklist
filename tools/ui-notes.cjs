@@ -26,6 +26,7 @@ const PORT = Number(process.env.PORT ?? 8940);
   ok('older plain notes move over as text', old.includes('Old note line 1') && old.includes('Old &lt;b&gt;line&lt;/b&gt; 2'), old);
   await p.click('.rail .tab[data-tab=seeds]');
   const seedsText = await p.textContent('#pane');
+  ok('the Coop tab outside the hosted page points to it', await (async () => { await p.click('.rail .tab[data-tab=coop]'); const t = await p.textContent('#pane'); await p.click('.rail .tab[data-tab=seeds]'); return /hosted page/.test(t) && !(await p.$('[data-live-start]')); })());
   ok('the Seeds tab has no notes or phone sections', !/Notes for this seed|Using this on your phone|Keep it on your phone/.test(seedsText) && !(await p.$('#seedPad')));
   await p.click('.rail .tab[data-tab=notes]'); await p.waitForSelector('#docPage');
 

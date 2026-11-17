@@ -63,7 +63,7 @@ const KEY = 'ootmm-checklist-v1';
   await p.fill('#edName', 'Files'); await p.fill('#edIcon', '★'); await p.click('[data-act=save]'); await wait();
   ok('tab renamed with a new icon', (await p.textContent('.rail .tab[data-tab=seeds]')).includes('Files') && (await p.textContent('.rail .tab[data-tab=seeds] .tab-ic')).includes('★'));
   await p.click('.rail .tab[data-tab=seeds] .pen'); await p.waitForSelector('[data-act=left]'); await p.click('[data-act=left]'); await wait();
-  ok('tab moved', (await p.$$eval('.rail .tab', e => e.map(x => x.dataset.tab))).join() === 'list,entrances,notes,items,seeds,settings');
+  ok('tab moved', (await p.$$eval('.rail .tab', e => e.map(x => x.dataset.tab))).join() === 'list,entrances,notes,items,seeds,settings,coop');
 
   // settings: name, description, dropdown choices
   await p.click('.rail .tab[data-tab=settings]'); await p.waitForSelector('#setScroll');
