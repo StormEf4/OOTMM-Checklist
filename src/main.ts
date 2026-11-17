@@ -164,6 +164,7 @@ let settingsQuery = '';
 let entrRegion: string | null = null;
 let entrQuery = '';
 let entrGame: 'all' | 'oot' | 'mm' = 'all';
+let entrDir: 'all' | 'in' | 'out' = 'all';
 const entrKinds = new Set<string>();
 let picking: string | null = null;
 let pickQuery = '';
@@ -703,9 +704,10 @@ function rebuild() {
   const everywhere = base.dests.map((_, i) => i);
   const customs: EntranceEntry[] = E.customEntrances.map(c => {
     const a = resolveArea(c.area);
-    return { id: c.id, game: c.game, kind: 'Your entrances', title: c.title, sub: c.sub, group: a.id, groupName: a.name, dungeon: false, allowed: base.sets.length, reusable: true };
+    return { id: c.id, game: c.game, kind: 'Your entrances', title: c.title, sub: c.sub, group: a.id, groupName: a.name, dungeon: false, allowed: base.sets.length, reusable: true, dir: 'other' as const };
   });
   const list = [...base.list, ...customs].map(e => {
+    e = e.dir ? e : { ...e, dir: guessDir(e.title) };
     const o = E.entrances[e.id];
     if (!o) return e;
     const a = o.area ? resolveArea(o.area) : null;
@@ -719,6 +721,24 @@ function rebuild() {
 const REGION_ORDER = new Map(Object.keys(REGIONS).map((k, i) => [k, i]));
 const regionLabel = (c: CheckEntry) => areaName(c.region, c.region === 'NONE' ? 'Anywhere' : c.region === 'POCKET' ? 'Starting items' : c.regionName);
 const checkHidden = (c: CheckEntry) => !!(saved.edits.checks[c.id]?.hidden || saved.edits.areas[c.region]?.hidden);
+/* Entrances gathered into their own sections at the top of the Entrances tab instead of under their areas:
+   spawns decide where the seed starts, and songs warp from anywhere. */
+const ENTR_PINNED = [
+  { id: '@spawns', name: 'Where you start', kinds: ['Spawns'], order: (e: EntranceEntry) => Number(/adult/i.test(e.title)) },
+  { id: '@songs', name: 'Songs', kinds: ['Warp songs', 'Soaring'], order: (e: EntranceEntry) => Number(e.kind === 'Soaring') },
+];
+const entrPin = (id: string) => ENTR_PINNED.find(p => p.id === id);
+const entrGroup = (e: EntranceEntry) => ENTR_PINNED.find(p => p.kinds.includes(e.kind))?.id ?? e.group;
+/* Older results have no direction, so read it from OoTMM's own titles. */
+const guessDir = (title: string): EntranceEntry['dir'] =>
+  /^Exit of /.test(title) ? 'out' : /^Entrance to /.test(title) ? 'in' : /^Way to /.test(title) ? 'path' : 'other';
+/* Each area splits its entrances by direction, so going in and coming out never mix. */
+const ENTR_DIRS = [
+  { dir: 'in', name: 'Going in', hint: 'Doors from here into houses, grottos and dungeons', arrow: '↘', cut: /^Entrance to /, lead: 'Into ' },
+  { dir: 'out', name: 'Coming out', hint: 'Leaving those places, back out to here', arrow: '↖', cut: /^Exit of /, lead: 'Out of ' },
+  { dir: 'path', name: 'Roads to other areas', hint: '', arrow: '→', cut: null, lead: '' },
+  { dir: 'other', name: 'Other', hint: '', arrow: '•', cut: null, lead: '' },
+] as const;
 const entranceHidden = (e: EntranceEntry) => !!(saved.edits.entrances[e.id]?.hidden || saved.edits.areas[e.group]?.hidden);
 const counted = (c: CheckEntry) => !c.fixed && !c.junk && !skipSet.has(c.id) && !seed.skippedRegions.includes(c.region) && !checkHidden(c);
 const shown = (c: CheckEntry) => (saved.ui.showLocked || (!c.fixed && !c.junk)) && (editMode || !checkHidden(c));
@@ -1385,8 +1405,9 @@ function entranceStats() {
   let found = 0;
   const data = entranceData();
   for (const e of data.list.filter(x => !entranceHidden(x))) {
-    const r = map.get(e.group) ?? { id: e.group, name: areaName(e.group, e.groupName), game: e.game, dungeon: e.dungeon, total: 0, found: 0 };
-    map.set(e.group, r);
+    const gid = entrGroup(e);
+    const r = map.get(gid) ?? { id: gid, name: entrPin(gid)?.name ?? areaName(e.group, e.groupName), game: e.game, dungeon: e.dungeon, total: 0, found: 0 };
+    map.set(gid, r);
     r.total++;
     if (seed.entrances[e.id]) { r.found++; found++; }
   }
@@ -1398,9 +1419,12 @@ function renderEntranceRail() {
   const { groups, found, total } = entranceStats();
   const row = (id: string, name: string, done: number, all: number, cur: boolean) =>
     `<button class="reg keep${all && done === all ? ' complete' : ''}" data-entr-region="${esc(id)}" aria-current="${cur}">
-      <span class="n">${esc(name)}</span><span class="c">${done}/${all}</span>${id ? pen('area:' + id) : ''}
+      <span class="n">${esc(name)}</span><span class="c">${done}/${all}</span>${id && !entrPin(id) ? pen('area:' + id) : ''}
       <span class="bar"><i style="width:${all ? (done / all) * 100 : 0}%"></i></span></button>`;
+  const pinned = ENTR_PINNED.map(p => groups.find(g => g.id === p.id)).filter(g => !!g);
+  groups.splice(0, groups.length, ...groups.filter(g => !entrPin(g.id)));
   const sets: [string, string, typeof groups][] = [
+    ['Start and songs', '', pinned],
     ['Hyrule', 'oot', groups.filter(g => g.game === 'oot' && !g.dungeon && g.id !== 'NONE')],
     ['Hyrule dungeons', 'oot', groups.filter(g => g.game === 'oot' && g.dungeon)],
     ['Termina', 'mm', groups.filter(g => g.game === 'mm' && !g.dungeon && g.id !== 'NONE')],
@@ -1419,14 +1443,33 @@ function renderEntranceRail() {
   box.scrollTop = top;
 }
 
-function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>) {
+/* An area's rows under "Going in", "Coming out" and the rest. Each part says its direction once, so its rows drop the
+   repeated "Entrance to" or "Exit of" and show just the place. */
+/* "from Kokiri Forest" says nothing new under Kokiri Forest's own heading. */
+const plainSub = (e: EntranceEntry) => {
+  const here = areaName(e.group, e.groupName).toLowerCase();
+  return e.sub.replace(/^(from|normally leads to) /, '').toLowerCase() === here ? { ...e, sub: '' } : e;
+};
+
+function dirGroups(rows: EntranceEntry[], dests: ReturnType<typeof destById>) {
+  return ENTR_DIRS.map(d => {
+    const part = rows.filter(e => (e.dir ?? 'other') === d.dir);
+    if (!part.length) return '';
+    return `<div class="dir-part dir-${d.dir}">
+      <div class="dir-head"><span class="dir-arrow" aria-hidden="true">${d.arrow}</span><span class="dir-name">${d.name}</span>${d.hint ? `<span class="dir-hint">${d.hint}</span>` : ''}</div>
+      <div class="rows">${part.map(e => entranceRow(plainSub(e), dests, d.cut ?? undefined)).join('')}</div></div>`;
+  }).join('');
+}
+
+function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?: RegExp) {
   const to = seed.entrances[e.id];
+  const shown = cut ? e.title.replace(cut, '') : e.title;
   const dest = to ? destLabel(to, dests) : '';
   const hid = !!saved.edits.entrances[e.id]?.hidden;
   return `<div class="row entr ${e.game}${to ? ' done' : ''}${hid ? ' ghost' : ''}">
     <button class="entr-btn" data-entr="${esc(e.id)}" data-edit="entr:${esc(e.id)}" aria-label="${esc(e.title)}: ${to ? `leads to ${esc(dest)}` : 'not logged yet'}">
       <span class="seal">${ICON.tick}</span>
-      <span class="nm"><span class="t">${esc(e.title)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}
+      <span class="nm"><span class="t">${esc(shown)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}
         ${to ? `<span class="leads"${to.startsWith('text:') ? '' : ` data-edit="dest:${esc(to)}"`}>Leads to ${esc(dest)}</span>` : ''}${noteHtml(e.id)}</span>
       ${hid ? '<span class="tag" data-text>Hidden</span>' : to ? '' : '<span class="ty" data-text>Add</span>'}
     </button></div>`;
@@ -1452,15 +1495,16 @@ function renderEntrances() {
   const words = entrQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const kinds = new Map<string, number>();
   const vis = visibleEntrances();
-  for (const e of vis) if (words.length || !entrRegion || e.group === entrRegion) kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + (seed.entrances[e.id] ? 0 : 1));
+  for (const e of vis) if (words.length || !entrRegion || entrGroup(e) === entrRegion) kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + (seed.entrances[e.id] ? 0 : 1));
   const chips = [...kinds].sort((a, b) => b[1] - a[1]).map(([k, n]) =>
     `<button class="chip" data-kind="${esc(k)}" aria-pressed="${entrKinds.has(k)}">${esc(k)} ${n}</button>`).join('');
 
   const list = vis.filter(e => {
     if (entrGame !== 'all' && e.game !== entrGame) return false;
+    if (entrDir !== 'all' && e.dir !== entrDir) return false;
     if (entrKinds.size && !entrKinds.has(e.kind)) return false;
     if (saved.ui.hideFound && seed.entrances[e.id]) return false;
-    if (entrRegion && !words.length && e.group !== entrRegion) return false;
+    if (entrRegion && !words.length && entrGroup(e) !== entrRegion) return false;
     if (words.length) {
       const to = seed.entrances[e.id];
       const hay = `${e.title} ${e.sub} ${areaName(e.group, e.groupName)} ${to ? destLabel(to, dests) : ''} ${seed.notes[e.id] ?? ''}`.toLowerCase();
@@ -1468,26 +1512,24 @@ function renderEntrances() {
     }
     return true;
   });
-  /* Spawns decide where the seed starts, so the full list opens with them. */
-  const spawns = entrRegion && !words.length ? [] : list.filter(e => e.kind === 'Spawns');
   const byGroup = new Map<string, EntranceEntry[]>();
-  for (const e of list) if (!spawns.includes(e)) (byGroup.get(e.group) ?? byGroup.set(e.group, []).get(e.group)!).push(e);
-  const body = [...byGroup.values()].sort((a, b) => regionRank(a[0].group, a[0].game, a[0].dungeon) - regionRank(b[0].group, b[0].game, b[0].dungeon)).map(rows => {
-    const gid = rows[0].group;
-    const all = vis.filter(e => e.group === gid && !entranceHidden(e));
+  for (const e of list) { const g = entrGroup(e); (byGroup.get(g) ?? byGroup.set(g, []).get(g)!).push(e); }
+  const rank = (e: EntranceEntry) => { const i = ENTR_PINNED.findIndex(p => p.id === entrGroup(e)); return i >= 0 ? i - 100 : regionRank(e.group, e.game, e.dungeon); };
+  const body = [...byGroup.values()].sort((a, b) => rank(a[0]) - rank(b[0])).map(rows => {
+    const gid = entrGroup(rows[0]);
+    const pin = entrPin(gid);
+    const all = vis.filter(e => entrGroup(e) === gid && !entranceHidden(e));
     const shut = collapsed('e:' + gid);
+    if (pin) return `<section class="pinned-sec"><div class="section-head">
+      <button class="caret keep" data-collapse="e:${esc(gid)}" aria-expanded="${!shut}" aria-label="Show or hide this section"></button>
+      <h2>${esc(pin.name)}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span></div>
+      ${shut ? '' : `<div class="rows">${[...rows].sort((a, b) => pin.order(a) - pin.order(b)).map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
     return `<section><div class="section-head">
       <button class="caret keep" data-collapse="e:${esc(gid)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
       <h2 data-edit="area:${esc(gid)}">${esc(areaName(gid, rows[0].groupName))}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span>
       <span class="head-acts"><button class="linkish edit-only keep" data-add-entrance="${esc(gid)}">Add an entrance</button></span></div>
-      ${shut ? '' : `<div class="rows">${sortIn('e:' + gid, rows, e => e.id).map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
+      ${shut ? '' : dirGroups(sortIn('e:' + gid, rows, e => e.id), dests)}</section>`;
   }).join('');
-  const spawnAll = vis.filter(e => e.kind === 'Spawns' && !entranceHidden(e));
-  const spawnShut = collapsed('e:spawns');
-  const spawnHtml = !spawns.length ? '' : `<section class="spawn-sec"><div class="section-head">
-      <button class="caret keep" data-collapse="e:spawns" aria-expanded="${!spawnShut}" aria-label="Show or hide the spawns"></button>
-      <h2>Where you start</h2><span class="c">${spawnAll.filter(e => seed.entrances[e.id]).length}/${spawnAll.length}</span></div>
-      ${spawnShut ? '' : `<div class="rows">${[...spawns].sort((a, b) => Number(/adult/i.test(a.title)) - Number(/adult/i.test(b.title))).map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
 
   const { found, total } = entranceStats();
   pane.innerHTML = `<div class="toolbar">
@@ -1497,12 +1539,15 @@ function renderEntrances() {
         <div class="seg" role="group" aria-label="Game">
           ${(['all', 'oot', 'mm'] as const).map(g => `<button data-entr-game="${g}" aria-pressed="${entrGame === g}">${{ all: 'Both', oot: 'OoT', mm: 'MM' }[g]}</button>`).join('')}
         </div>
+        <div class="seg" role="group" aria-label="Direction">
+          ${(['all', 'in', 'out'] as const).map(g => `<button data-entr-dir="${g}" aria-pressed="${entrDir === g}">${{ all: 'All', in: '↘ Going in', out: '↖ Coming out' }[g]}</button>`).join('')}
+        </div>
         <div class="seg"><button data-hidefound aria-pressed="${!!saved.ui.hideFound}">Hide logged</button></div>
         <span class="pill"><b>${found}</b> of ${total} logged</span>
       </div>
       <div class="chips" role="group" aria-label="Filter by kind of entrance">${chips}</div>
     </div>
-    <div class="scroll" id="entrScroll">${spawnHtml + body || `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more entrances.${saved.ui.hideFound ? ' Logged entrances are hidden too.' : ''}</div>`}</div>`;
+    <div class="scroll" id="entrScroll">${body || `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more entrances.${saved.ui.hideFound ? ' Logged entrances are hidden too.' : ''}</div>`}</div>`;
   $('#entrScroll').scrollTop = scrollTop;
   if (hadFocus) {
     const i = $('#entrSearch', pane) as HTMLInputElement;
@@ -2872,6 +2917,7 @@ function events() {
     if (d.entr) { openPicker(d.entr); return; }
     if (d.pick) { pickDest(d.pick); return; }
     if (d.entrGame) { entrGame = d.entrGame as typeof entrGame; renderEntrances(); return; }
+    if (d.entrDir) { entrDir = d.entrDir as typeof entrDir; renderEntrances(); return; }
     if ('hidefound' in d) { saved.ui.hideFound = !saved.ui.hideFound; save(); renderEntrances(); return; }
     if (d.kind) { if (entrKinds.has(d.kind)) entrKinds.delete(d.kind); else entrKinds.add(d.kind); renderEntrances(); return; }
     if ('openEntrSettings' in d) { openCats.add('entrances'); saved.ui.changesOnly = true; tab = 'settings'; renderRail(); renderTabs(); renderPane(); return; }
