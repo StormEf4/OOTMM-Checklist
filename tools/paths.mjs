@@ -62,7 +62,8 @@ export const plugins = [{
     build.onLoad({ filter: /solver[\\/]solve\.ts$/ }, args => {
       const text = readFileSync(args.path, 'utf8');
       if (!/class LogicPassSolver\b/.test(text) || !/private preCompleteDungeons\(/.test(text)) throw new Error('OoTMM no longer has LogicPassSolver.preCompleteDungeons. Update preCompleteEffects in src/engine/logic.ts to match.');
-      return { contents: `${text}\nexport { LogicPassSolver as ChecklistLogicPassSolver, normalDungeons as checklistNormalDungeons };\n`, loader: 'ts' };
+      if (!/const DUNGEON_ITEMS\b/.test(text)) throw new Error('OoTMM no longer has DUNGEON_ITEMS. Update dungeonItems in src/engine/entrances.ts to match.');
+      return { contents: `${text}\nexport { LogicPassSolver as ChecklistLogicPassSolver, normalDungeons as checklistNormalDungeons, DUNGEON_ITEMS as checklistDungeonItems };\n`, loader: 'ts' };
     });
   },
 }];
