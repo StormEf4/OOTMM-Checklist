@@ -9,6 +9,36 @@ const srv = http.createServer((q, r) => { const f = path.join(root, q.url === '/
 const ok = (name, cond, extra = '') => { console.log(`${cond ? 'PASS' : 'FAIL'} ${name} ${extra}`); if (!cond) process.exitCode = 1; };
 const PORT = Number(process.env.PORT ?? 8941);
 
+/* A stand-in save file (Project64-EM's .fla), laid out as src/generated/save-layout.json says, with flags set the way
+   OoTMM's Mark_Set (mark.c) sets them. */
+const OOTMM = process.env.OOTMM_SRC || path.join(__dirname, '../../OoTMM-v33');
+const LAYOUT = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/generated/save-layout.json'), 'utf8'));
+const CHECKS = JSON.parse(fs.readFileSync(path.join(OOTMM, 'packages/data/dist/lib/data-checks.json'), 'utf8'));
+function makeSave(slots, swap = i => i) {
+  const L = LAYOUT, O = L.offsets, b = new Uint8Array(0x20000);
+  const or32 = (at, n) => { const v = ((b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3]) | (1 << n); b[at] = v >>> 24; b[at + 1] = (v >>> 16) & 255; b[at + 2] = (v >>> 8) & 255; b[at + 3] = v & 255; };
+  const or8 = (at, n) => { b[at + (n >> 3)] |= 1 << (n & 7); };
+  slots.forEach(({ name, locations }, s) => {
+    const oot = L.files.oot[0] + L.files.oot[1] * s, mm = L.files.mm[0] + L.files.mm[1] * s, cu = L.files.custom[0] + L.files.custom[1] * s;
+    [...'ZELDAZ'].forEach((ch, k) => { b[oot + O.ootNewf + k] = ch.charCodeAt(0); });
+    for (let k = 0; k < 8; k++) b[oot + O.ootName + k] = L.names.space;
+    [...name].forEach((ch, k) => { b[oot + O.ootName + k] = ch.charCodeAt(0) - 65 + L.names.upper; });
+    for (const loc of locations) {
+      const c = CHECKS.find(x => x.location === loc), key = c.key >>> 0, scene = (key >>> 16) & 255, room = (key >>> 8) & 255, id = key & 255;
+      const op = (L.merges[c.game][scene] ?? scene);
+      if (c.ov === 'xflag') or8(cu + O.xflags, (room << 8) | id);
+      else if (c.game === 'oot' && c.ov === 'chest') or32(oot + O.ootPerm + O.ootPermSize * op + O.ootChests, id);
+      else if (c.game === 'mm' && c.ov === 'chest') or32(mm + O.mmPerm + O.mmPermSize * op + O.mmChest, id);
+      else if (c.ov === 'npc') or8(cu + (c.game === 'oot' ? O.ootNpc : O.mmNpc), id);
+      else if (c.ov === 'shop') or8(cu + (c.game === 'oot' ? O.ootShops : O.mmShops), id);
+      else throw new Error('test save: no setter for ' + c.game + ' ' + c.ov);
+    }
+  });
+  const out = new Uint8Array(b.length);
+  for (let i = 0; i < b.length; i++) out[swap(i)] = b[i];
+  return Buffer.from(out).toString('base64');
+}
+
 /* The stand-in Client. Pages call __feed(msg) through the test to send a message on every open events socket. */
 const FAKE = () => {
   const URL_BASE = 'http://feed.test';
@@ -140,6 +170,65 @@ const FAKE = () => {
   console.log(real.map((r, i) => `  ${r} -> ${s.found[spare[i]]}`).join('\n'));
   await p.click('[data-setview=look]');
   await p.waitForSelector('[data-game-track-set]');
+
+  /* Catch-up from the save file. File 1 ("A", the playing game) has one check of each kind listed; file 2 ("B") has others. */
+  const st = await state();
+  const free = ids.filter(i => !st.done.includes(i));
+  const kinds = [['oot', 'xflag'], ['oot', 'chest'], ['oot', 'npc'], ['mm', 'xflag'], ['mm', 'chest'], ['mm', 'npc']];
+  const mine = kinds.map(([g, ov]) => free.find(i => { const c = CHECKS.find(x => x.location === i); return c && c.game === g && c.ov === ov; })).filter(Boolean);
+  const theirs = free.filter(i => !mine.includes(i) && ['xflag', 'chest'].includes(CHECKS.find(x => x.location === i)?.ov)).slice(0, 3);
+  console.log('  save file checks:', mine.join(' | '));
+  await p.evaluate(([a, sw]) => {
+    window.__saveFiles = { '/saves/OoTMM.fla': [a, 1000], '/saves/swapped.fla': [sw, 2000] };
+    window.__savePickNext = '/saves/OoTMM.fla';
+    const bytes = b64 => Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+    window.ootmmSave = {
+      pick: async () => window.__savePickNext,
+      stat: async f => window.__saveFiles[f]?.[1] ?? null,
+      read: async f => window.__saveFiles[f] ? bytes(window.__saveFiles[f][0]) : null,
+    };
+  }, [makeSave([{ name: 'A', locations: mine }, { name: 'B', locations: theirs }]), makeSave([{ name: 'A', locations: mine }], i => i ^ 3)]);
+  await p.evaluate(() => window.__feed({ type: 'GAME_START', sessionId: 'bbbb', playerName: 'A' }));
+  await p.click('[data-game-track-set="1"]').catch(() => {});
+  await p.click('[data-setview=game]'); await p.click('[data-setview=look]');
+  await p.waitForSelector('[data-save-pick]');
+  const after = await p.evaluate(() => document.querySelector('#gameState')?.nextElementSibling?.textContent);
+  ok('save file section sits right under the Game tracking status', after === 'Save file', after);
+  await p.click('[data-save-pick]');
+  await p.waitForTimeout(800);
+  s = await state();
+  ok('catch-up ticked every saved check of file A', mine.length >= 4 && mine.every(i => s.done.includes(i)), `${mine.filter(i => s.done.includes(i)).length}/${mine.length}`);
+  ok("catch-up left file B's checks alone", theirs.every(i => !s.done.includes(i)));
+  ok('catch-up logs no items', mine.every(i => !s.found[i]));
+  ok('save note says what was read', /file "A"/.test(await p.textContent('#saveState')), await p.textContent('#saveState'));
+  await p.locator('#saveState').scrollIntoViewIfNeeded();
+  await p.locator('#saveState').evaluate(e => e.closest('.box').scrollIntoView({ block: 'center' }));
+  await p.screenshot({ path: '.cache/shots/save-file.png' });
+
+  /* Saving again in the game: the app sees the file change and ticks the new check. */
+  const later = theirs[0];
+  await p.evaluate(([a]) => { window.__saveFiles['/saves/OoTMM.fla'] = [a, 1500]; }, [makeSave([{ name: 'A', locations: [...mine, later] }, { name: 'B', locations: [] }])]);
+  await p.waitForTimeout(3800);
+  s = await state();
+  ok('a new in-game save is picked up by itself', s.done.includes(later));
+
+  /* The other byte order Project64 may use. */
+  await p.evaluate(() => { window.__savePickNext = '/saves/swapped.fla'; });
+  await p.click('[data-save-pick]');
+  await p.waitForTimeout(600);
+  ok('word-swapped save file reads', /file "A"/.test(await p.textContent('#saveState')), await p.textContent('#saveState'));
+
+  /* Two files and no name to go by: the player picks. */
+  await p.evaluate(([a]) => { window.__saveFiles['/saves/two.fla'] = [a, 3000]; window.__savePickNext = '/saves/two.fla'; }, [makeSave([{ name: 'C', locations: [] }, { name: 'D', locations: theirs.slice(1) }])]);
+  await p.click('[data-save-pick]');
+  await p.waitForTimeout(600);
+  ok('two files: asks which one', await p.isVisible('[data-save-slot="1"]'));
+  await p.click('[data-save-slot="1"]');
+  await p.waitForTimeout(600);
+  s = await state();
+  ok('picked file D is caught up', theirs.slice(1).every(i => s.done.includes(i)));
+  ok('entrances still untouched', JSON.stringify(s.entrances) === JSON.stringify(before.entrances));
+
   await p.click('[data-game-track-set="0"]');
   await p.waitForTimeout(200);
   ok('off: sockets closed', (await p.evaluate(() => window.__feedSockets.length)) === 0);

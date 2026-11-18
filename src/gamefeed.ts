@@ -14,6 +14,8 @@ export type GameItem = { location: string; item: string; self: boolean; session:
 export type GameLink = 'none' | 'client' | 'game';
 export type GameFeedHandlers = {
   item(m: GameItem): void;
+  /** A game started: its session id and the save file's name, which the catch-up uses to pick the right save slot. */
+  start?(m: { session: string; player: string }): void;
   status(link: GameLink): void;
 };
 
@@ -42,7 +44,7 @@ export function startGameFeed(on: GameFeedHandlers) {
       let m: any;
       try { m = JSON.parse(String(e.data)); } catch { return; }
       if (!m || typeof m !== 'object') return;
-      if (m.type === 'GAME_START') { sessions.set(id, String(m.sessionId ?? '')); status(); }
+      if (m.type === 'GAME_START') { sessions.set(id, String(m.sessionId ?? '')); status(); on.start?.({ session: String(m.sessionId ?? ''), player: String(m.playerName ?? '') }); }
       else if (m.type === 'GAME_END') { sessions.delete(id); status(); }
       else if (m.type === 'INFO_ITEM') {
         /* The Client connects to the game a moment before saying GAME_START, so an early item still counts. */

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, session, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, shell, session, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -51,6 +51,24 @@ ipcMain.handle('icons:remove', (_e, id) => {
   for (const f of fs.readdirSync(iconDir())) if (path.basename(f, path.extname(f)).toUpperCase() === id.toUpperCase()) fs.rmSync(path.join(iconDir(), f), { force: true });
 });
 ipcMain.handle('icons:open', () => { fs.mkdirSync(iconDir(), { recursive: true }); return shell.openPath(iconDir()); });
+
+/* Game tracking's catch-up: the game's save file, which the player picks once. Only a file they picked is read. */
+let picked = new Set();
+ipcMain.handle('save:pick', async e => {
+  const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), {
+    title: 'Choose your Project64-EM save file', properties: ['openFile'],
+    filters: [{ name: 'N64 save files', extensions: ['fla'] }, { name: 'All files', extensions: ['*'] }],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  picked.add(r.filePaths[0]);
+  return r.filePaths[0];
+});
+const okSave = p => typeof p === 'string' && (picked.has(p) || /\.fla$/i.test(p));
+ipcMain.handle('save:stat', (_e, p) => { if (!okSave(p)) return null; try { return fs.statSync(p).mtimeMs; } catch { return null; } });
+ipcMain.handle('save:read', (_e, p) => {
+  if (!okSave(p)) return null;
+  try { const b = fs.readFileSync(p); return b.length <= 4 * 1024 * 1024 ? new Uint8Array(b) : null; } catch { return null; }
+});
 
 app.whenReady().then(createWindow);
 /* Write saved progress and renames to disk before the app closes, so nothing waits in memory. */

@@ -24,8 +24,10 @@ import shippedCustom from '../custom-checks.json';
 import { COLOR_TOKENS, FONT_CHOICES, SEALS, SKINS, skinById } from './skins';
 import { applyLayer, originalAttr, originalOf, templateOf, textAt } from './textlayer';
 import { startGameFeed, type GameItem, type GameLink } from './gamefeed';
+import { readSave, type SaveSlot } from './savefile';
 
 declare const __TARGET__: 'web' | 'desktop' | 'artifact';
+declare const __SAVE_LAYOUT_OK__: boolean;
 declare const __OOTMM__: string;
 
 /* ---------- Worker side: the same script runs the engine off the UI thread ---------- */
@@ -74,6 +76,8 @@ type Seed = {
   later?: string[];
   /** The OoTMM game this seed follows for game tracking, by the session id in its patch file. Set by the first item it reports. */
   game?: string;
+  /** Which file in the game's save file is this seed (0 or 1), when the player had to pick. */
+  saveSlot?: number;
   notes: Record<string, string>;
   /** Plain text of the seed's notes, kept for older versions of the app. */
   pad: string;
@@ -114,6 +118,8 @@ type Saved = {
     showLocked?: boolean; changesOnly?: boolean; collapsed?: string[];
     /** Game tracking (Windows app): off when false. gameItems false keeps the checks but not the items found at them. */
     gameTrack?: boolean; gameItems?: boolean;
+    /** The game's save file on this computer (Project64-EM's .fla), for game tracking's catch-up. */
+    saveFile?: string;
     logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; haveOnly?: boolean; hideWritten?: boolean;
     /** Which check names show. Custom puts the player's renames on top of nameBase. */
     names?: NameStyle; nameBase?: 'original' | 'player';
@@ -2113,8 +2119,90 @@ const gameUnknown: string[] = [];
 let gameRenderTimer = 0;
 
 function syncGameFeed() {
-  if (gameTrackOn() && !stopGameFeed) stopGameFeed = startGameFeed({ item: onGameItem, status: l => { gameLink = l; renderGameLink(); } });
+  if (gameTrackOn() && !stopGameFeed) stopGameFeed = startGameFeed({
+    item: onGameItem,
+    start: m => { gameSession = m.session; gamePlayer = m.player; saveSeen = 0; },
+    status: l => { const was = gameLink; gameLink = l; renderGameLink(); if (l === 'game' && was !== 'game') saveSeen = 0; },
+  });
   else if (!gameTrackOn() && stopGameFeed) { stopGameFeed(); stopGameFeed = null; gameLink = 'none'; renderGameLink(); }
+  syncSaveWatch();
+}
+
+/* ---------- Game tracking: catching up from the save file ----------
+   The game only reports pickups as they happen. Everything collected before the app was listening is in the game's
+   save file, as of the last time the player saved in the game. While the game is playing, the app reads the file again
+   whenever it changes, and ticks what's there. It only ever adds ticks, and can't tell what item was at those checks. */
+type SaveBridge = { pick(): Promise<string | null>; stat(p: string): Promise<number | null>; read(p: string): Promise<Uint8Array | null> };
+const saveBridge = (): SaveBridge | undefined => (globalThis as any).ootmmSave;
+const saveCatchUpAvailable = () => __SAVE_LAYOUT_OK__ && !!saveBridge();
+let gameSession = '';
+let gamePlayer = '';
+let saveSeen = 0;
+let saveTimer2 = 0;
+let saveNote = '';
+let saveSlotsSeen: SaveSlot[] = [];
+
+function syncSaveWatch() {
+  clearInterval(saveTimer2);
+  saveTimer2 = 0;
+  if (gameTrackOn() && saveCatchUpAvailable() && saved.ui.saveFile) saveTimer2 = window.setInterval(() => { if (gameLink === 'game') catchUpFromSave(false); }, 3000);
+}
+
+/** Which file in the save is this seed: the one with the playing game's file name, the one the player picked, or the only one. */
+function pickSlot(slots: SaveSlot[]): SaveSlot | null {
+  const named = gamePlayer ? slots.filter(s => s.name === gamePlayer) : [];
+  if (named.length === 1) return named[0];
+  const mine = slots.find(s => s.slot === seed.saveSlot);
+  if (mine) return mine;
+  return slots.length === 1 ? slots[0] : null;
+}
+
+async function catchUpFromSave(byHand: boolean) {
+  const bridge = saveBridge(), file = saved.ui.saveFile;
+  if (!bridge || !file || !__SAVE_LAYOUT_OK__) return;
+  /* A different game than the one this seed follows: its save isn't this seed's. */
+  if (!byHand && gameSession && seed.game && gameSession !== seed.game) return;
+  const mtime = await bridge.stat(file);
+  if (mtime == null) { saveNote = "The save file couldn't be opened. Choose it again."; return renderSaveNote(); }
+  if (!byHand && mtime === saveSeen) return;
+  const raw = await bridge.read(file);
+  saveSeen = mtime;
+  const slots = raw ? readSave(raw) : null;
+  if (!slots) { saveNote = "No saved game found in that file. Save in the game first, and check it's the .fla file in Project64-EM's Save folder."; return renderSaveNote(); }
+  saveSlotsSeen = slots;
+  if (!slots.length) { saveNote = 'The save file has no saved game yet. Save in the game first.'; return renderSaveNote(); }
+  const slot = pickSlot(slots);
+  if (!slot) { saveNote = 'This save file holds two games. Pick which one is this seed.'; return renderSaveNote(); }
+  if (!byHand && gameSession && !seed.game) seed.game = gameSession;
+  const listed = checks.filter(c => slot.collected.has(c.id) && !doneSet.has(c.id));
+  if (listed.length) snap();
+  for (const c of listed) doneSet.add(c.id);
+  saveNote = `Last read ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} from file "${slot.name}": ${slot.collected.size} checks saved as done${listed.length ? `, ${listed.length} newly ticked` : ''}.`;
+  if (listed.length) {
+    save();
+    renderDial();
+    renderRail();
+    if (tab === 'items') renderItems(); else renderPane();
+    scheduleLogic();
+    toast(`Caught up ${listed.length} ${listed.length === 1 ? 'check' : 'checks'} from your save file.`, true);
+  } else if (byHand) toast('Nothing new in your save file.');
+  renderSaveNote();
+}
+function renderSaveNote() {
+  if (tab === 'settings' && settingsView === 'look') renderLook();
+}
+
+function saveFileSection() {
+  if (!saveBridge()) return '';
+  if (!__SAVE_LAYOUT_OK__) return `<h3>Save file</h3><p class="fine">Catching up from the save file is off in this build, because it was made from a different OoTMM than its save layout.</p>`;
+  const file = saved.ui.saveFile;
+  const choose = saveSlotsSeen.length > 1 && !pickSlot(saveSlotsSeen);
+  return `<h3>Save file</h3>
+    <p>Ticks checks you got before the app was listening, from your last save in the game. Choose Project64-EM's save file for OoTMM: the .fla file in its Save folder. While you play, the app reads it again each time you save.</p>
+    <p class="fine">${file ? esc(file) : 'No save file chosen.'}</p>
+    ${choose ? `<div class="seg" role="group" aria-label="Which file is this seed">${saveSlotsSeen.map(s => `<button class="keep" data-save-slot="${s.slot}" aria-pressed="false">File ${s.slot + 1}: ${esc(s.name || 'no name')}</button>`).join('')}</div>` : ''}
+    <div class="btns"><button class="btn alt keep" data-save-pick>${file ? 'Choose a different save file' : 'Choose save file'}</button>${file ? '<button class="btn keep" data-save-now>Catch up now</button>' : ''}</div>
+    ${saveNote ? `<p class="fine" id="saveState">${esc(saveNote)}</p>` : ''}`;
 }
 function renderGameLink() {
   const el = document.getElementById('gameLink');
@@ -2173,6 +2261,7 @@ function gameTrackBox() {
     <p>Ticks checks off as you get them in the game. Play in Project64-EM with the OoTMM Client running (open your seed's patch file to start it), and keep this app open. Entrances are never read from the game; you still fill those in.</p>
     <div class="seg" role="group" aria-label="Game tracking">${seg('game-track-set', on, ['On', 'Off'])}</div>
     ${on ? `<p class="fine" id="gameState">${esc(gameStateText())}</p>
+    ${saveFileSection()}
     <h3>Items found</h3><p>Also log the item you got at each check, so the Items tab and item menu keep up.</p>
     <div class="seg" role="group" aria-label="Log items found">${seg('game-items-set', saved.ui.gameItems !== false, ['Log items', 'Checks only'])}</div>
     ${seed.game ? `<p class="fine">This seed follows one game. If you started a new seed in the game, let it follow that one.</p><div class="btns"><button class="btn alt keep" data-game-forget>Follow a different game</button></div>` : ''}
@@ -3304,6 +3393,12 @@ function events() {
     if (d.scaleSet) { saved.ui.scale = Number(d.scaleSet); applyTheme(); save(); renderLook(); return; }
     if (d.gameTrackSet) { saved.ui.gameTrack = d.gameTrackSet === '1'; save(); syncGameFeed(); renderLook(); return; }
     if (d.gameItemsSet) { saved.ui.gameItems = d.gameItemsSet === '1'; save(); renderLook(); return; }
+    if ('savePick' in d) {
+      saveBridge()?.pick().then(p => { if (!p) return; saved.ui.saveFile = p; saveNote = ''; saveSlotsSeen = []; save(); syncSaveWatch(); catchUpFromSave(true); renderLook(); });
+      return;
+    }
+    if ('saveNow' in d) { catchUpFromSave(true); return; }
+    if (d.saveSlot) { seed.saveSlot = Number(d.saveSlot); save(); catchUpFromSave(true); return; }
     if ('gameForget' in d) { delete seed.game; save(); renderLook(); toast('This seed will follow the next game that reports an item.'); return; }
     if (d.compactSet) { saved.ui.compact = d.compactSet === '1'; applyTheme(); save(); renderLook(); return; }
     if ('backup' in d) { saveBackup(); return; }
