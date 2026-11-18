@@ -74,6 +74,8 @@ type Seed = {
   entrances: Record<string, string>;
   /** Checks and entrances the player marked to come back to later. */
   later?: string[];
+  /** Dungeon maps and compasses already asked about on this seed, so each asks once. */
+  asked?: string[];
   /** The OoTMM game this seed follows for game tracking, by the session id in its patch file. Set by the first item it reports. */
   game?: string;
   /** Which file in the game's save file is this seed (0 or 1), when the player had to pick. */
@@ -635,6 +637,8 @@ function scheduleLogic() {
       renderLogicStatus();
       renderRail();
       renderPane();
+      /* Every change to the items reruns logic, so this is where a newly found map or compass asks its question. */
+      noteDungeonItems();
       /* Then try each missing item on its own. It takes longer, so it waits until the player pauses. */
       await new Promise(r => setTimeout(r, 700));
       if (mine !== logicSeq) return;
@@ -1512,6 +1516,7 @@ function afterItemChange() {
   save();
   if (tab === 'items') renderItems(); else renderPane();
   scheduleLogic();
+  noteDungeonItems();
 }
 
 /* The bag button on a check: what was there. */
@@ -1564,6 +1569,7 @@ function logFound(checkId: string, itemId: string) {
   renderPane();
   scheduleLogic();
   toast(`Logged ${itemLabel(itemId)}. The check is marked done.`, true);
+  noteDungeonItems();
 }
 
 /* Edit mode: change an item menu icon to a picture of the player's own. Saved on the device, so later versions keep it. */
@@ -1876,8 +1882,8 @@ function setEntrance(src: string, dst: string) {
 function afterEntranceChange() {
   save();
   scheduleLogic();
-  renderEntranceRail();
-  renderEntrances();
+  renderRail();
+  renderPane();
   renderTabs();
 }
 
@@ -1912,13 +1918,13 @@ function renderPickList() {
     + (used.length ? `<div class="group used">Already logged elsewhere. Picking one moves it here.</div>${used.map(item).join('')}` : '');
 }
 
-function openPicker(id: string) {
+function openPicker(id: string, ask = 'Where did this lead?', onDone?: () => void) {
   picking = id;
   pickQuery = '';
   pickAll = false;
   const e = entranceData().list.find(x => x.id === id)!;
   const cur = seed.entrances[id];
-  openSheet('Where did this lead?', `${e.title}${e.sub ? `, ${e.sub}` : ''}`, `
+  openSheet(ask, `${e.title}${e.sub ? `, ${e.sub}` : ''}`, `
     <input class="search" id="pickSearch" type="search" placeholder="Search places" aria-label="Search places">
     <div class="pick-list" id="pickList"></div>
     <div class="free-row"><input type="text" id="pickFree" aria-label="Type your own place" placeholder="Not listed? Type the place"${cur?.startsWith('text:') ? ` value="${esc(cur.slice(5))}"` : ''}><button class="btn alt" data-act="free">Save</button></div>
@@ -1932,9 +1938,62 @@ function openPicker(id: string) {
       closeSheet();
       afterEntranceChange();
     },
-  }, () => { picking = null; });
+  }, () => { picking = null; onDone?.(); });
   renderPickList();
   if (!matchMedia('(max-width: 760px)').matches) $('#pickSearch').focus();
+}
+
+/* ---------- Dungeon maps and compasses ----------
+   Getting a dungeon's compass asks who its boss is, and getting its map asks which entrance leads to it. The app never
+   knows the answer: the game shows it, and the player fills it in. Each map and compass asks once per seed, and only
+   when the matching entrance is shuffled and not logged yet. */
+const dungeonItemQueue: string[] = [];
+const ownedDungeonItems = () => { const items = entranceData().dungeonItems ?? {}; const have = owned();
+  return catalog().filter(i => items[i.id] && countOf(i, have) > 0).map(i => i.id); };
+/* A seed starts with what it already has marked as asked, so an update or an older save doesn't ask about old finds. */
+function noteDungeonItems() {
+  if (!logicOut || !entranceData().dungeonItems) return;
+  const have = ownedDungeonItems();
+  if (!seed.asked) { seed.asked = have; return; }
+  const fresh = have.filter(id => !seed.asked!.includes(id));
+  if (!fresh.length) return;
+  seed.asked = [...seed.asked, ...fresh];
+  save();
+  dungeonItemQueue.push(...fresh);
+  if (!layers.length) nextDungeonItem();
+}
+function nextDungeonItem() {
+  while (dungeonItemQueue.length) {
+    const id = dungeonItemQueue.shift()!;
+    const info = entranceData().dungeonItems?.[id];
+    if (info && (info.kind === 'compass' ? askCompass(id, info.dungeons) : askMap(id, info.dungeons))) return;
+  }
+}
+function askCompass(item: string, dungeons: string[]) {
+  const data = entranceData();
+  const door = dungeons.map(d => data.bosses?.[d]?.door).find(b => b && data.list.some(e => e.id === b) && !seed.entrances[b]);
+  if (!door) return false;
+  openPicker(door, `${itemLabel(item)}: which boss is it?`, nextDungeonItem);
+  return true;
+}
+function askMap(item: string, dungeons: string[]) {
+  const data = entranceData();
+  const dest = data.dests.find(x => x.dungeonOf && dungeons.includes(x.dungeonOf) && !Object.values(seed.entrances).includes(x.id));
+  if (!dest) return false;
+  const at = data.dests.indexOf(dest);
+  const ways = data.list.filter(e => e.dir === 'in' && data.sets[e.allowed]?.includes(at));
+  if (!ways.length) return false;
+  const free = ways.filter(e => !seed.entrances[e.id]);
+  const dests = destById();
+  const row = (e: EntranceEntry) => { const to = seed.entrances[e.id];
+    return `<button class="pick ${e.game}" data-act="way:${esc(e.id)}"><span class="t">${esc(e.title.replace(/^Entrance to /, ''))}</span><span class="s">${esc(to ? `Logged as leading to ${destLabel(to, dests)}` : e.sub)}</span></button>`; };
+  const actions: Record<string, () => void> = {};
+  for (const e of ways) actions['way:' + e.id] = () => { setEntrance(e.id, dest.id); closeSheet(); afterEntranceChange(); };
+  openSheet(`${itemLabel(item)}: where is ${dest.title}?`, `Pick the entrance that leads into ${dest.title}`, `
+    <div class="pick-list">${free.map(row).join('') || '<div class="empty">Every way in is logged already.</div>'}
+      ${ways.length > free.length ? `<div class="group used">Already logged elsewhere. Picking one moves it here.</div>${ways.filter(e => seed.entrances[e.id]).map(row).join('')}` : ''}</div>
+    <div class="btns"><button class="btn alt" data-sheet-close>Not now</button></div>`, actions, nextDungeonItem);
+  return true;
 }
 
 /* ---------- Settings page ---------- */

@@ -114,6 +114,27 @@ const shot = n => `.cache/shots/${n}.png`;
   await logE('Boss door: Volvagia', 'bongo');
   const n2 = await bossNotes();
   ok('logging the boss door of the dungeon it leads to names that boss', n2['Deku Tree'] === 'Boss: Bongo-Bongo' && n2['Fire Temple'] === '', JSON.stringify(n2));
+  // a dungeon's compass asks for its boss and its map asks which entrance leads in; the player fills both in
+  const sheetTitle = () => pc.$eval('.sheet h2', h => h.textContent).catch(() => '');
+  const entr = () => pc.evaluate(() => JSON.parse(localStorage.getItem('ootmm-checklist-v1')).seeds[0].entrances);
+  const itemBtn = id => '.item-btn[data-item="' + id + '"]';
+  await pc.click('.rail .tab[data-tab=items]'); await pc.waitForSelector(itemBtn('OOT_COMPASS_JJ'));
+  await pc.click(itemBtn('OOT_COMPASS_JJ')); await pc.waitForSelector('.sheet h2', { timeout: 5000 }).catch(() => {});
+  await pc.waitForTimeout(300);
+  const cTitle = await sheetTitle();
+  ok("getting a compass asks for that dungeon's boss", /Jabu-Jabu.*which boss/.test(cTitle), cTitle + ' / ' + (await pc.$$eval('.sheet h2', h => h.map(x => x.textContent).join('|'))));
+  await pc.fill('#pickSearch', 'twinrova'); await pc.waitForTimeout(200); await pc.click('.pick'); await pc.waitForTimeout(400);
+  ok('the boss picked from the compass is logged on its boss door', (await entr()).OOT_BOSS_JABU_JABU === 'OOT_BOSS_TEMPLE_SPIRIT' && (await pc.$$('.sheet')).length === 0);
+  await pc.click(itemBtn('OOT_MAP_JJ')); await pc.waitForSelector('.sheet h2', { timeout: 5000 }).catch(() => {});
+  ok('getting a map asks which entrance leads into that dungeon', /Jabu-Jabu.*where is Jabu-Jabu/.test(await sheetTitle()) && !!(await pc.$('.sheet [data-act="way:OOT_TEMPLE_WATER"]')), await sheetTitle());
+  await pc.click('.sheet [data-act="way:OOT_TEMPLE_WATER"]'); await pc.waitForTimeout(400);
+  ok('the entrance picked from the map leads there, with the way back filled', (await entr()).OOT_TEMPLE_WATER === 'OOT_JABU_JABU' && (await entr()).OOT_ZORA_FOUNTAIN_FROM_JABU_JABU === 'OOT_LAKE_HYLIA_FROM_TEMPLE_WATER', JSON.stringify(await entr()));
+  ok('the map left the Items tab showing', !!(await pc.$(itemBtn('OOT_MAP_JJ'))));
+  await pc.click(itemBtn('OOT_COMPASS_DT')); await pc.waitForTimeout(3000);
+  ok("a compass whose boss door is already logged doesn't ask", (await pc.$$('.sheet')).length === 0);
+  for (let i = 0; i < 2; i++) { await pc.click(itemBtn('OOT_COMPASS_JJ')); await pc.waitForTimeout(2500); }
+  ok('each compass asks only once per seed', (await pc.$$('.sheet')).length === 0);
+  for (const id of ['OOT_COMPASS_DT', 'OOT_MAP_JJ', 'OOT_COMPASS_JJ']) { if (await pc.getAttribute(itemBtn(id), 'aria-pressed') === 'true') await pc.click(itemBtn(id)); await pc.waitForTimeout(200); }
   await pc.click('.rail .tab[data-tab=settings]'); await pc.waitForSelector('[data-enum=erBoss]');
   await pc.selectOption('[data-enum=erBoss]', 'none'); await pc.waitForTimeout(600);
   await pc.evaluate(() => { const s = JSON.parse(localStorage.getItem('ootmm-checklist-v1')); for (const x of s.seeds) x.entrances = {}; localStorage.setItem('ootmm-checklist-v1', JSON.stringify(s)); });

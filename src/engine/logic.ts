@@ -148,8 +148,9 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
    */
   const consumable = (item: any) => ItemGroups.CONSUMABLES.has(item) && !itemProperties.license.has(item);
   const family = new Map<string, string>();
-  /* Double Defense doesn't open checks, but the hearts display shows it, so it can be logged too. */
-  const tracked = (item: any) => itemProperties.important.has(item) || /_DEFENSE_UPGRADE$/.test(item.id);
+  /* Double Defense doesn't open checks, but the hearts display shows it, so it can be logged too. Dungeon maps and
+     compasses don't open checks either, but finding one asks the player about that dungeon's way in or boss. */
+  const tracked = (item: any) => itemProperties.important.has(item) || /_DEFENSE_UPGRADE$/.test(item.id) || ItemGroups.MAPS.has(item) || ItemGroups.COMPASSES.has(item);
   const add = (item: any, n: number) => {
     let id: string = item.id;
     if (consumable(item)) {

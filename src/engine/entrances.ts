@@ -4,7 +4,7 @@
  * randomized, so no seed's real connections are ever computed or stored here.
  */
 import { ENTRANCES } from '@ootmm/data';
-import { ChecklistLogicPassEntrances, ChecklistWorldShuffler, DUNGEONS_REGIONS } from '@ootmm/logic';
+import { ChecklistLogicPassEntrances, ChecklistWorldShuffler, DUNGEONS_REGIONS, ItemGroups, checklistDungeonItems } from '@ootmm/logic';
 import { regionName } from '@ootmm/regions';
 
 export type EntranceEntry = {
@@ -33,6 +33,9 @@ export type EntranceData = {
   /* Each dungeon's boss door and the boss normally behind it, from OoTMM's entrance data. A dungeon not listed has
      no boss. */
   bosses?: Record<string, { door: string; name: string }>;
+  /* Each dungeon map and compass, with the dungeons it covers. A compass asks for the boss and a map for the way in,
+     and the player fills both in. */
+  dungeonItems?: Record<string, { kind: 'map' | 'compass'; dungeons: string[] }>;
   error?: string;
 };
 
@@ -166,7 +169,7 @@ export function shuffledEntrances(state: any): EntranceData {
         i = dests.length;
         destIndex.set(d, i);
         const de = (ENTRANCES as any)[d];
-        dests.push({ id: d, game: de.game, ...describeDest(de), groupName: groupLabel(groupOf(de)), dungeonOf: dungeonOf(de) });
+        dests.push({ id: d, game: de.game, ...describeDest(de), groupName: groupLabel(groupOf(de)), dungeonOf: de.type.startsWith('dungeon') && de.type !== 'dungeon-exit' ? dungeonOf(de) : undefined });
         const back = shuffler.reverseEntrance(d);
         if (back) rev[d] = back;
       }
@@ -190,7 +193,23 @@ export function shuffledEntrances(state: any): EntranceData {
     const d = dungeonOf(e);
     if (d && !bosses[d]) bosses[d] = { door: id, name: String(e.debug?.[1] ?? clean(e.to)) };
   }
-  return { list, dests, sets, rev, bosses };
+  return { list, dests, sets, rev, bosses, dungeonItems: dungeonItems() };
+}
+
+/* OoTMM keeps one map and compass for a dungeon whose halves are separate dungeons in its world, such as Stone Tower
+   Temple and its inverted side. Those halves take the items of the dungeon whose region name theirs extends. */
+function dungeonItems() {
+  const out: Record<string, { kind: 'map' | 'compass'; dungeons: string[] }> = {};
+  const owners = checklistDungeonItems as Record<string, { id: string }[]>;
+  const regions = DUNGEONS_REGIONS as Record<string, string>;
+  for (const [d, items] of Object.entries(owners)) {
+    const halves = Object.keys(regions).filter(o => !owners[o] && regions[d] && regions[o]?.startsWith(regions[d] + '_'));
+    for (const item of items) {
+      const kind = ItemGroups.MAPS.has(item as any) ? 'map' : ItemGroups.COMPASSES.has(item as any) ? 'compass' : null;
+      if (kind) out[item.id] = { kind, dungeons: [d, ...halves] };
+    }
+  }
+  return out;
 }
 
 /**
