@@ -534,3 +534,4 @@ details.box[open] { display: grid; gap: 9px; }
 .dungeons-sec .section-head h2::before { content: ''; display: inline-block; width: .55em; height: .55em; margin-right: .45em; border-radius: 50%; background: var(--dg, var(--muted)); vertical-align: .08em; }
 .dungeons-sec.oot { --dg: var(--oot); }
 .dungeons-sec.mm { --dg: var(--mm); }
+.entr .boss-note { font-style: italic; }

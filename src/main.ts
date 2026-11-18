@@ -751,12 +751,13 @@ const regionLabel = (c: CheckEntry) => areaName(c.region, c.region === 'NONE' ? 
 const checkHidden = (c: CheckEntry) => !!(saved.edits.checks[c.id]?.hidden || saved.edits.areas[c.region]?.hidden);
 /* Entrances gathered into their own sections at the top of the Entrances tab instead of under their areas:
    spawns decide where the seed starts, and songs warp from anywhere. Dungeon entrances, exits and boss doors are
-   gathered by game. Which ones exist comes from OoTMM's own entrance pools, so extra dungeons such as Pirates'
+   gathered by game, and each dungeon's way in names its boss once the player logs the boss door (boss doors stay
+   under their dungeons). Which ones exist comes from OoTMM's own entrance pools, so extra dungeons such as Pirates'
    Fortress or the Secret Shrine only show up when the seed's settings shuffle them. */
-const DUNGEON_KINDS = ['Dungeons', 'Bosses'];
+const DUNGEON_KINDS = ['Dungeons'];
 type EntrPin = { id: string; name: string; game?: 'oot' | 'mm'; match: (e: EntranceEntry) => boolean; order?: (e: EntranceEntry) => number; split?: Partial<Record<NonNullable<EntranceEntry['dir']>, { name?: string; hint?: string }>> };
 const DUNGEON_PARTS: EntrPin['split'] = {
-  in: { hint: 'The door into each dungeon' }, out: { hint: 'Leaving each dungeon' }, other: { name: 'Boss doors' },
+  in: { hint: 'The door into each dungeon' }, out: { hint: 'Leaving each dungeon' },
 };
 const ENTR_PINNED: EntrPin[] = [
   { id: '@spawns', name: 'Where you start', match: e => e.kind === 'Spawns', order: e => Number(/adult/i.test(e.title)) },
@@ -1719,11 +1720,23 @@ function dirGroups(rows: EntranceEntry[], dests: ReturnType<typeof destById>, pa
     if (!part.length) return '';
     return `<div class="dir-part dir-${d.dir}">
       <div class="dir-head"><span class="dir-arrow" aria-hidden="true">${d.arrow}</span><span class="dir-name">${d.name}</span>${d.hint ? `<span class="dir-hint">${d.hint}</span>` : ''}</div>
-      <div class="rows">${part.map(e => entranceRow(parts ? e : plainSub(e), dests, d.cut ?? undefined)).join('')}</div></div>`;
+      <div class="rows">${part.map(e => entranceRow(parts ? e : plainSub(e), dests, d.cut ?? undefined, parts && d.dir === 'in' ? bossNote(e, dests) : '')).join('')}</div></div>`;
   }).join('');
 }
 
-function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?: RegExp) {
+/* Under a dungeon's way in: the boss the player found behind its boss door, or "No boss" for a dungeon OoTMM gives
+   none. When boss doors aren't shuffled, the boss is the usual one. Nothing shows until a shuffled boss door is logged. */
+function bossNote(e: EntranceEntry, dests: ReturnType<typeof destById>) {
+  const data = entranceData();
+  if (!e.dungeonOf || !data.bosses) return '';
+  const b = data.bosses[e.dungeonOf];
+  if (!b) return 'No boss';
+  const to = seed.entrances[b.door];
+  if (to) return `Boss: ${destLabel(to, dests).replace(/^Boss room: /, '')}`;
+  return data.list.some(x => x.id === b.door) ? '' : `Boss: ${b.name}`;
+}
+
+function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?: RegExp, boss = '') {
   const to = seed.entrances[e.id];
   const shown = cut ? e.title.replace(cut, '') : e.title;
   const dest = to ? destLabel(to, dests) : '';
@@ -1731,7 +1744,7 @@ function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?:
   return `<div class="row entr ${e.game}${to ? ' done' : ''}${hid ? ' ghost' : ''}${isLater(e.id) ? ' is-later' : ''}">
     <button class="entr-btn" data-entr="${esc(e.id)}" data-edit="entr:${esc(e.id)}" aria-label="${esc(e.title)}: ${to ? `leads to ${esc(dest)}` : 'not logged yet'}">
       <span class="seal">${ICON.tick}</span>
-      <span class="nm"><span class="t">${esc(shown)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}
+      <span class="nm"><span class="t">${esc(shown)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}${boss ? `<span class="s boss-note">${esc(boss)}</span>` : ''}
         ${to ? `<span class="leads"${to.startsWith('text:') ? '' : ` data-edit="dest:${esc(to)}"`}>Leads to ${esc(dest)}</span>` : ''}${noteHtml(e.id)}</span>
       ${hid ? '<span class="tag" data-text>Hidden</span>' : to ? '' : '<span class="ty" data-text>Add</span>'}
     </button>${pinBtn('entrances', e.id, e.title)}${laterBtn(e.id, e.title)}</div>`;

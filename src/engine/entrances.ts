@@ -21,6 +21,8 @@ export type EntranceEntry = {
   /* in: a door from this area into a house, grotto or dungeon. out: leaving one of those, back to this area.
      path: a road to another area. other: spawns, songs, bosses and the rest. */
   dir?: 'in' | 'out' | 'path' | 'other';
+  /* OoTMM's code for the dungeon a dungeon entrance, exit or boss door belongs to. */
+  dungeonOf?: string;
 };
 export type EntranceDest = { id: string; game: 'oot' | 'mm'; title: string; sub: string; groupName: string };
 export type EntranceData = {
@@ -28,6 +30,9 @@ export type EntranceData = {
   dests: EntranceDest[];
   sets: number[][];
   rev: Record<string, string>;
+  /* Each dungeon's boss door and the boss normally behind it, from OoTMM's entrance data. A dungeon not listed has
+     no boss. */
+  bosses?: Record<string, { door: string; name: string }>;
   error?: string;
 };
 
@@ -139,6 +144,11 @@ export function shuffledEntrances(state: any): EntranceData {
     return near.find(validRegion) ?? 'NONE';
   };
 
+  /* Dungeon doors and boss doors know their dungeon through the area on the dungeon side. */
+  const dungeonOf = (e: any): string | undefined => {
+    const inside = e.type === 'dungeon-exit' || e.type === 'boss' ? e.from : e.type.startsWith('dungeon') ? e.to : null;
+    return (inside && world.areas[inside]?.dungeon) || undefined;
+  };
   const groupLabel = (g: string) => g === 'NONE' ? 'Elsewhere' : regionName(g);
 
   const destIndex = new Map<string, number>();
@@ -171,9 +181,16 @@ export function shuffledEntrances(state: any): EntranceData {
     list.push({
       id, game: e.game, kind: entranceKind(e.type), ...describeSource(e), group, groupName: groupLabel(group),
       dungeon: DUNGEON_REGIONS.has(group), allowed: set, reusable: reusable.has(id), dir: entranceDir(e.type),
+      dungeonOf: dungeonOf(e),
     });
   }
-  return { list, dests, sets, rev };
+  const bosses: Record<string, { door: string; name: string }> = {};
+  for (const [id, e] of Object.entries(ENTRANCES as Record<string, any>)) {
+    if (e.type !== 'boss') continue;
+    const d = dungeonOf(e);
+    if (d && !bosses[d]) bosses[d] = { door: id, name: String(e.debug?.[1] ?? clean(e.to)) };
+  }
+  return { list, dests, sets, rev, bosses };
 }
 
 /**
