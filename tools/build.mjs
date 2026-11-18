@@ -3,6 +3,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, rmSync, cpSync, existsSync } from 'node:fs';
 import { OOTMM, ROOT, aliases, esbuild, plugins } from './paths.mjs';
+import { saveLayoutHash } from './save-layout-hash.mjs';
 
 const css = ['src/generated/fonts.css', 'src/generated/fonts-extra.css', 'src/style.css'].map(f => readFileSync(path.join(ROOT, f), 'utf8')).join('');
 const changelog = readFileSync(path.join(OOTMM, 'CHANGELOG.md'), 'utf8');
@@ -12,11 +13,16 @@ try {
   if (d) version = d;
 } catch {}
 
+/* Game tracking's save file catch-up only runs when its layout was worked out from this same OoTMM source. */
+const layoutFile = path.join(ROOT, 'src/generated/save-layout.json');
+const saveLayoutOk = existsSync(layoutFile) && JSON.parse(readFileSync(layoutFile, 'utf8')).hash === saveLayoutHash(OOTMM);
+if (!saveLayoutOk) console.warn('Save file catch-up is off in this build: OoTMM changed since src/generated/save-layout.json was made. Run node tools/save-layout.mjs.');
+
 const bundle = async target => {
   const r = await esbuild.build({
     entryPoints: [path.join(ROOT, 'src/main.ts')], bundle: true, write: false, minify: true, format: 'iife', target: 'es2021',
     platform: 'browser', alias: aliases, plugins, loader: { '.json': 'json' }, logLevel: 'warning', legalComments: 'none',
-    define: { __TARGET__: JSON.stringify(target), __OOTMM__: JSON.stringify(version), 'process.env.NODE_ENV': '"production"' },
+    define: { __TARGET__: JSON.stringify(target), __OOTMM__: JSON.stringify(version), __SAVE_LAYOUT_OK__: JSON.stringify(saveLayoutOk), 'process.env.NODE_ENV': '"production"' },
   });
   return r.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
 };

@@ -96,8 +96,12 @@ co-op, which reads the game in Project64-EM.
 Each check you get is ticked, and the item you got there is logged, so the Items tab and item menu keep up. App
 Settings > Game tracking turns it off, or keeps the checks but not the items. Entrances are never read from the game.
 Each seed follows the first game that reports to it, so playing another seed doesn't tick the wrong list. Coop players
-on the phone see the ticks through the Coop room. Pickups made while the checklist is closed aren't caught; tick those
-yourself.
+on the phone see the ticks through the Coop room.
+
+Pickups made while the checklist wasn't listening are caught up from your save file. Under App Settings > Game
+tracking > Save file, choose Project64-EM's save file for OoTMM (the `.fla` file in its `Save` folder) once. The app
+ticks every check your last in-game save has, and reads it again each time you save while playing. It can't tell what
+item was at those checks, only that they're done. If the save file holds two games, pick which one is the seed.
 
 ## Check names
 

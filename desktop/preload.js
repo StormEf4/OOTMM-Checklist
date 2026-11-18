@@ -7,3 +7,10 @@ contextBridge.exposeInMainWorld('ootmmIcons', {
   remove: id => ipcRenderer.invoke('icons:remove', id),
   open: () => ipcRenderer.invoke('icons:open'),
 });
+
+/* Game tracking's catch-up reads the game's save file, which the player picks. */
+contextBridge.exposeInMainWorld('ootmmSave', {
+  pick: () => ipcRenderer.invoke('save:pick'),
+  stat: p => ipcRenderer.invoke('save:stat', p),
+  read: p => ipcRenderer.invoke('save:read', p),
+});

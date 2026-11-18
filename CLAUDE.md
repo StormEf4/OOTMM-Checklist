@@ -48,6 +48,11 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `src/gamefeed.ts`: game tracking in the Windows app. It listens to the OoTMM Client's local feed
   (`127.0.0.1:39278`), never the emulator's own pipe, so co-op keeps working. It drops entrance messages, so the
   Entrances tab stays player-filled. Item names map to the checklist through OoTMM's own `gi()` (`giItems` in `logic.ts`)
+- `src/savefile.ts`: game tracking's catch-up. It reads which checks the game's save file (Project64-EM's `.fla`) says
+  are collected, mirroring OoTMM's `Mark_GetOot`/`Mark_GetMm` in `mark.c`. Where things sit in the file is in
+  `src/generated/save-layout.json`, made by `node tools/save-layout.mjs` from OoTMM's own C headers (needs
+  `mips-linux-gnu-gcc` and OoTMM's `scripts/deps.sh`). The build turns catch-up off, with a warning, when the OoTMM
+  source changed since; rerun the tool then. `node tools/savefile-test.mjs` checks the reader
 - `desktop/`: the Windows window (Electron)
 - `tools/`: build, tests and packaging
 - `dist/web/`: the built phone site, and `dist/desktop/`: the built Windows app files. Both are committed

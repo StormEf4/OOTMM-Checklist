@@ -1,0 +1,77 @@
+{
+ "version": 1,
+ "hash": "d938e87780cc7c98",
+ "files": {
+  "oot": [
+   32,
+   5200
+  ],
+  "mm": [
+   32768,
+   32768
+  ],
+  "custom": [
+   98304,
+   16384
+  ],
+  "count": 2
+ },
+ "offsets": {
+  "ootSize": 4948,
+  "ootPerm": 212,
+  "ootPermSize": 28,
+  "ootChests": 0,
+  "ootCollectibles": 12,
+  "ootGs": 3740,
+  "ootNewf": 28,
+  "ootName": 36,
+  "mmSize": 15520,
+  "mmPerm": 248,
+  "mmPermSize": 28,
+  "mmChest": 0,
+  "mmCollectible": 16,
+  "mmSwitch0": 4,
+  "mmSwitch1": 8,
+  "customSize": 1312,
+  "ootNpc": 0,
+  "ootShops": 32,
+  "ootScrubs": 40,
+  "ootSr": 48,
+  "mmNpc": 128,
+  "mmShops": 160,
+  "xflags": 480,
+  "xflagsSize": 619,
+  "cows": 1100,
+  "fish": 1209
+ },
+ "merges": {
+  "oot": {
+   "112": 0,
+   "113": 1,
+   "114": 2,
+   "115": 3,
+   "116": 4,
+   "117": 5,
+   "118": 6,
+   "119": 7,
+   "120": 8,
+   "121": 9,
+   "123": 11,
+   "125": 13
+  },
+  "mm": {
+   "0": 69,
+   "24": 22,
+   "72": 77,
+   "89": 88,
+   "90": 80,
+   "94": 93
+  }
+ },
+ "names": {
+  "digit": 0,
+  "upper": 171,
+  "lower": 197,
+  "space": 223
+ }
+}
