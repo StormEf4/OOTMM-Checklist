@@ -104,9 +104,11 @@ body:not(.editing) .ghost { display: none !important; }
 .back { display: none; padding: 7px 4px; color: var(--gold); font-weight: 500; }
 .search { flex: 1 1 220px; min-width: 0; padding: 8px 12px; border-radius: 8px; background: var(--raised); border: 1px solid var(--faint); }
 .search::placeholder { color: var(--muted); }
-.seg { display: inline-flex; border: 1px solid var(--faint); border-radius: 8px; overflow: hidden; }
-.seg button { padding: 6px 11px; color: var(--muted); }
-.seg button + button { border-left: 1px solid var(--faint); }
+/* An option bar ends at its last button. When it has to wrap on a narrow screen, each row of buttons stretches to
+   fill the bar, so no row leaves an empty gap. Every button draws a line on its left and top; the bar's own edge
+   hides the ones on the outside. */
+.seg { display: inline-flex; justify-self: start; max-width: 100%; flex-wrap: wrap; border: 1px solid var(--faint); border-radius: 8px; overflow: hidden; }
+.seg button { padding: 6px 11px; color: var(--muted); flex: 1 0 auto; margin: -1px 0 0 -1px; border-left: 1px solid var(--faint); border-top: 1px solid var(--faint); }
 .seg button[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); font-weight: 500; }
 .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px; }
 .chips::-webkit-scrollbar { display: none; }

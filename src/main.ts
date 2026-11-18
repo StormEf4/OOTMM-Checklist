@@ -180,7 +180,8 @@ let phoneView: 'rail' | 'pane' = 'rail';
 let query = '';
 let gameFilter: 'all' | 'oot' | 'mm' = 'all';
 const typeFilter = new Set<string>();
-const openCats = new Set<string>(['main.shuffle']);
+/* Settings categories start folded too (browser tests keep the first one open). */
+const openCats = new Set<string>((globalThis as any).__OOTMM_RAIL_OPEN__ ? ['main.shuffle'] : []);
 let settingsQuery = '';
 let entrRegion: string | null = null;
 let entrQuery = '';
@@ -1001,10 +1002,14 @@ function renderCube() {
   box.onmouseleave = () => { const l = document.getElementById('cubeLabel'); if (l) l.textContent = cubeSel >= 0 ? nameOf(cubeSel) : `${got} of ${views.length} found`; };
 }
 
-/* A sidebar heading that folds its areas away. Folded headings are saved with the other collapsed sections. */
-/* Sidebar headings start folded, so a new player sees a short list; the ones they open are saved. */
-/* Browser tests that click areas set __OOTMM_RAIL_OPEN__ to start with every heading open. */
-const railShut = (key: string) => !(globalThis as any).__OOTMM_RAIL_OPEN__ && !(saved.ui.railOpen ?? []).includes(key);
+/* A sidebar heading that folds its areas away. */
+/* Every heading, in the sidebar and the main window, starts folded each time the app opens. The ones the player
+   opens stay open until the app closes; they aren't saved. */
+/* Browser tests that click areas set __OOTMM_RAIL_OPEN__ to start with every heading open, or __OOTMM_MAIN_OPEN__
+   for just the main window's. With every heading open, openNow lists the ones folded instead. */
+const openNow = new Set<string>();
+const flipped = (key: string, startOpen: boolean) => startOpen ? openNow.has(key) : !openNow.has(key);
+const railShut = (key: string) => flipped(key, !!(globalThis as any).__OOTMM_RAIL_OPEN__);
 function railGroup(key: string, name: string, cls: string, rows: () => string) {
   const shut = railShut(key);
   return `<button class="group fold keep ${cls}" data-collapse="${esc(key)}" aria-expanded="${!shut}"><span class="caret" aria-hidden="true"></span>${esc(name)}</button>${shut ? '' : rows()}`;
@@ -1100,7 +1105,12 @@ const laterBtn = (id: string, name: string) => { const on = isLater(id);
   return `<button class="later${on ? ' on' : ''}" data-later="${esc(id)}" aria-pressed="${on}" aria-label="${on ? 'Take off' : 'Add to'} the Check later list: ${esc(name)}" title="${on ? 'On your Check later list. Tap to take it off' : 'Check later: add to your list to come back to'}">${ICON.later}</button>`; };
 const laterRow = (n: number, cur: boolean, attr: string) =>
   `<button class="reg keep later-reg${n ? ' has' : ''}" ${attr}="${LATER}" aria-current="${cur}"><span class="n">${ICON.later}Check later</span><span class="c">${n}</span></button>`;
-const collapsed = (id: string) => (saved.ui.collapsed ?? []).includes(id);
+const collapsed = (id: string) => flipped(id, !!((globalThis as any).__OOTMM_RAIL_OPEN__ || (globalThis as any).__OOTMM_MAIN_OPEN__));
+/* A main-window heading. After the player picks one area in the sidebar, that area's headings start open, so
+   picking it shows its list straight away; they still fold with their caret. */
+const fold = (id: string, picked: string | null) => picked
+  ? { key: `${picked}|${id}`, shut: openNow.has(`${picked}|${id}`) }
+  : { key: id, shut: collapsed(id) };
 
 function renderChecks() {
   if (saved.ui.checksView === 'map') return renderMap();
@@ -1129,8 +1139,8 @@ function renderChecks() {
   const ordered = [...byRegion].sort((a, b) => regionRank(a[0], a[1][0].game, a[1][0].dungeon) - regionRank(b[0], b[1][0].game, b[1][0].dungeon));
   let body = '';
   if (pinRows.length) {
-    const shut = collapsed('c:pinned');
-    body += `<section class="pins-sec"><div class="section-head"><button class="caret keep" data-collapse="c:pinned" aria-expanded="${!shut}" aria-label="Show or hide pinned checks"></button><h2>Pinned</h2><span class="c">${pinRows.filter(c => doneSet.has(c.id)).length}/${pinRows.length}</span></div>
+    const { key, shut } = fold('c:pinned', region);
+    body += `<section class="pins-sec"><div class="section-head"><button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide pinned checks"></button><h2>Pinned</h2><span class="c">${pinRows.filter(c => doneSet.has(c.id)).length}/${pinRows.length}</span></div>
       ${shut ? '' : `<div class="rows">${pinRows.map(rowHtml).join('')}</div>`}</section>`;
   }
   for (const [id, rows] of ordered) {
@@ -1138,9 +1148,9 @@ function renderChecks() {
     const inRegion = checks.filter(c => c.region === id && counted(c));
     const doneHere = inRegion.filter(c => doneSet.has(c.id)).length;
     const allDone = inRegion.length > 0 && doneHere === inRegion.length;
-    const shut = collapsed(id);
+    const { key, shut } = fold(id, region);
     body += `<section><div class="section-head">
-      <button class="caret keep" data-collapse="${esc(id)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
+      <button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
       <h2 data-edit="area:${esc(id)}">${esc(regionLabel(rows[0]))}</h2>${areaTags(hinted.get(id))}<span class="c" data-count="${esc(id)}">${doneHere}/${inRegion.length}</span>
       <span class="head-acts">
         <button class="linkish" data-mark-area="${esc(id)}">${allDone ? 'Clear this area' : 'Mark all done'}</button>
@@ -1406,8 +1416,8 @@ function renderItems() {
   const pins = pinsOn('items') ? pinList('items') : [];
   const pinnedViews = list.flatMap(itemViews).filter(v => pins.includes(v.key) && keep(v)).sort((a, b) => pins.indexOf(a.key) - pins.indexOf(b.key));
   if (pinnedViews.length && !itemArea) {
-    const shut = collapsed('i:pinned');
-    sections.push(`<section class="items pinned"><div class="section-head"><button class="caret keep" data-collapse="i:pinned" aria-expanded="${!shut}" aria-label="Show or hide pinned items"></button><h2>Pinned</h2></div>
+    const { key, shut } = fold('i:pinned', itemArea);
+    sections.push(`<section class="items pinned"><div class="section-head"><button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide pinned items"></button><h2>Pinned</h2></div>
       ${shut ? '' : `<div class="item-grid">${pinnedViews.map(v => itemTile(v, have)).join('')}</div>`}</section>`);
   }
   for (const game of ['oot', 'mm'] as const) {
@@ -1421,8 +1431,8 @@ function renderItems() {
     }
     if (!groups.size) continue;
     const body = [...groups].sort((a, b) => ITEM_GROUP_ORDER.indexOf(a[0]) - ITEM_GROUP_ORDER.indexOf(b[0])).map(([g, rows]) => {
-      const shut = collapsed(`i:${game}:${g}`);
-      return `<div class="item-group"><div class="section-head"><button class="caret keep" data-collapse="i:${esc(game)}:${esc(g)}" aria-expanded="${!shut}" aria-label="Show or hide these items"></button><h3>${esc(g)}</h3></div>
+      const { key, shut } = fold(`i:${game}:${g}`, itemArea);
+      return `<div class="item-group"><div class="section-head"><button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide these items"></button><h3>${esc(g)}</h3></div>
         ${shut ? '' : `<div class="item-grid">${sortIn(`i:${game}:${g}`, rows, v => v.key).map(v => itemTile(v, have)).join('')}</div>`}</div>`;
     }).join('');
     sections.push(`<section class="items ${game}"><div class="section-head"><h2>${game === 'oot' ? 'Hyrule' : 'Termina'}</h2></div>${body}</section>`);
@@ -1441,13 +1451,13 @@ function renderItems() {
       </div>
     </div>
     <div class="scroll" id="itemScroll"><div class="page wide">
-      <div class="box">
-        ${!logicShown() ? `<p>Tap an item to add one. Logging what you find at a check with the bag button counts it here too.${loggedCount ? ` You've logged ${loggedCount} at checks.` : ''}</p>` : `<div class="set" style="border:0;padding:0"><div class="lab"><b>Show what's in logic</b></div>
+      ${!logicShown() ? '' : `<div class="box">
+        <div class="set" style="border:0;padding:0"><div class="lab"><b>Show what's in logic</b></div>
         <div class="ctl"><button class="switch" role="switch" aria-checked="${logicOn()}" aria-label="Show what's in logic" data-logic-toggle></button></div>
-        <div class="desc">Uses OoTMM's own logic to mark the checks you can get with the items below. Tap an item to add one. Logging what you find at a check with the bag button counts it here too.${loggedCount ? ` You've logged ${loggedCount} at checks.` : ''}</div></div>`}
+        <div class="desc">Uses OoTMM's own logic to mark the checks you can get with the items below. Tap an item to add one. Logging what you find at a check with the bag button counts it here too.${loggedCount ? ` You've logged ${loggedCount} at checks.` : ''}</div></div>
         ${status}
         ${Object.keys(seed.have).length || loggedCount ? '<div class="btns"><button class="btn danger" data-clear-items>Clear items on this seed</button></div>' : ''}
-      </div>
+      </div>`}
       ${logicReady() ? nextItemsHtml() : ''}
       ${sections.join('') || `<div class="empty"><h3>${!logicOn() ? 'Turn on logic to load the item list' : !logicOut ? 'Loading items' : 'No items match'}</h3></div>`}
     </div></div>`;
@@ -1761,19 +1771,19 @@ function renderEntrances() {
     const gid = entrGroup(rows[0]);
     const pin = entrPin(gid);
     const all = vis.filter(e => entrGroup(e) === gid && !entranceHidden(e));
-    const shut = collapsed('e:' + gid);
+    const { key, shut } = fold('e:' + gid, entrRegion);
     if (pin) return `<section class="pinned-sec"><div class="section-head">
-      <button class="caret keep" data-collapse="e:${esc(gid)}" aria-expanded="${!shut}" aria-label="Show or hide this section"></button>
+      <button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide this section"></button>
       <h2>${esc(pin.name)}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span></div>
       ${shut ? '' : `<div class="rows">${[...rows].sort((a, b) => pin.order(a) - pin.order(b)).map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
     return `<section><div class="section-head">
-      <button class="caret keep" data-collapse="e:${esc(gid)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
+      <button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
       <h2 data-edit="area:${esc(gid)}">${esc(areaName(gid, rows[0].groupName))}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span>
       <span class="head-acts"><button class="linkish edit-only keep" data-add-entrance="${esc(gid)}">Add an entrance</button></span></div>
       ${shut ? '' : dirGroups(sortIn('e:' + gid, rows, e => e.id), dests)}</section>`;
   }).join('');
-  const pinShut = collapsed('e:pinned');
-  const pinHtml = !pinRows.length ? '' : `<section class="pins-sec"><div class="section-head"><button class="caret keep" data-collapse="e:pinned" aria-expanded="${!pinShut}" aria-label="Show or hide pinned entrances"></button><h2>Pinned</h2><span class="c">${pinRows.filter(e => seed.entrances[e.id]).length}/${pinRows.length}</span></div>
+  const { key: pinKey, shut: pinShut } = fold('e:pinned', entrRegion);
+  const pinHtml = !pinRows.length ? '' : `<section class="pins-sec"><div class="section-head"><button class="caret keep" data-collapse="${esc(pinKey)}" aria-expanded="${!pinShut}" aria-label="Show or hide pinned entrances"></button><h2>Pinned</h2><span class="c">${pinRows.filter(e => seed.entrances[e.id]).length}/${pinRows.length}</span></div>
       ${pinShut ? '' : `<div class="rows">${pinRows.map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
 
   const { found, total } = entranceStats();
@@ -3366,16 +3376,9 @@ function events() {
     if ('openColors' in d) { openColors(); return; }
     if (d.addCheck !== undefined) { addCheck(d.addCheck); return; }
     if (d.addEntrance !== undefined) { addEntrance(d.addEntrance); return; }
-    if (d.collapse && /^r[cei]:/.test(d.collapse)) {
-      const open = saved.ui.railOpen ?? [];
-      saved.ui.railOpen = open.includes(d.collapse) ? open.filter(x => x !== d.collapse) : [...open, d.collapse];
-      save(); renderRail();
-      return;
-    }
     if (d.collapse) {
-      const cur = saved.ui.collapsed ?? [];
-      saved.ui.collapsed = cur.includes(d.collapse) ? cur.filter(x => x !== d.collapse) : [...cur, d.collapse];
-      save(); if (/^r[cei]:/.test(d.collapse)) renderRail(); else renderPane();
+      if (openNow.has(d.collapse)) openNow.delete(d.collapse); else openNow.add(d.collapse);
+      if (/^r[cei]:/.test(d.collapse)) renderRail(); else renderPane();
       return;
     }
     if (d.setview) { settingsView = d.setview as typeof settingsView; renderSettings(); return; }

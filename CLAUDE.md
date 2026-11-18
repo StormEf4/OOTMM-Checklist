@@ -70,7 +70,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
     about an hour over 3 shards. `LOGIC_RETRY=<file of case names>` retries skipped cases with looser placement rules.
   - `node tools/ui-toggles-data.mjs`, then `tools/ui-toggles.cjs`, uses every settings control in the browser.
 - Random shop prices are expected to differ in the logic sweep: the app counts shops at their normal price.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`: browser tests. Run with
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`, `tools/ui-seg.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 
