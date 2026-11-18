@@ -8,7 +8,28 @@ const shot = n => `.cache/shots/${n}.png`;
   await new Promise(r => srv.listen(8933, r));
   const b = await chromium.launch();
   const errs = [];
-  const open = async o => { const c = await b.newContext(o); const p = await c.newPage(); p.on('pageerror', e => errs.push(String(e))); await p.goto('http://localhost:8933/'); await p.waitForSelector('#regions .reg'); return p; };
+  // Every heading starts folded each time the app opens, in the sidebar and the main window.
+  {
+    const c = await b.newContext({ viewport: { width: 1280, height: 800 } }); const p = await c.newPage();
+    await p.goto('http://localhost:8933/'); await p.waitForSelector('#listScroll .section-head');
+    const allShut = async sel => p.$$eval(sel, c => c.length > 0 && c.every(x => x.getAttribute('aria-expanded') === 'false'));
+    ok('Checks headings start folded', (await allShut('#listScroll .section-head .caret')) && !(await p.$('#listScroll .row')) && (await allShut('#regions .group.fold')));
+    await p.click('#listScroll .section-head .caret'); await p.click('#regions .group.fold'); await p.waitForTimeout(200);
+    ok('a heading opens when tapped', !!(await p.$('#listScroll .row')) && (await p.getAttribute('#regions .group.fold', 'aria-expanded')) === 'true');
+    await p.click('.rail .tab[data-tab=items]'); await p.waitForSelector('#pane .section-head', { timeout: 90000 });
+    ok('Items headings start folded', (await allShut('#pane .section-head .caret')) && !(await p.$('.item-btn')));
+    await p.click('.rail .tab[data-tab=settings]'); await p.waitForSelector('details.cat');
+    ok('Settings sections start folded', await p.$$eval('details.cat', d => d.every(x => !x.open)));
+    await p.click('.rail .tab[data-tab=list]'); await p.waitForSelector('#regions .reg');
+    /* The first sidebar heading is still open from above. */
+    await p.click('#regions .group.fold + .reg[data-region]'); await p.waitForTimeout(300);
+    ok('picking one area shows its checks straight away', !!(await p.$('#listScroll .row')));
+    await p.reload(); await p.waitForSelector('#listScroll .section-head');
+    ok('everything is folded again after reload', (await allShut('#listScroll .section-head .caret')) && (await allShut('#regions .group.fold')));
+    await c.close();
+  }
+  /* The rest of this test reads the lists, so the main window's headings start open. */
+  const open = async o => { const c = await b.newContext(o); await c.addInitScript(() => { window.__OOTMM_MAIN_OPEN__ = true; }); const p = await c.newPage(); p.on('pageerror', e => errs.push(String(e))); await p.goto('http://localhost:8933/'); await p.waitForSelector('#regions .reg'); return p; };
   const pc = await open({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' });
   const store = p => p.evaluate(() => JSON.parse(localStorage.getItem('ootmm-checklist-v1')).seeds[0]);
 
@@ -104,8 +125,7 @@ const shot = n => `.cache/shots/${n}.png`;
   await pc.click('#regions .group.fold[data-collapse="rc:Termina"]'); await pc.waitForTimeout(200);
   ok('opening Termina on Checks shows only its areas', (await pc.$$eval('#regions [data-region="MM_TERMINA_FIELD"]', e => e.length)) === 1 && (await pc.$$eval('#regions [data-region="MM_TEMPLE_WOODFALL"]', e => e.length)) === 0);
   await pc.reload(); await pc.waitForSelector('#regions .reg');
-  ok('an opened heading stays open after reload', (await pc.getAttribute('[data-collapse="rc:Termina"]', 'aria-expanded')) === 'true');
-  await pc.click('#regions .group.fold[data-collapse="rc:Termina"]'); await pc.waitForTimeout(200);
+  ok('an opened heading is folded again after reload', (await pc.getAttribute('[data-collapse="rc:Termina"]', 'aria-expanded')) === 'false');
   await pc.click('.rail .tab[data-tab=entrances]'); await pc.waitForSelector('.entr-btn');
   // Check later: one entrance and one check, each from its own clock
   const laterE = await pc.getAttribute('.row.entr .later', 'data-later');
@@ -214,6 +234,7 @@ const shot = n => `.cache/shots/${n}.png`;
   } else ok('phone shows an area list', false);
   // saves from before this tab existed
   const oldC = await b.newContext({ viewport: { width: 1280, height: 800 } });
+  await oldC.addInitScript(() => { window.__OOTMM_MAIN_OPEN__ = true; });
   await oldC.addInitScript(() => { localStorage.setItem('ootmm-checklist-v1', JSON.stringify({ v: 1, current: 'a', custom: [], ui: {}, seeds: [{ id: 'a', name: 'Old seed', settings: 'v2.q1ZKzi8PzihNS8tJ9c8vUbIqKSpNrQUA', done: ['OOT Kokiri Forest Kokiri Sword Chest'], skipped: [], skippedRegions: [], rolled: {}, updated: 1 }] })); });
   const old = await oldC.newPage(); old.on('pageerror', e => errs.push(String(e)));
   await old.goto('http://localhost:8933/'); await old.waitForSelector('.row');
