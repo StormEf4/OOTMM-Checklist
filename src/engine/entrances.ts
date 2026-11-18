@@ -24,7 +24,7 @@ export type EntranceEntry = {
   /* OoTMM's code for the dungeon a dungeon entrance, exit or boss door belongs to. */
   dungeonOf?: string;
 };
-export type EntranceDest = { id: string; game: 'oot' | 'mm'; title: string; sub: string; groupName: string };
+export type EntranceDest = { id: string; game: 'oot' | 'mm'; title: string; sub: string; groupName: string; dungeonOf?: string };
 export type EntranceData = {
   list: EntranceEntry[];
   dests: EntranceDest[];
@@ -166,7 +166,7 @@ export function shuffledEntrances(state: any): EntranceData {
         i = dests.length;
         destIndex.set(d, i);
         const de = (ENTRANCES as any)[d];
-        dests.push({ id: d, game: de.game, ...describeDest(de), groupName: groupLabel(groupOf(de)) });
+        dests.push({ id: d, game: de.game, ...describeDest(de), groupName: groupLabel(groupOf(de)), dungeonOf: dungeonOf(de) });
         const back = shuffler.reverseEntrance(d);
         if (back) rev[d] = back;
       }

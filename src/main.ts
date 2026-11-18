@@ -1724,15 +1724,18 @@ function dirGroups(rows: EntranceEntry[], dests: ReturnType<typeof destById>, pa
   }).join('');
 }
 
-/* Under a dungeon's way in: the boss the player found behind its boss door, or "No boss" for a dungeon OoTMM gives
-   none. When boss doors aren't shuffled, the boss is the usual one. Nothing shows until a shuffled boss door is logged. */
+/* Under a dungeon's way in, once the player logs where it leads: the boss of the dungeon it leads to, or "No boss" for a
+   dungeon OoTMM gives none. That dungeon's boss is the one the player logged behind its boss door, or the usual one when
+   boss doors aren't shuffled. Nothing shows while the way in or a shuffled boss door is unlogged. */
 function bossNote(e: EntranceEntry, dests: ReturnType<typeof destById>) {
   const data = entranceData();
-  if (!e.dungeonOf || !data.bosses) return '';
-  const b = data.bosses[e.dungeonOf];
+  const to = seed.entrances[e.id];
+  const inside = to ? dests.get(to)?.dungeonOf : undefined;
+  if (!inside || !data.bosses) return '';
+  const b = data.bosses[inside];
   if (!b) return 'No boss';
-  const to = seed.entrances[b.door];
-  if (to) return `Boss: ${destLabel(to, dests).replace(/^Boss room: /, '')}`;
+  const boss = seed.entrances[b.door];
+  if (boss) return `Boss: ${destLabel(boss, dests).replace(/^Boss room: /, '')}`;
   return data.list.some(x => x.id === b.door) ? '' : `Boss: ${b.name}`;
 }
 
