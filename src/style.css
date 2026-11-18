@@ -530,3 +530,8 @@ details.box[open] { display: grid; gap: 9px; }
 .icon-prev { display: grid; gap: 4px; justify-items: center; font-size: .8rem; color: var(--muted); }
 .icon-prev .slot { --frame: var(--gold); --frame-hi: color-mix(in srgb, var(--gold) 55%, #fff); --sock: color-mix(in srgb, var(--panel) 50%, #000); width: 72px; }
 .icon-pick { display: inline-flex; cursor: pointer; }
+/* The OoT and MM dungeon sections on the Entrances tab wear their game's colour. */
+.dungeons-sec .section-head h2::before { content: ''; display: inline-block; width: .55em; height: .55em; margin-right: .45em; border-radius: 50%; background: var(--dg, var(--muted)); vertical-align: .08em; }
+.dungeons-sec.oot { --dg: var(--oot); }
+.dungeons-sec.mm { --dg: var(--mm); }
+.entr .boss-note { font-style: italic; }

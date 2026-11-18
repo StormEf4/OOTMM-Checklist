@@ -750,13 +750,24 @@ const REGION_ORDER = new Map(Object.keys(REGIONS).map((k, i) => [k, i]));
 const regionLabel = (c: CheckEntry) => areaName(c.region, c.region === 'NONE' ? 'Anywhere' : c.region === 'POCKET' ? 'Starting items' : c.regionName);
 const checkHidden = (c: CheckEntry) => !!(saved.edits.checks[c.id]?.hidden || saved.edits.areas[c.region]?.hidden);
 /* Entrances gathered into their own sections at the top of the Entrances tab instead of under their areas:
-   spawns decide where the seed starts, and songs warp from anywhere. */
-const ENTR_PINNED = [
-  { id: '@spawns', name: 'Where you start', kinds: ['Spawns'], order: (e: EntranceEntry) => Number(/adult/i.test(e.title)) },
-  { id: '@songs', name: 'Songs', kinds: ['Warp songs', 'Soaring'], order: (e: EntranceEntry) => Number(e.kind === 'Soaring') },
+   spawns decide where the seed starts, and songs warp from anywhere. Dungeon entrances, exits and boss doors are
+   gathered by game, and each dungeon's way in names its boss once the player logs the boss door (boss doors stay
+   under their dungeons). Which ones exist comes from OoTMM's own entrance pools, so extra dungeons such as Pirates'
+   Fortress or the Secret Shrine only show up when the seed's settings shuffle them. */
+const DUNGEON_KINDS = ['Dungeons'];
+type EntrPin = { id: string; name: string; game?: 'oot' | 'mm'; match: (e: EntranceEntry) => boolean; order?: (e: EntranceEntry) => number; split?: Partial<Record<NonNullable<EntranceEntry['dir']>, { name?: string; hint?: string }>> };
+const DUNGEON_PARTS: EntrPin['split'] = {
+  in: { hint: 'The door into each dungeon' }, out: { hint: 'Leaving each dungeon' },
+};
+const ENTR_PINNED: EntrPin[] = [
+  { id: '@spawns', name: 'Where you start', match: e => e.kind === 'Spawns', order: e => Number(/adult/i.test(e.title)) },
+  { id: '@songs', name: 'Songs', match: e => ['Warp songs', 'Soaring'].includes(e.kind), order: e => Number(e.kind === 'Soaring') },
+  { id: '@dungeons-oot', name: 'OoT dungeons', game: 'oot', match: e => e.game === 'oot' && DUNGEON_KINDS.includes(e.kind), split: DUNGEON_PARTS },
+  { id: '@dungeons-mm', name: 'MM dungeons', game: 'mm', match: e => e.game === 'mm' && DUNGEON_KINDS.includes(e.kind), split: DUNGEON_PARTS },
 ];
 const entrPin = (id: string) => ENTR_PINNED.find(p => p.id === id);
-const entrGroup = (e: EntranceEntry) => ENTR_PINNED.find(p => p.kinds.includes(e.kind))?.id ?? e.group;
+/* An entrance the player moved to an area in Edit mode stays where they put it. */
+const entrGroup = (e: EntranceEntry) => (saved.edits.entrances[e.id]?.area ? undefined : ENTR_PINNED.find(p => p.match(e))?.id) ?? e.group;
 /* Older results have no direction, so read it from OoTMM's own titles. */
 const guessDir = (title: string): EntranceEntry['dir'] =>
   /^Exit of /.test(title) ? 'out' : /^Entrance to /.test(title) ? 'in' : /^Way to /.test(title) ? 'path' : 'other';
@@ -1655,7 +1666,7 @@ function entranceStats() {
   const data = entranceData();
   for (const e of data.list.filter(x => !entranceHidden(x))) {
     const gid = entrGroup(e);
-    const r = map.get(gid) ?? { id: gid, name: entrPin(gid)?.name ?? areaName(e.group, e.groupName), game: e.game, dungeon: e.dungeon, total: 0, found: 0 };
+    const r = map.get(gid) ?? { id: gid, name: entrPin(gid)?.name ?? areaName(e.group, e.groupName), game: entrPin(gid)?.game ?? e.game, dungeon: e.dungeon, total: 0, found: 0 };
     map.set(gid, r);
     r.total++;
     if (seed.entrances[e.id]) { r.found++; found++; }
@@ -1673,7 +1684,7 @@ function renderEntranceRail() {
   const pinned = ENTR_PINNED.map(p => groups.find(g => g.id === p.id)).filter(g => !!g);
   groups.splice(0, groups.length, ...groups.filter(g => !entrPin(g.id)));
   const sets: [string, string, typeof groups][] = [
-    ['Start and songs', '', pinned],
+    ['Start, songs and dungeons', '', pinned],
     ['Hyrule', 'oot', groups.filter(g => g.game === 'oot' && !g.dungeon && g.id !== 'NONE')],
     ['Hyrule dungeons', 'oot', groups.filter(g => g.game === 'oot' && g.dungeon)],
     ['Termina', 'mm', groups.filter(g => g.game === 'mm' && !g.dungeon && g.id !== 'NONE')],
@@ -1684,7 +1695,8 @@ function renderEntranceRail() {
     + laterRow(entranceData().list.filter(e => isLater(e.id)).length, entrRegion === LATER, 'data-entr-region') : '';
   for (const [name, cls, rows] of sets) {
     if (!rows.length) continue;
-    html += railGroup('re:' + name, name, cls, () => rows.map(r => row(r.id, r.name, r.found, r.total, entrRegion === r.id)).join(''));
+    /* The first heading keeps its old key, so a player's open or folded choice carries over. */
+    html += railGroup('re:' + (rows === pinned ? 'Start and songs' : name), name, cls, () => rows.map(r => row(r.id, r.name, r.found, r.total, entrRegion === r.id)).join(''));
   }
   html += '<button class="linkish edit-only keep add-area" data-add-entrance="">Add an entrance</button>';
   const box = $('#regions');
@@ -1701,17 +1713,30 @@ const plainSub = (e: EntranceEntry) => {
   return e.sub.replace(/^(from|normally leads to) /, '').toLowerCase() === here ? { ...e, sub: '' } : e;
 };
 
-function dirGroups(rows: EntranceEntry[], dests: ReturnType<typeof destById>) {
-  return ENTR_DIRS.map(d => {
+function dirGroups(rows: EntranceEntry[], dests: ReturnType<typeof destById>, parts?: EntrPin['split']) {
+  return ENTR_DIRS.map(base => {
+    const d = { ...base, ...parts?.[base.dir] };
     const part = rows.filter(e => (e.dir ?? 'other') === d.dir);
     if (!part.length) return '';
     return `<div class="dir-part dir-${d.dir}">
       <div class="dir-head"><span class="dir-arrow" aria-hidden="true">${d.arrow}</span><span class="dir-name">${d.name}</span>${d.hint ? `<span class="dir-hint">${d.hint}</span>` : ''}</div>
-      <div class="rows">${part.map(e => entranceRow(plainSub(e), dests, d.cut ?? undefined)).join('')}</div></div>`;
+      <div class="rows">${part.map(e => entranceRow(parts ? e : plainSub(e), dests, d.cut ?? undefined, parts && d.dir === 'in' ? bossNote(e, dests) : '')).join('')}</div></div>`;
   }).join('');
 }
 
-function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?: RegExp) {
+/* Under a dungeon's way in: the boss the player found behind its boss door, or "No boss" for a dungeon OoTMM gives
+   none. When boss doors aren't shuffled, the boss is the usual one. Nothing shows until a shuffled boss door is logged. */
+function bossNote(e: EntranceEntry, dests: ReturnType<typeof destById>) {
+  const data = entranceData();
+  if (!e.dungeonOf || !data.bosses) return '';
+  const b = data.bosses[e.dungeonOf];
+  if (!b) return 'No boss';
+  const to = seed.entrances[b.door];
+  if (to) return `Boss: ${destLabel(to, dests).replace(/^Boss room: /, '')}`;
+  return data.list.some(x => x.id === b.door) ? '' : `Boss: ${b.name}`;
+}
+
+function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?: RegExp, boss = '') {
   const to = seed.entrances[e.id];
   const shown = cut ? e.title.replace(cut, '') : e.title;
   const dest = to ? destLabel(to, dests) : '';
@@ -1719,7 +1744,7 @@ function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?:
   return `<div class="row entr ${e.game}${to ? ' done' : ''}${hid ? ' ghost' : ''}${isLater(e.id) ? ' is-later' : ''}">
     <button class="entr-btn" data-entr="${esc(e.id)}" data-edit="entr:${esc(e.id)}" aria-label="${esc(e.title)}: ${to ? `leads to ${esc(dest)}` : 'not logged yet'}">
       <span class="seal">${ICON.tick}</span>
-      <span class="nm"><span class="t">${esc(shown)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}
+      <span class="nm"><span class="t">${esc(shown)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}${boss ? `<span class="s boss-note">${esc(boss)}</span>` : ''}
         ${to ? `<span class="leads"${to.startsWith('text:') ? '' : ` data-edit="dest:${esc(to)}"`}>Leads to ${esc(dest)}</span>` : ''}${noteHtml(e.id)}</span>
       ${hid ? '<span class="tag" data-text>Hidden</span>' : to ? '' : '<span class="ty" data-text>Add</span>'}
     </button>${pinBtn('entrances', e.id, e.title)}${laterBtn(e.id, e.title)}</div>`;
@@ -1772,10 +1797,14 @@ function renderEntrances() {
     const pin = entrPin(gid);
     const all = vis.filter(e => entrGroup(e) === gid && !entranceHidden(e));
     const { key, shut } = fold('e:' + gid, entrRegion);
+    if (pin?.split) return `<section class="pinned-sec dungeons-sec ${pin.game ?? ''}"><div class="section-head">
+      <button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide this section"></button>
+      <h2>${esc(pin.name)}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span></div>
+      ${shut ? '' : dirGroups(sortIn('e:' + gid, rows, e => e.id), dests, pin.split)}</section>`;
     if (pin) return `<section class="pinned-sec"><div class="section-head">
       <button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide this section"></button>
       <h2>${esc(pin.name)}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span></div>
-      ${shut ? '' : `<div class="rows">${[...rows].sort((a, b) => pin.order(a) - pin.order(b)).map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
+      ${shut ? '' : `<div class="rows">${[...rows].sort((a, b) => (pin.order?.(a) ?? 0) - (pin.order?.(b) ?? 0)).map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
     return `<section><div class="section-head">
       <button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
       <h2 data-edit="area:${esc(gid)}">${esc(areaName(gid, rows[0].groupName))}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span>
