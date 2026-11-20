@@ -556,76 +556,124 @@ details.box[open] { display: grid; gap: 9px; }
 .dungeons-sec.mm { --dg: var(--mm); }
 .entr .boss-note { font-style: italic; }
 
-/* ---------- Map view: drawn Hyrule and Termina maps (src/worldmap.ts) ---------- */
-.world-wrap { overflow: auto; margin: 10px 0 6px; border-radius: 14px; -webkit-overflow-scrolling: touch; }
+
+/* ---------- Map view: painted Hyrule and Termina maps (src/worldmap.ts) ---------- */
+.world-wrap { overflow: auto; margin: 10px 0 6px; border-radius: 16px; -webkit-overflow-scrolling: touch; box-shadow: 0 6px 22px rgba(0, 0, 0, .45); background: #2a1c0c; }
 .world { --minw: 700px; position: relative; width: max(calc(100% * var(--zoom, 1)), calc(var(--minw) * var(--zoom, 1))); aspect-ratio: 1000 / 700; }
 .world-art { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.world-art .land { fill: #4a5a3a; fill: color-mix(in srgb, #56623f 46%, var(--bg)); }
-.world-art .frame { fill: none; stroke: var(--rim); stroke-width: 4; }
-.world-art .wt-sea { fill: #2d5672; fill: color-mix(in srgb, #2f6a8c 62%, var(--bg)); stroke: color-mix(in srgb, #9cd3e8 30%, transparent); stroke-width: 2; }
-.world-art .wt-river { fill: none; stroke: #3e7fa3; stroke: color-mix(in srgb, #4a93bb 78%, var(--bg)); stroke-linecap: round; }
-.world-art .rd { fill: none; stroke: color-mix(in srgb, #f3e3b4 42%, transparent); stroke-width: 2.4; stroke-dasharray: 6 6; stroke-linecap: round; }
-.world-art .rg > path:first-child, .world-art .rg-off { stroke: color-mix(in srgb, #000 45%, transparent); stroke-width: 2; stroke-linejoin: round; }
-.world-art .rg-off { opacity: .45; }
+.world-art .frame-out { fill: none; stroke: var(--rim); stroke-width: 3; }
+.world-art .frame-in { fill: none; stroke: #f3dfa4; stroke-opacity: .55; stroke-width: 1.4; }
+.world-art .shore { fill: none; stroke: #d9f2ff; stroke-opacity: .55; stroke-width: 3; stroke-dasharray: 1 7; stroke-linecap: round; }
+.world-art .wave, .world-art .ripple { fill: none; stroke: #e6f8ff; stroke-opacity: .55; stroke-width: 1.4; stroke-linecap: round; }
+.world-art .river-bank { fill: none; stroke: #3b5a2a; stroke-opacity: .45; stroke-linecap: round; }
+.world-art .river { fill: none; stroke: #4aa6d6; stroke-linecap: round; }
+.world-art .river-hi { fill: none; stroke: #c9f0ff; stroke-opacity: .6; stroke-linecap: round; stroke-dasharray: 6 9; }
+.world-art .rd-under { fill: none; stroke: #6b5228; stroke-opacity: .35; stroke-width: 7; stroke-linecap: round; }
+.world-art .rd { fill: none; stroke: #e9d39b; stroke-opacity: .9; stroke-width: 3.2; stroke-linecap: round; stroke-dasharray: 9 5; }
+.world-art .rg-off { opacity: .55; }
 .world-art .rg { cursor: pointer; }
-.world-art .rg:hover > path:first-child { filter: brightness(1.18); stroke: var(--ink); }
-.world-art .rg.open > path:first-child { stroke: var(--gold); stroke-width: 3.5; }
-.world-art .rg.complete > path:first-child { filter: saturate(.55) brightness(1.1); stroke: var(--gold); stroke-dasharray: 2 5; stroke-linecap: round; stroke-width: 3; }
-.world-art .rg.skipped, .world-art .rg.ghost { opacity: .4; }
-.world-art .hatch { stroke: #000; stroke-opacity: .2; stroke-width: 3; }
-.t-field { fill: #6f8a43; fill: color-mix(in srgb, #7d9a48 78%, var(--bg)); }
-.t-ranch { fill: #8d9a4a; fill: color-mix(in srgb, #a4ae55 78%, var(--bg)); }
-.t-forest { fill: #2f6b36; fill: color-mix(in srgb, #2f7a3a 80%, var(--bg)); }
-.t-woods { fill: #275a35; fill: color-mix(in srgb, #23603a 82%, var(--bg)); }
-.t-desert { fill: #c49b5c; fill: color-mix(in srgb, #d2a564 80%, var(--bg)); }
-.t-sand { fill: #b98a54; fill: color-mix(in srgb, #c4935a 80%, var(--bg)); }
-.t-canyon { fill: #a4704a; fill: color-mix(in srgb, #b07750 78%, var(--bg)); }
-.t-rock { fill: #806a58; fill: color-mix(in srgb, #8b725e 80%, var(--bg)); }
-.t-volcano { fill: #8a4030; fill: color-mix(in srgb, #9a4632 80%, var(--bg)); }
-.t-water { fill: #3d83a8; fill: color-mix(in srgb, #4492bb 80%, var(--bg)); }
-.t-coast { fill: #c8b17a; fill: color-mix(in srgb, #d6bd82 76%, var(--bg)); }
-.t-town { fill: #a08d6c; fill: color-mix(in srgb, #b29c76 80%, var(--bg)); }
-.t-castle { fill: #8c8f99; fill: color-mix(in srgb, #9a9eaa 78%, var(--bg)); }
-.t-temple { fill: #b5ad94; fill: color-mix(in srgb, #c9c0a3 78%, var(--bg)); }
-.t-snow { fill: #c2d0d8; fill: color-mix(in srgb, #dde8ee 74%, var(--bg)); }
-.t-swamp { fill: #4f6640; fill: color-mix(in srgb, #57713f 80%, var(--bg)); }
-.t-moon { fill: #c9a26a; fill: color-mix(in srgb, #d8ad6e 82%, var(--bg)); }
-.t-grave { fill: #5d566a; fill: color-mix(in srgb, #6a6178 80%, var(--bg)); }
-.world-art .mk-peak { fill: color-mix(in srgb, #3d3128 70%, transparent); stroke: color-mix(in srgb, #000 30%, transparent); stroke-width: 1; }
-.world-art .mk-snow { fill: color-mix(in srgb, #fff 75%, transparent); }
-.world-art .mk-tree { fill: color-mix(in srgb, #143d1d 75%, transparent); stroke: color-mix(in srgb, #000 25%, transparent); stroke-width: .8; }
-.world-art .mk-dune, .world-art .mk-wave, .world-art .mk-reed { fill: none; stroke: color-mix(in srgb, #000 28%, transparent); stroke-width: 1.6; stroke-linecap: round; }
-.world-art .mk-wave { stroke: color-mix(in srgb, #fff 45%, transparent); }
-.world-art .mk-house { fill: color-mix(in srgb, #5a3e2a 70%, transparent); }
-.world-art .mk-stone { fill: color-mix(in srgb, #d9d3e3 55%, transparent); }
-.world-art .mk-tuft, .world-art .mk-crack { fill: none; stroke: color-mix(in srgb, #000 26%, transparent); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
-.world-art .mk-fence { fill: none; stroke: color-mix(in srgb, #5a3e2a 70%, transparent); stroke-width: 1.6; stroke-dasharray: 3 3; }
-.world-art .mk-pebble { fill: color-mix(in srgb, #000 22%, transparent); }
-.world-art .mk-crater { fill: color-mix(in srgb, #000 22%, transparent); }
-.world-art .mk-ember { fill: #ffb347; }
-.world-art .compass circle { fill: color-mix(in srgb, var(--panel) 80%, transparent); stroke: var(--rim); stroke-width: 1.5; }
-.world-art .compass path { fill: color-mix(in srgb, var(--ink) 55%, transparent); }
-.world-art .compass .n { fill: var(--gold); }
-.world-art .compass .nl { fill: none; stroke: var(--ink); stroke-width: 1.6; }
-.world .pin { position: absolute; transform: translate(calc(-1 * var(--px, 50%)), -50%); display: grid; justify-items: center; gap: 0; width: max-content; max-width: 124px; padding: 2px 7px 3px; border-radius: 8px; text-align: center;
-  background: color-mix(in srgb, var(--panel) 86%, transparent); box-shadow: 0 1px 3px rgba(0, 0, 0, .35), inset 0 0 0 1px var(--faint); line-height: 1.1; z-index: 1; }
-.world .pin:hover, .world .pin:focus-visible { z-index: 3; background: var(--raised); }
-.world .pin .tn { font-weight: 600; font-size: .72rem; overflow-wrap: anywhere; }
-.world .pin.oot .tn { color: var(--oot); } .world .pin.mm .tn { color: var(--mm); }
-.world .pin .tc { font-size: .68rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.world .pin .tc .lg { margin-left: 2px; font-size: .62rem; }
+.world-art .rg:hover { filter: brightness(1.13) saturate(1.1); }
+.world-art .rg.skipped, .world-art .rg.ghost { opacity: .45; }
+.world-art .rg-edge { fill: none; stroke: #2b1a08; stroke-opacity: .5; stroke-width: 1.4; pointer-events: none; stroke-linejoin: round; }
+.world-art .rg-edge.open { stroke: #ffd84a; stroke-opacity: 1; stroke-width: 3.2; }
+.world-art .rg-edge.complete { stroke: #ffe58a; stroke-opacity: 1; stroke-width: 2.6; stroke-dasharray: 2 6; stroke-linecap: round; }
+.world-art .town-wall { fill: none; stroke: #7a6448; stroke-width: 7; }
+.world-art .town-wall-in { fill: none; stroke: #c9b48a; stroke-width: 1.5; stroke-dasharray: 4 4; }
+/* mountains and woods */
+.world-art .pk-l { fill: #b9a083; }
+.world-art .pk-r { fill: #6f5846; }
+.world-art .pk-ridge { fill: none; stroke: #4e3c2f; stroke-width: 1; stroke-opacity: .6; }
+.world-art .pk-snow { fill: #fbfdff; }
+.world-art .tr { fill: #2f7034; stroke: #173f1f; stroke-width: .8; }
+.world-art .tr-hi { fill: #5fae4f; opacity: .75; }
+.world-art .tr-sh { fill: #10240c; opacity: .3; }
+.world-art .pine { fill: #2d6046; stroke: #183829; stroke-width: .6; }
+.world-art .tuft { fill: none; stroke: #4f6f22; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
+.world-art .dune { fill: none; stroke: #9a6f36; stroke-width: 1.6; stroke-linecap: round; opacity: .7; }
+.world-art .crack { fill: none; stroke: #6a3f22; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
+.world-art .pebble { fill: #8f774a; opacity: .7; }
+.world-art .bog { fill: #5a4a6e; opacity: .55; }
+.world-art .reed { fill: none; stroke: #33461d; stroke-width: 1.3; stroke-linecap: round; }
+.world-art .stone { fill: #d8d2e2; stroke: #3d3448; stroke-width: .8; }
+.world-art .roof { fill: #b5553a; stroke: #5e2a1a; stroke-width: .6; }
+.world-art .fence { fill: none; stroke: #7a5532; stroke-width: 1.8; stroke-dasharray: 3 3; }
+.world-art .crater { fill: #b07a2c; opacity: .6; }
+/* landmarks */
+.world-art .deco, .world-art .town-wall, .world-art .town-wall-in, .world-art .rd, .world-art .rd-under, .world-art .compass { pointer-events: none; }
+.world-art .lm * { stroke-linejoin: round; }
+.world-art .lm-shadow { fill: #1a1006; opacity: .3; }
+.world-art .lm-wall { fill: #e7e1d0; stroke: #5b5346; stroke-width: 1.2; }
+.world-art .lm-wall2 { fill: #c9c2ae; stroke: #5b5346; stroke-width: 1.2; }
+.world-art .lm-roof { fill: #3f6fb6; stroke: #1d3560; stroke-width: 1.2; }
+.world-art .lm-roof2 { fill: #8a6a4a; stroke: #3d2a18; stroke-width: 1.2; }
+.world-art .lm-redroof, .world-art .lm-redroof2 { fill: #b9462e; stroke: #5a1f12; stroke-width: 1.2; }
+.world-art .lm-flag { fill: #d23b3b; stroke: #5a3a2a; stroke-width: 1; }
+.world-art .lm-door { fill: #4a3220; }
+.world-art .lm-win { fill: #3a2a1a; }
+.world-art .lm-dark { fill: #4c3a4a; stroke: #1c111c; stroke-width: 1.2; }
+.world-art .lm-darkroof { fill: #2a1a2a; stroke: #120812; stroke-width: 1.2; }
+.world-art .lm-glow { fill: #ff7a3a; }
+.world-art .lm-clock { fill: #f4e7c0; stroke: #6a5a3a; stroke-width: 1.5; }
+.world-art .lm-hand { fill: none; stroke: #3a2a1a; stroke-width: 1.4; stroke-linecap: round; }
+.world-art .lm-vol { fill: #8a4a32; stroke: #3d1c12; stroke-width: 1.2; }
+.world-art .lm-vol2 { fill: #5e2e1f; }
+.world-art .lm-lava { fill: #ff8a2a; stroke: #ffb347; stroke-width: 2; stroke-linecap: round; }
+.world-art .lm-smoke { fill: #d9d2c8; opacity: .8; stroke: #8a8278; stroke-width: 1; }
+.world-art .lm-blade path { fill: #efe2c0; stroke: #6a5536; stroke-width: 1; }
+.world-art .lm-hub { fill: #6a5536; }
+.world-art .lm-trunk { fill: #7a5232; stroke: #3d2614; stroke-width: 1; }
+.world-art .lm-canopy { fill: #3f8a3a; stroke: #143a18; stroke-width: 1.6; }
+.world-art .lm-face { fill: #2a1808; }
+.world-art .lm-red { fill: #c0503a; stroke: #5a1f12; stroke-width: 1.2; }
+.world-art .lm-silo { fill: #d8cdb0; stroke: #6a5d44; stroke-width: 1.2; }
+.world-art .lm-fence { fill: none; stroke: #f2e3be; stroke-width: 1.4; }
+.world-art .lm-stone { fill: #ece6d4; stroke: #6a6252; stroke-width: 1.2; }
+.world-art .lm-col { fill: none; stroke: #8a8270; stroke-width: 1.2; }
+.world-art .lm-cliff { fill: #8d7a66; stroke: #4a3a2c; stroke-width: 1.2; }
+.world-art .lm-fall { fill: #7fd3f5; }
+.world-art .lm-fallhi { fill: none; stroke: #ffffff; stroke-width: 1.4; opacity: .8; }
+.world-art .lm-foam { fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: round; opacity: .85; }
+.world-art .lm-sand { fill: #ead39a; stroke: #9a7e46; stroke-width: 1; }
+.world-art .lm-bridge { fill: none; stroke: #6a4a2a; stroke-width: 2.2; stroke-linecap: round; }
+.world-art .lm-bridgeb { fill: none; stroke: #2a1a0a; stroke-width: 5; opacity: .35; }
+.world-art .lm-sandst { fill: #e3b979; stroke: #7a5328; stroke-width: 1.2; }
+.world-art .lm-sandst2 { fill: #cf9f5c; stroke: #7a5328; stroke-width: 1.2; }
+.world-art .lm-hut { fill: #b08a5a; stroke: #5a3e20; stroke-width: 1.2; }
+.world-art .lm-hutline { fill: none; stroke: #6a4a28; stroke-width: 1; }
+.world-art .lm-ruin { fill: #9a8ea6; stroke: #3d3448; stroke-width: 1.2; }
+.world-art .lm-ruinline { fill: none; stroke: #3d3448; stroke-width: 2; }
+.world-art .lm-palace { fill: #9bbf5a; stroke: #3d5a1e; stroke-width: 1.2; }
+.world-art .lm-palace2 { fill: #c7a65a; stroke: #6a5224; stroke-width: 1.2; }
+.world-art .lm-leaf { fill: #5a9a3a; stroke: #2d5a1a; stroke-width: .8; }
+.world-art .lm-dome { fill: #8fd0e6; stroke: #2a6a86; stroke-width: 1.2; }
+.world-art .lm-domeline { fill: none; stroke: #2a6a86; stroke-width: 1; }
+.world-art .lm-snowpk { fill: #e9f1f8; stroke: #6a7f94; stroke-width: 1.2; }
+.world-art .lm-snowpk2 { fill: #aec4d8; }
+.world-art .lm-rock { fill: #8a8070; stroke: #3d362a; stroke-width: 1.2; }
+.world-art .compass .c-ring { fill: #f1e2b6; stroke: #6a4f22; stroke-width: 2; }
+.world-art .compass .c-in { fill: none; stroke: #6a4f22; stroke-width: .8; stroke-dasharray: 2 3; }
+.world-art .compass .c-s { fill: #5a4424; }
+.world-art .compass .c-n { fill: #c0392b; }
+.world-art .compass .c-nl { fill: none; stroke: #f8ecc8; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; paint-order: stroke; }
+/* names */
+.world .pin { position: absolute; transform: translate(calc(-1 * var(--px, 50%)), -50%); display: grid; justify-items: center; gap: 1px; width: max-content; max-width: 128px; padding: 0 4px; text-align: center;
+  background: none; box-shadow: none; line-height: 1.05; z-index: 1; border-radius: 6px; }
+.world .pin:hover, .world .pin:focus-visible { z-index: 3; background: rgba(20, 12, 4, .45); }
+.world .pin .tn { font-family: 'Almendra', Georgia, serif; font-weight: 700; font-size: .84rem; letter-spacing: .01em; color: #fff6dc; overflow-wrap: anywhere;
+  text-shadow: 0 0 2px #1a0f04, 0 0 2px #1a0f04, 0 1px 2px #1a0f04, 0 0 6px rgba(26, 15, 4, .85); }
+.world .pin .tc { justify-self: center; font-size: .66rem; font-weight: 700; color: #ffe08a; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 6px; border-radius: 8px;
+  background: rgba(30, 18, 6, .78); box-shadow: inset 0 0 0 1px rgba(255, 224, 138, .45); }
+.world .pin .tc .lg { margin-left: 2px; font-size: .6rem; }
 .world .pin .htag { margin: 1px 0 0; font-size: .6rem; }
-.world .pin.dot { padding-left: 16px; }
-.world .pin.dot::before { content: ''; position: absolute; left: 5px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 1.5px var(--panel); }
-.world .pin.open { box-shadow: 0 1px 3px rgba(0, 0, 0, .35), inset 0 0 0 2px var(--gold); }
-.world .pin.complete .tc { color: var(--gold); }
-.world .pin.complete { opacity: .82; }
-.world .pin.skipped { opacity: .5; }
-.map-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.map-tools .seg button { min-width: 36px; }
+.world .pin.dot { padding-left: 15px; }
+.world .pin.dot::before { content: ''; position: absolute; left: 3px; top: .5em; width: 8px; height: 8px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #fff3b0, #e0a422 60%, #8a5a10); box-shadow: 0 0 0 1.5px #2a1a06, 0 0 6px rgba(255, 210, 90, .8); }
+.world .pin.open .tc { background: #e2b52a; color: #2a1a04; }
+.world .pin.complete .tn { color: #ffe08a; }
+.world .pin.complete .tc { background: rgba(70, 52, 10, .85); }
+.world .pin.skipped { opacity: .55; }
 @media (max-width: 760px) {
   .world-wrap { margin-left: calc(-1 * max(16px, env(safe-area-inset-left, 0px))); margin-right: calc(-1 * max(16px, env(safe-area-inset-right, 0px))); border-radius: 0; }
-  .world { --minw: 820px; }
+  .world { --minw: 840px; }
 }
 
 /* Where you are now: a small panel between the sidebar's buttons and its list, so it stays put while the list scrolls. */
