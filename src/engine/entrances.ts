@@ -19,10 +19,18 @@ export type EntranceEntry = {
   allowed: number;
   reusable: boolean;
   /* in: a door from this area into a house, grotto or dungeon. out: leaving one of those, back to this area.
-     path: a road to another area. other: spawns, songs, bosses and the rest. */
-  dir?: 'in' | 'out' | 'path' | 'other';
+     path: a road to another area (shown as enter and exit rows under its two areas). other: spawns, songs, bosses and the rest. */
+  dir?: 'in' | 'out' | 'path' | 'other' | 'enter' | 'exit';
   /* OoTMM's code for the dungeon a dungeon entrance, exit or boss door belongs to. */
   dungeonOf?: string;
+  /* A road between two areas (dir 'path'). It lists under the area it leaves as a way out, and under toGroup, the
+     area it normally arrives in, as a way in. from and into name the spots it starts from and arrives at. */
+  toGroup?: string;
+  toGroupName?: string;
+  from?: string;
+  into?: string;
+  /* A road these settings don't shuffle. It shows so every area has its ways in and out, but there's nothing to log. */
+  fixed?: boolean;
 };
 export type EntranceDest = { id: string; game: 'oot' | 'mm'; title: string; sub: string; groupName: string; dungeonOf?: string };
 export type EntranceData = {
@@ -60,7 +68,11 @@ export function entranceKind(type: string) {
   return type.replace(/-/g, ' ').replace(/^./, c => c.toUpperCase());
 }
 
+/* Roads between areas: OoTMM's region and overworld entrances, both ways (a region's way back is a region-exit). */
+const isRoad = (type: string) => /^(region|overworld)/.test(type);
+
 function entranceDir(type: string): EntranceEntry['dir'] {
+  if (isRoad(type)) return 'path';
   if (type.endsWith('-exit')) return 'out';
   if (/^(dungeon|indoors|grotto|grave)/.test(type)) return 'in';
   if (/^(region|overworld)/.test(type)) return 'path';
@@ -84,6 +96,7 @@ function describeSource(e: any) {
     case 'one-way-water-void': return { title: from, sub: 'Falling in the water' };
     case 'boss': return { title: `Boss door: ${e.debug?.[1] ?? to}`, sub: `in ${from}` };
   }
+  if (isRoad(e.type)) return { title: `Way to ${to}`, sub: `from ${from}` };
   if (e.type.endsWith('-exit')) return { title: `Exit of ${from}`, sub: `normally leads to ${to}` };
   const door = /^(dungeon|indoors|grotto|grave)/.test(e.type);
   return { title: `${door ? 'Entrance to' : 'Way to'} ${to}`, sub: `from ${from}` };
@@ -143,6 +156,8 @@ export function shuffledEntrances(state: any): EntranceData {
     return undefined;
   };
   const groupOf = (e: any) => {
+    /* A road lists under the area it leaves, the way back from a region included. */
+    if (isRoad(e.type)) return [ownRegion(e.from), regionOf(e.from)].find(validRegion) ?? 'NONE';
     const near = e.type.endsWith('-exit') ? [ownRegion(e.to), ownRegion(e.from), regionOf(e.to), regionOf(e.from)] : [ownRegion(e.from), ownRegion(e.to), regionOf(e.from), regionOf(e.to)];
     return near.find(validRegion) ?? 'NONE';
   };
@@ -185,6 +200,30 @@ export function shuffledEntrances(state: any): EntranceData {
       id, game: e.game, kind: entranceKind(e.type), ...describeSource(e), group, groupName: groupLabel(group),
       dungeon: DUNGEON_REGIONS.has(group), allowed: set, reusable: reusable.has(id), dir: entranceDir(e.type),
       dungeonOf: dungeonOf(e),
+    });
+  }
+  /* Every road gets its arriving area. Roads these settings leave alone are added as fixed rows, so each area shows
+     all its ways in and out. Only OoTMM's normal layout is read for them, and a road plando or the link between the
+     games changed is left out. */
+  const roadEnd = (e: any) => [ownRegion(e.to), regionOf(e.to)].find(validRegion) ?? 'NONE';
+  const inPools = new Set([...allowedBySource.keys(), ...destIndex.keys()]);
+  for (const x of list) {
+    const e = (ENTRANCES as any)[x.id];
+    if (!isRoad(e.type)) continue;
+    const to = roadEnd(e);
+    Object.assign(x, { toGroup: to, toGroupName: groupLabel(to), from: clean(e.from), into: clean(e.to) });
+  }
+  let empty = sets.findIndex(s => !s.length);
+  for (const [id, e] of Object.entries(ENTRANCES as Record<string, any>)) {
+    if (!isRoad(e.type) || inPools.has(id) || (e.reverse && allowedBySource.has(e.reverse))) continue;
+    if (shuffler.overrides?.[id] || !world.areas[e.from]?.exits?.[e.to]) continue;
+    const group = groupOf(e), to = roadEnd(e);
+    if (group === to || group === 'NONE' || to === 'NONE') continue;
+    if (empty < 0) { empty = sets.length; sets.push([]); }
+    list.push({
+      id, game: e.game, kind: entranceKind(e.type), ...describeSource(e), group, groupName: groupLabel(group),
+      dungeon: DUNGEON_REGIONS.has(group), allowed: empty, reusable: false, dir: 'path',
+      toGroup: to, toGroupName: groupLabel(to), from: clean(e.from), into: clean(e.to), fixed: true,
     });
   }
   const bosses: Record<string, { door: string; name: string }> = {};
