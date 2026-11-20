@@ -48,6 +48,10 @@ export type EntranceData = {
   /* Each dungeon map and compass, with the dungeons it covers. A compass asks for the boss and a map for the way in,
      and the player fills both in. */
   dungeonItems?: Record<string, { kind: 'map' | 'compass'; dungeons: string[] }>;
+  /* For game tracking: every entrance's two sides, as [area it leaves, area it reaches, region it leaves, region it
+     reaches]. Only OoTMM's normal layout, never a seed's connections. It tells which door the player just used when the
+     game only says what kind of door it was (a grotto, say), from the place the player was in. */
+  sides?: Record<string, [string, string, string, string]>;
   error?: string;
 };
 
@@ -258,7 +262,13 @@ export function shuffledEntrances(state: any): EntranceData {
     const d = dungeonOf(e);
     if (d && !bosses[d]) bosses[d] = { door: id, name: String(e.debug?.[1] ?? clean(e.to)) };
   }
-  return { list, dests, sets, rev, bosses, dungeonItems: dungeonItems() };
+  const sides: Record<string, [string, string, string, string]> = {};
+  for (const [id, e] of Object.entries(ENTRANCES as Record<string, any>)) {
+    if (!e.from || e.from === 'NONE') continue;
+    const reg = (a: string) => [ownRegion(a), regionOf(a)].find(validRegion) ?? 'NONE';
+    sides[id] = [e.from, e.to, reg(e.from), reg(e.to)];
+  }
+  return { list, dests, sets, rev, bosses, dungeonItems: dungeonItems(), sides };
 }
 
 /* OoTMM keeps one map and compass for a dungeon whose halves are separate dungeons in its world, such as Stone Tower

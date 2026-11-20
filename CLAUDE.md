@@ -7,7 +7,10 @@ a hosted page. This repository is the source of truth: start all work here, from
 
 - The checklist comes from OoTMM's own code. Never hand-copy check or settings rules.
 - The Entrances tab is filled in by the player. Never run a real shuffle, and never read destinations from a spoiler
-  log. The spoiler importer stops before the log's Entrances section.
+  log. The spoiler importer stops before the log's Entrances section. The one exception (owner, Nov 20 2026): with
+  App Settings > Game tracking > Entrances on (off by default), the Windows app logs a door the moment the game says the
+  player walked through it. Only that door and where it led; never any door not yet used, never the game's entrance
+  table, and never over a door the player already logged.
 - Reachable checks use only the items and entrances the player logged. An unlogged shuffled entrance stays closed.
   Hints and found items are typed or picked by the player, never read from a spoiler log.
 - In Edit mode, everything is editable. The Edit mode button is the only exception: keep `data-locked` on it.
@@ -46,8 +49,9 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `src/notes.ts`: the Notes tab's cleaning of formatted notes. `src/live.ts`: Coop live play merging. `src/firebase.ts`:
   Coop's server outside the hosted page, set by `firebase-config.json`, with rules in `firestore.rules`
 - `src/gamefeed.ts`: game tracking in the Windows app. It listens to the OoTMM Client's local feed
-  (`127.0.0.1:39278`), never the emulator's own pipe, so co-op keeps working. It drops entrance messages, so the
-  Entrances tab stays player-filled. Item names map to the checklist through OoTMM's own `gi()` (`giItems` in `logic.ts`)
+  (`127.0.0.1:39278`), never the emulator's own pipe, so co-op keeps working. Entrance messages are used only when the
+  player turns on entrance logging; `src/entrance-feed.ts` works out which door it was (grottos and a few doors share a
+  name, so it uses the place the player was in, and skips the door when more than one fits). Item names map to the checklist through OoTMM's own `gi()` (`giItems` in `logic.ts`)
 - `src/savefile.ts`: game tracking's catch-up. It reads which checks the game's save file (Project64-EM's `.fla`) says
   are collected, mirroring OoTMM's `Mark_GetOot`/`Mark_GetMm` in `mark.c`. Where things sit in the file is in
   `src/generated/save-layout.json`, made by `node tools/save-layout.mjs` from OoTMM's own C headers (needs
@@ -70,7 +74,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
     about an hour over 3 shards. `LOGIC_RETRY=<file of case names>` retries skipped cases with looser placement rules.
   - `node tools/ui-toggles-data.mjs`, then `tools/ui-toggles.cjs`, uses every settings control in the browser.
 - Random shop prices are expected to differ in the logic sweep: the app counts shops at their normal price.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`, `tools/ui-seg.cjs`, `tools/ui-roads.cjs`: browser tests. Run with
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`, `tools/ui-gamefeed-entrances.cjs`, `tools/ui-seg.cjs`, `tools/ui-roads.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 
