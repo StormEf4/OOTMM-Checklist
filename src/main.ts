@@ -788,6 +788,8 @@ const guessDir = (title: string): EntranceEntry['dir'] =>
   /^Exit of /.test(title) ? 'out' : /^Entrance to /.test(title) ? 'in' : /^Way to /.test(title) ? 'path' : 'other';
 /* Each area splits its entrances by direction, so going in and coming out never mix. */
 const ENTR_DIRS = [
+  { dir: 'enter', name: 'Ways in', hint: 'Roads into this area from next door', arrow: '⇢', cut: null, lead: '' },
+  { dir: 'exit', name: 'Ways out', hint: 'Roads from this area to the next', arrow: '⇠', cut: null, lead: '' },
   { dir: 'in', name: 'Going in', hint: 'Doors from here into houses, grottos and dungeons', arrow: '↘', cut: /^Entrance to /, lead: 'Into ' },
   { dir: 'out', name: 'Coming out', hint: 'Leaving those places, back out to here', arrow: '↖', cut: /^Exit of /, lead: 'Out of ' },
   { dir: 'path', name: 'Roads to other areas', hint: '', arrow: '→', cut: null, lead: '' },
@@ -938,7 +940,7 @@ function renderTabs() {
   document.querySelectorAll('[data-editmode] span').forEach(b => { b.textContent = editMode ? 'Edit mode on' : 'Edit mode'; });
   $('#editBar').hidden = !editMode;
   document.body.classList.toggle('editing', editMode);
-  const listTab = tab === 'list' || (tab === 'entrances' && entranceData().list.length > 0);
+  const listTab = tab === 'list' || (tab === 'entrances' && anyShuffled());
   $('#app').dataset.phone = listTab ? phoneView : 'pane';
 }
 
@@ -1698,27 +1700,56 @@ const destById = () => new Map(entranceData().dests.map(d => [d.id, d]));
 const destText = (d?: { title: string; sub: string }) => !d ? '' : d.sub ? `${d.title}, ${d.sub}` : d.title;
 const destLabel = (id: string, dests: ReturnType<typeof destById>) => id.startsWith('text:') ? id.slice(5) : destText(dests.get(id)) || "A place not on this seed's list";
 const visibleEntrances = () => entranceData().list.filter(e => editMode || !entranceHidden(e));
+/* Roads the settings leave alone still show under their areas, but there is nothing to log on them. */
+const anyShuffled = () => entranceData().list.some(e => !e.fixed);
+/* A road lists under one area, its home: the place it leads into (a way in) or out of (a way out), like Lon Lon Ranch
+   for both sides of the ranch gate. A road the player moved in Edit mode lists where they put it, as a way out. */
+const isRoad = (e: EntranceEntry) => e.dir === 'path' && !!e.toGroup;
+const roadMoved = (e: EntranceEntry) => !!saved.edits.entrances[e.id]?.area;
+const roadHome = (e: EntranceEntry) => roadMoved(e) ? e.group : e.home ?? e.group;
+const roadRole = (e: EntranceEntry): 'enter' | 'exit' => !roadMoved(e) && e.home === e.toGroup ? 'enter' : 'exit';
+const inGroup = (e: EntranceEntry, gid: string) => isRoad(e) ? roadHome(e) === gid : entrGroup(e) === gid;
+/* The row a road shows under one of its areas. A name the player gave it in Edit mode is kept on both sides. */
+function roadRow(e: EntranceEntry, role: 'enter' | 'exit'): EntranceEntry {
+  const named = saved.edits.entrances[e.id]?.name;
+  const here = role === 'exit' ? areaName(e.group, e.groupName) : areaName(e.toGroup!, e.toGroupName ?? '');
+  const there = role === 'exit' ? areaName(e.toGroup!, e.toGroupName ?? '') : areaName(e.group, e.groupName);
+  const differs = (spot?: string, area?: string) => !!spot && spot.toLowerCase() !== area?.toLowerCase();
+  /* Two roads between the same areas, like the Lost Woods' two ways to Kokiri Forest, tell apart by where they start,
+     or for a way in, where they arrive. */
+  const spot = differs(e.from, role === 'exit' ? here : there) ? `from ${e.from}`
+    : role === 'enter' && differs(e.into, here) ? `into ${e.into}` : '';
+  return { ...e, dir: role, title: named ?? `${role === 'exit' ? 'To' : 'From'} ${there}`, sub: named ? e.sub : spot };
+}
 
 function entranceStats() {
   const map = new Map<string, { id: string; name: string; game: string; dungeon: boolean; total: number; found: number }>();
   let found = 0;
   const data = entranceData();
-  for (const e of data.list.filter(x => !entranceHidden(x))) {
-    const gid = entrGroup(e);
-    const r = map.get(gid) ?? { id: gid, name: entrPin(gid)?.name ?? areaName(e.group, e.groupName), game: entrPin(gid)?.game ?? e.game, dungeon: e.dungeon, total: 0, found: 0 };
+  let total = 0;
+  const add = (gid: string, name: string, e: EntranceEntry, dungeon: boolean) => {
+    const r = map.get(gid) ?? { id: gid, name: entrPin(gid)?.name ?? name, game: entrPin(gid)?.game ?? e.game, dungeon, total: 0, found: 0 };
     map.set(gid, r);
+    if (e.fixed) return;
     r.total++;
-    if (seed.entrances[e.id]) { r.found++; found++; }
+    if (seed.entrances[e.id]) r.found++;
+  };
+  for (const e of data.list.filter(x => !entranceHidden(x))) {
+    if (isRoad(e)) add(roadHome(e), areaName(roadHome(e), roadRole(e) === 'enter' ? e.toGroupName ?? '' : e.groupName), e, roadMoved(e) ? e.dungeon : !!e.homeDungeon);
+    else add(entrGroup(e), areaName(e.group, e.groupName), e, e.dungeon);
+    if (e.fixed) continue;
+    total++;
+    if (seed.entrances[e.id]) found++;
   }
   const groups = [...map.values()].sort((a, b) => regionRank(a.id, a.game, a.dungeon) - regionRank(b.id, b.game, b.dungeon));
-  return { groups, found, total: groups.reduce((n, g) => n + g.total, 0) };
+  return { groups, found, total };
 }
 
 function renderEntranceRail() {
   const { groups, found, total } = entranceStats();
   const row = (id: string, name: string, done: number, all: number, cur: boolean) =>
     `<button class="reg keep${all && done === all ? ' complete' : ''}" data-entr-region="${esc(id)}" aria-current="${cur}">
-      <span class="n">${esc(name)}</span><span class="c">${done}/${all}</span>${id && !entrPin(id) ? pen('area:' + id) : ''}
+      <span class="n">${esc(name)}</span><span class="c">${all ? `${done}/${all}` : ''}</span>${id && !entrPin(id) ? pen('area:' + id) : ''}
       <span class="bar"><i style="width:${all ? (done / all) * 100 : 0}%"></i></span></button>`;
   const pinned = ENTR_PINNED.map(p => groups.find(g => g.id === p.id)).filter(g => !!g);
   groups.splice(0, groups.length, ...groups.filter(g => !entrPin(g.id)));
@@ -1783,19 +1814,20 @@ function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?:
   const shown = cut ? e.title.replace(cut, '') : e.title;
   const dest = to ? destLabel(to, dests) : '';
   const hid = !!saved.edits.entrances[e.id]?.hidden;
-  return `<div class="row entr ${e.game}${to ? ' done' : ''}${hid ? ' ghost' : ''}${isLater(e.id) ? ' is-later' : ''}">
+  const tag = hid ? '<span class="tag" data-text>Hidden</span>' : e.fixed ? '<span class="tag fixed-tag" data-text>Not shuffled</span>' : to ? '' : '<span class="ty" data-text>Add</span>';
+  return `<div class="row entr ${e.game}${to ? ' done' : ''}${hid ? ' ghost' : ''}${e.fixed ? ' fixed' : ''}${isLater(e.id) ? ' is-later' : ''}">
     <button class="entr-btn" data-entr="${esc(e.id)}" data-edit="entr:${esc(e.id)}" aria-label="${esc(e.title)}: ${to ? `leads to ${esc(dest)}` : 'not logged yet'}">
       <span class="seal">${ICON.tick}</span>
       <span class="nm"><span class="t">${esc(shown)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}${boss ? `<span class="s boss-note">${esc(boss)}</span>` : ''}
         ${to ? `<span class="leads"${to.startsWith('text:') ? '' : ` data-edit="dest:${esc(to)}"`}>Leads to ${esc(dest)}</span>` : ''}${noteHtml(e.id)}</span>
-      ${hid ? '<span class="tag" data-text>Hidden</span>' : to ? '' : '<span class="ty" data-text>Add</span>'}
+      ${tag}
     </button>${pinBtn('entrances', e.id, e.title)}${laterBtn(e.id, e.title)}</div>`;
 }
 
 function renderEntrances() {
   const pane = $('#pane');
   const data = entranceData();
-  if (!data.list.length) {
+  if (!anyShuffled()) {
     pane.innerHTML = `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Entrances</h2><button class="btn alt edit-only keep" data-add-entrance="">Add an entrance</button></div></div>
       <div class="scroll"><div class="empty">${computing ? '<h3>Reading your settings</h3>' : data.error
         ? `<h3>OoTMM can't build these entrance settings</h3>${esc(data.error)}<div class="btns" style="margin-top:12px"><button class="btn" data-open-entr-settings>Open entrance settings</button></div>`
@@ -1812,19 +1844,20 @@ function renderEntrances() {
   const words = entrQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const kinds = new Map<string, number>();
   const vis = visibleEntrances();
-  for (const e of vis) if (words.length || !entrRegion || (entrRegion === LATER ? isLater(e.id) : entrGroup(e) === entrRegion)) kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + (seed.entrances[e.id] ? 0 : 1));
+  for (const e of vis) if (words.length || !entrRegion || (entrRegion === LATER ? isLater(e.id) : inGroup(e, entrRegion))) kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + (seed.entrances[e.id] || e.fixed ? 0 : 1));
   const chips = [...kinds].sort((a, b) => b[1] - a[1]).map(([k, n]) =>
     `<button class="chip" data-kind="${esc(k)}" aria-pressed="${entrKinds.has(k)}">${esc(k)} ${n}</button>`).join('');
 
   const list = vis.filter(e => {
     if (entrGame !== 'all' && e.game !== entrGame) return false;
-    if (entrDir !== 'all' && e.dir !== entrDir) return false;
+    if (entrDir !== 'all' && (isRoad(e) ? { in: 'enter', out: 'exit' }[entrDir] !== roadRole(e) : e.dir !== entrDir)) return false;
     if (entrKinds.size && !entrKinds.has(e.kind)) return false;
     if (saved.ui.hideFound && seed.entrances[e.id]) return false;
-    if (entrRegion && !words.length && (entrRegion === LATER ? !isLater(e.id) : entrGroup(e) !== entrRegion)) return false;
+    if (entrRegion && !words.length && (entrRegion === LATER ? !isLater(e.id) : !inGroup(e, entrRegion))) return false;
     if (words.length) {
       const to = seed.entrances[e.id];
-      const hay = `${e.title} ${e.sub} ${areaName(e.group, e.groupName)} ${to ? destLabel(to, dests) : ''} ${seed.notes[e.id] ?? ''}`.toLowerCase();
+      const road = isRoad(e) ? `${roadRow(e, roadRole(e)).title} ${areaName(e.toGroup!, e.toGroupName ?? '')}` : '';
+      const hay = `${e.title} ${e.sub} ${road} ${areaName(e.group, e.groupName)} ${to ? destLabel(to, dests) : ''} ${seed.notes[e.id] ?? ''}`.toLowerCase();
       if (!words.every(w => hay.includes(w))) return false;
     }
     return true;
@@ -1832,12 +1865,18 @@ function renderEntrances() {
   const pinIds = pinsOn('entrances') ? pinList('entrances') : [];
   const pinRows = list.filter(e => pinIds.includes(e.id)).sort((a, b) => pinIds.indexOf(a.id) - pinIds.indexOf(b.id));
   const byGroup = new Map<string, EntranceEntry[]>();
-  for (const e of list) { if (pinIds.includes(e.id)) continue; const g = entrGroup(e); (byGroup.get(g) ?? byGroup.set(g, []).get(g)!).push(e); }
-  const rank = (e: EntranceEntry) => { const i = ENTR_PINNED.findIndex(p => p.id === entrGroup(e)); return i >= 0 ? i - 100 : regionRank(e.group, e.game, e.dungeon); };
-  const body = [...byGroup.values()].sort((a, b) => rank(a[0]) - rank(b[0])).map(rows => {
-    const gid = entrGroup(rows[0]);
+  const put = (g: string, e: EntranceEntry) => { (byGroup.get(g) ?? byGroup.set(g, []).get(g)!).push(e); };
+  for (const e of list) {
+    if (pinIds.includes(e.id)) continue;
+    if (isRoad(e)) put(roadHome(e), roadRow(e, roadRole(e)));
+    else put(entrGroup(e), e);
+  }
+  /* A section can hold only roads arriving from elsewhere, so its name and place come from its own key. */
+  const nameOf = (gid: string, rows: EntranceEntry[]) => { const r = rows.find(x => x.dir !== 'enter'); return r ? r.groupName : rows[0].toGroupName ?? gid; };
+  const rank = ([gid, rows]: [string, EntranceEntry[]]) => { const i = ENTR_PINNED.findIndex(p => p.id === gid); const r = rows.find(x => !x.toGroup) ?? rows[0]; return i >= 0 ? i - 100 : regionRank(gid, r.game, r.toGroup ? !!r.homeDungeon : r.dungeon); };
+  const body = [...byGroup].sort((a, b) => rank(a) - rank(b)).map(([gid, rows]) => {
     const pin = entrPin(gid);
-    const all = vis.filter(e => entrGroup(e) === gid && !entranceHidden(e));
+    const all = vis.filter(e => inGroup(e, gid) && !entranceHidden(e) && !e.fixed);
     const { key, shut } = fold('e:' + gid, entrRegion);
     if (pin?.split) return `<section class="pinned-sec dungeons-sec ${pin.game ?? ''}"><div class="section-head">
       <button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide this section"></button>
@@ -1849,7 +1888,7 @@ function renderEntrances() {
       ${shut ? '' : `<div class="rows">${[...rows].sort((a, b) => (pin.order?.(a) ?? 0) - (pin.order?.(b) ?? 0)).map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
     return `<section><div class="section-head">
       <button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
-      <h2 data-edit="area:${esc(gid)}">${esc(areaName(gid, rows[0].groupName))}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span>
+      <h2 data-edit="area:${esc(gid)}">${esc(areaName(gid, nameOf(gid, rows)))}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span>
       <span class="head-acts"><button class="linkish edit-only keep" data-add-entrance="${esc(gid)}">Add an entrance</button></span></div>
       ${shut ? '' : dirGroups(sortIn('e:' + gid, rows, e => e.id), dests)}</section>`;
   }).join('');
@@ -3571,7 +3610,10 @@ function events() {
       $('#entrScroll')?.scrollTo(0, 0);
       return;
     }
-    if (d.entr) { openPicker(d.entr); return; }
+    if (d.entr) {
+      if (entranceData().list.find(x => x.id === d.entr)?.fixed) { toast("This road isn't shuffled with these settings, so it always leads to its usual place."); return; }
+      openPicker(d.entr); return;
+    }
     if (d.pick) { pickDest(d.pick); return; }
     if (d.later !== undefined) {
       snap();

@@ -190,12 +190,14 @@ const shot = n => `.cache/shots/${n}.png`;
   const listed = await pc.$$eval('.entr-btn', e => e.length);
   const kf = await pc.$$eval('#entrScroll section', ss => { const k = ss.find(s => s.querySelector('h2').textContent === 'Kokiri Forest');
     return k && [...k.querySelectorAll('.dir-part')].map(d => [d.querySelector('.dir-name').textContent, [...d.querySelectorAll('.t')].map(t => t.textContent)]); });
-  ok('an area splits into going in, then coming out', kf && kf[0][0] === 'Going in' && kf[1][0] === 'Coming out', JSON.stringify(kf).slice(0, 200));
+  ok('an area splits into its own ways in and out, then going in, then coming out', kf && kf.map(k => k[0]).join() === 'Ways in,Ways out,Going in,Coming out', JSON.stringify(kf).slice(0, 200));
   ok('rows under a direction just name the place, and dungeons moved out', kf && !kf.flatMap(k => k[1]).includes('Deku Tree') && !kf.flatMap(k => k[1]).some(t => /^(Entrance to|Exit of) /.test(t)));
   await pc.click('[data-entr-dir=in]'); await pc.waitForTimeout(300);
-  ok('the Going in filter shows only ways in', (await pc.$$eval('.dir-name', n => [...new Set(n.map(x => x.textContent))])).join() === 'Going in');
+  { const seen = (await pc.$$eval('.dir-name', n => [...new Set(n.map(x => x.textContent))].sort())).join();
+  ok('the Going in filter shows only ways in', seen === 'Going in,Ways in', seen); }
   await pc.click('[data-entr-dir=out]'); await pc.waitForTimeout(300);
-  ok('the Coming out filter shows only ways out', (await pc.$$eval('.dir-name', n => [...new Set(n.map(x => x.textContent))])).join() === 'Coming out');
+  { const seen = (await pc.$$eval('.dir-name', n => [...new Set(n.map(x => x.textContent))].sort())).join();
+  ok('the Coming out filter shows only ways out', seen === 'Coming out,Ways out', seen); }
   await pc.click('[data-entr-dir=all]'); await pc.waitForTimeout(300);
   ok('settings fill the list', listed > 100, `${listed} entrances`);
   ok('every entrance starts unlogged', (await pc.$$eval('.entr.done', e => e.length)) === 0);
@@ -244,7 +246,8 @@ const shot = n => `.cache/shots/${n}.png`;
   await pc.setInputFiles('#importFile', '.cache/spoiler-er.txt'); await pc.waitForTimeout(1500);
   await pc.click('.rail .tab[data-tab=entrances]'); await pc.waitForSelector('.entr-btn');
   const after = await pc.evaluate(() => { const a = JSON.parse(localStorage.getItem('ootmm-checklist-v1')); return a.seeds.find(s => s.id === a.current); });
-  const n = await pc.$$eval('.entr-btn', e => e.length);
+  /* Roads show under both of their areas, and unshuffled ones show too, so count what the tab says can be logged. */
+  const n = Number((await pc.textContent('#pane .pill')).match(/of (\d+) logged/)?.[1]);
   ok('spoiler import sets the list but logs nothing', n === 288 && Object.keys(after.entrances).length === 0 && (await pc.$$eval('.leads', e => e.length)) === 0, `${n} listed, ${Object.keys(after.entrances).length} logged`);
 
   // phone: transfer + flow

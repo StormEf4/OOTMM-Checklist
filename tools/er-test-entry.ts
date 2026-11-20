@@ -41,7 +41,8 @@ for (const [name, s] of cases) {
   enableFastMode();
   const { entrances: e } = await compute(opts.settings);
   const links = new Set(['OOT_SHOP_MASKS', 'MM_CLOCK_TOWER_FROM_CLOCK_TOWN']);
-  const ids = new Map(e.list.map(x => [x.id, x]));
+  /* Roads the settings leave alone are listed as fixed rows with nothing to log. */
+  const ids = new Map(e.list.filter(x => !x.fixed).map(x => [x.id, x]));
   const notListed = [...real.keys()].filter(k => !ids.has(k) && !links.has(k));
   const notShuffled = [...ids.keys()].filter(k => !real.has(k));
   const badDest: string[] = [], badBack: string[] = [];
