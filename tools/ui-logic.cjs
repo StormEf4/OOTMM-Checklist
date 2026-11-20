@@ -82,20 +82,39 @@ const shot = '.cache/shots/';
   await p.screenshot({ path: shot + 'pins.png' });
   await p.click('.rail .tab[data-tab=list]'); await wait(300);
   /* Map */
-  await p.click('[data-checks-view=map]'); await p.waitForSelector('.map-grid .tile');
-  ok('map shows overworld tiles', (await p.$$('.map-grid .tile')).length > 40);
+  await p.click('[data-checks-view=map]'); await p.waitForSelector('.world .pin');
+  ok('map draws Hyrule and Termina', (await p.$$('.world-art')).length === 2 && (await p.$$('.world-art .rg')).length > 40);
+  ok('map names its areas', (await p.$$('.world .pin')).length > 50);
   ok('map shows dungeons', (await p.$$('.board .tile-row .tile')).length > 8);
-  ok('map tiles show reachable areas', (await p.$$('.tile.open')).length > 0);
+  ok('map shows reachable areas', (await p.$$('.pin.open')).length > 0 && (await p.$$('.rg.open')).length > 0);
+  ok('places OoTMM counts as dungeons sit on the map', !!(await p.$('.pin[data-region="MM_IKANA_CASTLE"]')) && !(await p.$('.tile[data-region="MM_IKANA_CASTLE"]')));
   await p.screenshot({ path: shot + 'map.png' });
-  await p.click('.tile[data-region="OOT_KAKARIKO"]'); await wait();
-  ok('tapping a tile opens that area', (await p.textContent('.section-head h2')).includes('Kakariko'));
+  await p.click('.pin[data-region="OOT_KAKARIKO"]'); await wait();
+  ok('tapping a name on the map opens that area', (await p.textContent('.section-head h2')).includes('Kakariko'));
+  await p.click('[data-checks-view=map]'); await p.waitForSelector('.world .pin');
+  { const sh = p.locator('.rg[data-region="MM_SOUTHERN_SWAMP"] > path:first-child'); const box = await sh.boundingBox(); await sh.click({ position: { x: box.width * .82, y: box.height * .35 } }); }
+  await wait();
+  ok('tapping an area on the map opens it', (await p.textContent('.section-head h2')).includes('Southern Swamp'));
+  await p.click('[data-checks-view=map]'); await p.waitForSelector('.world .pin');
+  const w1 = (await p.$eval('.world', e => e.getBoundingClientRect().width));
+  await p.click('[data-map-zoom="1"]'); await wait();
+  const w2 = (await p.$eval('.world', e => e.getBoundingClientRect().width));
+  ok('zoom makes the map bigger', w2 > w1 * 1.3, `${Math.round(w1)} then ${Math.round(w2)}`);
+  await p.click('[data-map-zoom="-1"]'); await wait();
 
   /* Edit mode on the new screens */
-  await p.click('[data-checks-view=map]'); await p.waitForSelector('.map-grid .tile');
+  await p.click('[data-checks-view=map]'); await p.waitForSelector('.world .pin');
   await p.click('.rail [data-editmode]'); await wait();
-  await p.click('.tile[data-region="OOT_KAKARIKO"] .tn'); await p.waitForSelector('#edSpot');
-  await p.fill('#edSpot', '1, 6'); await p.click('.layer:last-child [data-act=save]'); await wait();
-  ok('edit mode moves an area on the map', (await p.getAttribute('.tile[data-region="OOT_KAKARIKO"]', 'style')).includes('grid-row:6'));
+  await p.click('.pin[data-region="OOT_KAKARIKO"] .tc'); await p.waitForSelector('#edSpot');
+  await p.fill('#edSpot', '10, 90'); await p.click('.layer:last-child [data-act=save]'); await wait();
+  ok('edit mode moves an area on the map', (await p.getAttribute('.pin[data-region="OOT_KAKARIKO"]', 'style')).includes('left:10.00%;top:90.00%'));
+  { const sh = p.locator('.rg[data-region="OOT_LAKE_HYLIA"] > path:first-child'); const box = await sh.boundingBox(); await sh.click({ position: { x: box.width * .3, y: box.height * .3 } }); }
+  await p.waitForSelector('#edSpot');
+  await p.fill('#edSpot', ''); await p.click('.layer:last-child [data-act=save]'); await wait();
+  ok('edit mode takes an area off the map', !(await p.$('.pin[data-region="OOT_LAKE_HYLIA"]')) && !!(await p.$('.tile[data-region="OOT_LAKE_HYLIA"]')));
+  await p.click('.tile[data-region="OOT_LAKE_HYLIA"] .tc'); await p.waitForSelector('#edSpot');
+  await p.click('.layer:last-child [data-act=reset]'); await wait();
+  ok('putting it back returns it to the map', !!(await p.$('.pin[data-region="OOT_LAKE_HYLIA"]')));
   await p.click('[data-checks-view=list]'); await wait();
   ok('view switch works in edit mode', !!(await p.$('#listScroll')));
   await p.click('.rail .tab[data-tab=items]'); await p.waitForSelector('.item-btn');
@@ -134,6 +153,19 @@ const shot = '.cache/shots/';
   await o.reload(); await o.waitForSelector('.row');
   await o.click('.rail .tab[data-tab=items]'); await o.waitForSelector('.item-btn', { timeout: 60000 });
   ok('older saves open the new tabs', true);
+  /* Saves from when the Map view was a grid of boxes */
+  await o.evaluate(k => {
+    const s = JSON.parse(localStorage.getItem(k));
+    s.edits.areas = { ...s.edits.areas, OOT_KAKARIKO: { map: [2, 3] }, OOT_GRAVEYARD: { map: [-1, -1], name: 'Old graves' } };
+    localStorage.setItem(k, JSON.stringify(s));
+  }, KEY);
+  await o.reload(); await o.waitForSelector('.row');
+  await o.click('[data-checks-view=map]'); await o.waitForSelector('.world .pin');
+  ok('a grid spot from an older save falls back to the drawn spot', (await o.getAttribute('.pin[data-region="OOT_KAKARIKO"]', 'style')).startsWith('left:80.60%'));
+  ok('an area an older save took off the map stays off it', !(await o.$('.pin[data-region="OOT_GRAVEYARD"]')) && (await o.textContent('.tile[data-region="OOT_GRAVEYARD"]')).includes('Old graves'));
+  { const s = await o.evaluate(k => JSON.parse(localStorage.getItem(k)), KEY); await o.click('[data-checks-view=list]'); await o.waitForTimeout(400);
+    const s2 = await o.evaluate(k => JSON.parse(localStorage.getItem(k)), KEY);
+    ok('older map spots are tidied on load', !s2.edits.areas.OOT_KAKARIKO?.map && s2.edits.areas.OOT_GRAVEYARD.spot?.[0] === -1); }
 
   /* Save pins off */
   await p.click('.rail .tab[data-tab=settings]'); await p.click('[data-setview=pins]'); await p.waitForSelector('[data-save-pins]');
@@ -180,7 +212,8 @@ const shot = '.cache/shots/';
   await m.click('.bottom .tab[data-tab=items]'); await m.waitForSelector('.item-btn', { timeout: 60000 });
   ok('no sideways scroll on phone items', await m.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await m.screenshot({ path: shot + 'phone-items.png' });
-  await m.click('.bottom .tab[data-tab=list]'); await m.click('.reg >> nth=0'); await m.click('[data-checks-view=map]'); await m.waitForSelector('.map-grid .tile');
+  await m.click('.bottom .tab[data-tab=list]'); await m.click('.reg >> nth=0'); await m.click('[data-checks-view=map]'); await m.waitForSelector('.world .pin');
+  ok('phone map starts in the middle and scrolls sideways inside its frame', await m.evaluate(() => { const w = document.querySelector('.world-wrap'); return w.scrollWidth > w.clientWidth && w.scrollLeft > 0; }));
   ok('no sideways scroll on phone map', await m.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await m.screenshot({ path: shot + 'phone-map.png' });
 

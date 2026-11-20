@@ -13,7 +13,8 @@ import { checklistNormalDungeons } from '@ootmm/logic';
 import { PAGES, alt, slotView } from './cube';
 import { menuIcon as drawnIcon } from './menu-icons';
 import { customIcons, iconFolderAvailable, loadIcons, openIconFolder, putIcon, readIconFile, removeAllIcons, removeIcon } from './icon-store';
-import { MAP_SPOTS } from './mapspots';
+import { WORLD, MAP_W, MAP_H } from './mapspots';
+import { drawWorld } from './worldmap';
 import { NAME_STYLES, playerName, type NameStyle } from './names';
 import { connectFirebase, firebaseReady, type LiveDb } from './firebase';
 import { PAGE_SIZES, ZOOMS, cleanNotes, textToNotes, type NotesView } from './notes';
@@ -97,7 +98,11 @@ type Seed = {
   /** When each shared key last changed, for merging live changes. */
   liveClock?: Record<string, number>;
 };
-type ItemEdit = { name?: string; sub?: string; area?: string; game?: 'oot' | 'mm'; hidden?: boolean; order?: number; map?: [number, number] };
+type ItemEdit = { name?: string; sub?: string; area?: string; game?: 'oot' | 'mm'; hidden?: boolean; order?: number;
+  /** Where the area's name sits on the Map view, in percent across and down; [-1, -1] takes it off the map. */
+  spot?: [number, number];
+  /** Older saves: a spot on the old box grid. Only [-1, -1] (off the map) still means anything. */
+  map?: [number, number] };
 type Edits = {
   text: Record<string, string>;
   hide: Record<string, 'self' | 'group'>;
@@ -122,7 +127,7 @@ type Saved = {
     gameTrack?: boolean; gameItems?: boolean;
     /** The game's save file on this computer (Project64-EM's .fla), for game tracking's catch-up. */
     saveFile?: string;
-    logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; haveOnly?: boolean; hideWritten?: boolean;
+    logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; mapZoom?: number; haveOnly?: boolean; hideWritten?: boolean;
     /** Which check names show. Custom puts the player's renames on top of nameBase. */
     names?: NameStyle; nameBase?: 'original' | 'player';
     notes?: NotesView;
@@ -233,6 +238,12 @@ function load(raw?: string | null): Saved {
         for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.later ??= []; s.notes ??= {}; s.pad ??= ''; s.doc ??= textToNotes(s.pad); s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
         const edits = { ...blankEdits(), ...v.edits };
         edits.tabs = edits.tabs.filter(t => t !== 'hints');
+        /* The Map view was a grid of boxes before it was drawn. Only "off the map" carries over to the drawn maps. */
+        for (const o of Object.values(edits.areas ?? {})) {
+          if (!o?.map) continue;
+          if (o.map[0] < 0 && !o.spot) o.spot = [-1, -1];
+          delete o.map;
+        }
         return { ...v, custom: v.custom ?? [], edits, ui };
       }
     } catch { /* falls through to a fresh start */ }
@@ -1236,41 +1247,57 @@ function logicBanner() {
 
 /* ---------- Map view ---------- */
 
-/** Where an area sits on the map. The player can move it in Edit mode; -1 takes it off the map. */
+/** The drawn map an area belongs to, if either map has it. */
+const worldArea = (id: string) => WORLD.oot.areas[id] ?? WORLD.mm.areas[id];
+
+/** Where an area's name sits on the map, on the 1000 x 700 board. The player can move it in Edit mode or take it off. */
 function mapSpot(id: string): [number, number] | undefined {
-  const at = saved.edits.areas[id]?.map ?? MAP_SPOTS[id];
-  return at && at[0] >= 0 ? [at[0], at[1]] : undefined;
+  const o = saved.edits.areas[id];
+  if (o?.spot) return o.spot[0] < 0 ? undefined : [o.spot[0] / 100 * MAP_W, o.spot[1] / 100 * MAP_H];
+  if (o?.map && o.map[0] < 0) return undefined;
+  return worldArea(id)?.at;
 }
+const ZOOMS = [1, 1.5, 2, 3];
+/** Names near a map's side edge lean inwards so they stay on the map. */
+const pinAnchor = (x: number) => x < .12 ? x / .12 * 50 : x > .88 ? 50 + (x - .88) / .12 * 50 : 50;
 
 function renderMap() {
   const pane = $('#pane');
-  const scrollTop = $('#mapScroll', pane)?.scrollTop ?? 0;
+  const scroller = $('#mapScroll', pane);
+  const scrollTop = scroller?.scrollTop ?? 0;
+  const sideways = [...pane.querySelectorAll<HTMLElement>('.world-wrap')].map(w => [w.scrollLeft, w.scrollTop]);
   const stats = regionStats();
   const hinted = areaHints();
-  const spot = mapSpot;
-  const tile = (r: typeof stats[number], style = '') => {
-    const pct = r.total ? r.done / r.total : 0;
-    const state = r.skipped ? ' skipped' : r.total && r.done === r.total ? ' complete' : r.reach ? ' open' : '';
-    return `<button class="tile ${r.game}${state}${saved.edits.areas[r.id]?.hidden ? ' ghost' : ''}" data-region="${esc(r.id)}" data-edit="area:${esc(r.id)}"${style ? ` style="${style}"` : ''}>
+  const zoom = ZOOMS.includes(saved.ui.mapZoom ?? 1) ? saved.ui.mapZoom ?? 1 : 1;
+  const state = (r: typeof stats[number]) => r.skipped ? ' skipped' : r.total && r.done === r.total ? ' complete' : r.reach ? ' open' : '';
+  const ghost = (id: string) => saved.edits.areas[id]?.hidden ? ' ghost' : '';
+  const tile = (r: typeof stats[number]) =>
+    `<button class="tile ${r.game}${state(r)}${ghost(r.id)}" data-region="${esc(r.id)}" data-edit="area:${esc(r.id)}">
       <span class="tn">${esc(r.name)}</span>
       <span class="tc">${r.skipped ? '<span>Skipped</span>' : `${r.done}/${r.total}`}${r.reach && !r.skipped ? ` <i class="lg">${r.reach}</i>` : ''}</span>${areaTags(hinted.get(r.id))}
-      <span class="bar"><i style="width:${pct * 100}%"></i></span></button>`;
+      <span class="bar"><i style="width:${(r.total ? r.done / r.total : 0) * 100}%"></i></span></button>`;
+  const pin = (r: typeof stats[number], at: [number, number]) => {
+    const drawn = !!worldArea(r.id)?.pts && !saved.edits.areas[r.id]?.spot;
+    const tick = r.total && r.done === r.total && !r.skipped ? '✓ ' : '';
+    return `<button class="pin ${r.game}${state(r)}${ghost(r.id)}${drawn ? '' : ' dot'}" data-region="${esc(r.id)}" data-edit="area:${esc(r.id)}" style="left:${(at[0] / MAP_W * 100).toFixed(2)}%;top:${(at[1] / MAP_H * 100).toFixed(2)}%;--px:${pinAnchor(at[0] / MAP_W).toFixed(1)}%">
+      <span class="tn">${esc(r.name)}</span><span class="tc">${r.skipped ? 'Skipped' : `${tick}${r.done}/${r.total}`}${r.reach && !r.skipped ? ` <i class="lg">${r.reach}</i>` : ''}</span>${areaTags(hinted.get(r.id))}</button>`;
   };
-  const board = (title: string, cls: string, game: string) => {
-    const over = stats.filter(r => r.game === game && !r.dungeon && !['NONE', 'POCKET'].includes(r.id));
-    const placed = over.filter(r => spot(r.id));
-    const loose = over.filter(r => !spot(r.id));
-    const dungeons = stats.filter(r => r.game === game && r.dungeon);
+  const board = (title: string, game: 'oot' | 'mm') => {
+    /* Places drawn on the map go on it even when OoTMM counts them as dungeons (Ikana Castle, the spider houses...). */
+    const onMap = (r: typeof stats[number]) => !r.dungeon || !!WORLD[game].areas[r.id];
+    const over = stats.filter(r => r.game === game && onMap(r) && !['NONE', 'POCKET'].includes(r.id));
+    const placed = over.filter(r => mapSpot(r.id));
+    const loose = over.filter(r => !mapSpot(r.id));
+    const dungeons = stats.filter(r => r.game === game && !onMap(r));
     if (!over.length && !dungeons.length) return '';
-    const width = (id: string) => saved.edits.areas[id]?.map ? 1 : MAP_SPOTS[id]?.[2] ?? 1;
-    const cols = Math.max(4, ...placed.map(r => spot(r.id)![0] + width(r.id)));
-    const grid = placed.map(r => {
-      const [x, y] = spot(r.id)!;
-      return tile(r, `grid-column:${x + 1} / span ${width(r.id)};grid-row:${y + 1}`);
-    }).join('');
-    return `<section class="board ${cls}"><div class="section-head"><h2>${title}</h2></div>
-      ${placed.length ? `<div class="map-grid" style="--cols:${cols}">${grid}</div>` : ''}
-      ${loose.length ? `<div class="group">Not placed on the map</div><div class="tile-row">${loose.map(r => tile(r)).join('')}</div>` : ''}
+    const byId = new Map(over.map(r => [r.id, r]));
+    const art = drawWorld(game, id => {
+      const r = byId.get(id);
+      return r ? { cls: `${state(r)}${ghost(id)}`.trim(), label: r.name } : undefined;
+    }, id => ` data-edit="area:${esc(id)}"`);
+    return `<section class="board ${game}"><div class="section-head"><h2>${title}</h2></div>
+      <div class="world-wrap"><div class="world" style="--zoom:${zoom}">${art}${placed.map(r => pin(r, mapSpot(r.id)!)).join('')}</div></div>
+      ${loose.length ? `<div class="group">Not on the map</div><div class="tile-row">${loose.map(r => tile(r)).join('')}</div>` : ''}
       ${dungeons.length ? `<div class="group">Dungeons</div><div class="tile-row">${dungeons.map(r => tile(r)).join('')}</div>` : ''}</section>`;
   };
   const other = stats.filter(r => ['NONE', 'POCKET'].includes(r.id) || (r.game !== 'oot' && r.game !== 'mm'));
@@ -1281,14 +1308,20 @@ function renderMap() {
       ${viewSeg()}
       <span class="pill"><b>${(t.all - t.done).toLocaleString()}</b> left</span>
       ${logicPill()}
+      <div class="seg map-zoom"><button class="keep" data-map-zoom="-1" aria-label="Zoom out"${zoom === ZOOMS[0] ? ' disabled' : ''}>−</button><button class="keep" data-map-zoom="1" aria-label="Zoom in"${zoom === ZOOMS[ZOOMS.length - 1] ? ' disabled' : ''}>+</button></div>
     </div></div>
     <div class="scroll" id="mapScroll">${logicBanner()}
-      <p class="fine map-help">Tap an area to see its checks. Gold areas have checks you can get now. In Edit mode, tap an area to move it on the map.</p>
-      ${board('Hyrule', 'oot', 'oot')}${board('Termina', 'mm', 'mm')}
+      <p class="fine map-help">Tap an area on the map to see its checks. Use + and − to zoom. In Edit mode, tap an area to rename it or move its name on the map.</p>
+      ${board('Hyrule', 'oot')}${board('Termina', 'mm')}
       ${other.length ? `<section class="board"><div class="section-head"><h2>Other</h2></div><div class="tile-row">${other.map(r => tile(r)).join('')}</div></section>` : ''}
       ${!stats.length ? `<div class="empty"><h3>${computing ? 'Reading your settings' : 'No checks yet'}</h3></div>` : ''}
     </div>`;
   $('#mapScroll').scrollTop = scrollTop;
+  /* On a phone the map is wider than the screen: start in the middle, or where the player left it. */
+  pane.querySelectorAll<HTMLElement>('.world-wrap').forEach((w, i) => {
+    if (sideways[i]) [w.scrollLeft, w.scrollTop] = sideways[i];
+    else w.scrollLeft = (w.scrollWidth - w.clientWidth) / 2;
+  });
 }
 
 /* ---------- Items page ----------
@@ -2684,7 +2717,7 @@ function editArea(id: string) {
   const onMap = !me?.dungeon && !['NONE', 'POCKET'].includes(id);
   openSheet('Edit this area', '', `
     ${field('edName', 'Name', fallback)}
-    ${onMap ? field('edSpot', 'Spot on the map: column, row (counting from 1). Leave empty to keep it off the map.', spotNow ? `${spotNow[0] + 1}, ${spotNow[1] + 1}` : '', 'inputmode="numeric"') : ''}
+    ${onMap ? field('edSpot', 'Where its name sits on the map: across, down, each from 0 to 100. Leave empty to keep it off the map.', spotNow ? `${Math.round(spotNow[0] / MAP_W * 100)}, ${Math.round(spotNow[1] / MAP_H * 100)}` : '', 'inputmode="numeric"') : ''}
     <div class="btns">
       <button class="btn" data-act="save">Save</button>
       <button class="btn alt" data-act="up">Move up</button><button class="btn alt" data-act="down">Move down</button>
@@ -2695,13 +2728,14 @@ function editArea(id: string) {
       snap();
       const next: ItemEdit = { ...E.areas[id], name: inputValue('edName') || undefined };
       if (onMap) {
-        const nums = inputValue('edSpot').split(/[^\d]+/).filter(Boolean).map(Number);
-        const def = MAP_SPOTS[id];
-        if (nums.length >= 2 && nums[0] > 0 && nums[1] > 0) {
-          const at: [number, number] = [nums[0] - 1, nums[1] - 1];
-          next.map = def && def[0] === at[0] && def[1] === at[1] ? undefined : at;
-        } else if (!nums.length && def) next.map = [-1, -1];
-        else if (!nums.length) next.map = undefined;
+        const nums = inputValue('edSpot').split(/[^\d.]+/).filter(Boolean).map(Number).filter(n => !isNaN(n));
+        const def = worldArea(id)?.at;
+        const pct = (a: [number, number]) => [Math.round(a[0] / MAP_W * 100), Math.round(a[1] / MAP_H * 100)];
+        delete next.map;
+        if (nums.length >= 2) {
+          const at: [number, number] = [Math.min(100, Math.max(0, nums[0])), Math.min(100, Math.max(0, nums[1]))];
+          next.spot = def && pct(def)[0] === Math.round(at[0]) && pct(def)[1] === Math.round(at[1]) ? undefined : at;
+        } else if (!nums.length) next.spot = def ? [-1, -1] : undefined;
       }
       E.areas[id] = next;
       commit();
@@ -2936,7 +2970,7 @@ function setEditMode(on: boolean) {
 function editList() {
   const E = saved.edits;
   const out: { label: string; what: string; undo: () => void }[] = [];
-  const rename = (o: ItemEdit) => [o.name && `renamed to ${o.name}`, o.area && `moved to ${o.area}`, o.hidden && 'hidden', o.order !== undefined && 'reordered', o.map && 'moved on the map'].filter(Boolean).join(', ') || 'changed';
+  const rename = (o: ItemEdit) => [o.name && `renamed to ${o.name}`, o.area && `moved to ${o.area}`, o.hidden && 'hidden', o.order !== undefined && 'reordered', (o.spot || o.map) && 'moved on the map'].filter(Boolean).join(', ') || 'changed';
   for (const [k, v] of Object.entries(E.text)) out.push({ label: k, what: `reads ${v}`, undo: () => { delete E.text[k]; } });
   for (const k of Object.keys(E.hide)) out.push({ label: k, what: 'hidden', undo: () => { delete E.hide[k]; } });
   for (const [k, o] of Object.entries(E.checks)) out.push({ label: k.replace(/^(OOT|MM) /, ''), what: rename(o), undo: () => { delete E.checks[k]; } });
@@ -3456,7 +3490,7 @@ function events() {
   }, true);
 
   app.addEventListener('click', e => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>('button, [data-tab]');
+    const el = (e.target as HTMLElement).closest<HTMLElement>('button, [data-tab], .rg[data-region]');
     if (!el) return;
     const d = el.dataset;
 
@@ -3564,6 +3598,11 @@ function events() {
     if ('hidedone' in d) { saved.ui.hideDone = !saved.ui.hideDone; save(); renderChecks(); return; }
     if (d.type) { if (typeFilter.has(d.type)) typeFilter.delete(d.type); else typeFilter.add(d.type); renderChecks(); return; }
     if (d.goto) { tab = d.goto as typeof tab; renderRail(); renderTabs(); renderPane(); return; }
+    if (d.mapZoom) {
+      const i = Math.max(0, ZOOMS.indexOf(saved.ui.mapZoom ?? 1));
+      saved.ui.mapZoom = ZOOMS[Math.min(ZOOMS.length - 1, Math.max(0, i + Number(d.mapZoom)))];
+      save(); renderMap(); return;
+    }
     if (d.checksView) { saved.ui.checksView = d.checksView as 'list' | 'map'; save(); renderChecks(); return; }
     if ('logiconly' in d) { saved.ui.logicOnly = !saved.ui.logicOnly; save(); renderChecks(); return; }
     if ('logicToggle' in d) {
