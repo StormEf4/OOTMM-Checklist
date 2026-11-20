@@ -176,6 +176,36 @@ const STORAGE_KEY = 'ootmm-checklist-v1';
 const esc = (s: unknown) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const uid = () => Math.random().toString(36).slice(2, 10);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
+/** Replaces what's in an element, but leaves the text box being typed in (and the boxes around it) where they are.
+   Swapping in a new box on each keystroke made Android close and reopen the keyboard and scroll the page to find
+   the new box, and it broke the keyboard's word suggestions. Everything else is replaced as usual. */
+function paint(root: HTMLElement, html: string) {
+  const a = document.activeElement as HTMLElement | null;
+  const typing = !!a && a !== root && root.contains(a) && !!a.id && a.matches('input, textarea, [contenteditable="true"]');
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+  const twin = typing ? tpl.content.querySelector(`#${CSS.escape(a!.id)}`) : null;
+  const oldChain: Element[] = [], newChain: Element[] = [];
+  if (twin) {
+    for (let n: Element | null = a; n && n !== root; n = n.parentElement) oldChain.unshift(n);
+    for (let n: Element | null = twin; n; n = n.parentElement) newChain.unshift(n);
+  }
+  if (!twin || oldChain.length !== newChain.length || oldChain.some((n, i) => n.tagName !== newChain[i].tagName)) {
+    root.replaceChildren(tpl.content);
+    return;
+  }
+  for (let i = 0; i < oldChain.length; i++) {
+    const oldParent: ParentNode = i ? oldChain[i - 1] : root, newParent: ParentNode = i ? newChain[i - 1] : tpl.content;
+    const keep = oldChain[i], match = newChain[i];
+    for (const n of [...oldParent.childNodes]) if (n !== keep) n.remove();
+    const kids = [...newParent.childNodes], at = kids.indexOf(match);
+    keep.before(...kids.slice(0, at));
+    keep.after(...kids.slice(at + 1));
+    if (keep === a) break;
+    for (const { name } of [...keep.attributes]) if (!match.hasAttribute(name)) keep.removeAttribute(name);
+    for (const { name, value } of [...match.attributes]) if (keep.getAttribute(name) !== value) keep.setAttribute(name, value);
+  }
+}
 
 let saved: Saved;
 let seed: Seed;
@@ -1199,7 +1229,7 @@ function renderChecks() {
     : !body && region === LATER && !query.trim() ? `<div class="empty"><h3>Nothing to check later yet</h3>Tap the clock on any check or entrance to put it on this list. Tap it again to take it off.</div>`
     : !body ? `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more checks.${saved.ui.hideDone ? ' Finished checks are hidden too.' : ''}</div>` : '';
 
-  pane.innerHTML = `<div class="toolbar">
+  paint(pane, `<div class="toolbar">
       <div class="toolrow">
         <button class="back" data-back>Areas</button>
         <input class="search" id="search" type="search" placeholder="Search checks" aria-label="Search checks" value="${esc(query)}">
@@ -1212,11 +1242,11 @@ function renderChecks() {
       </div>
       <div class="chips" role="group" aria-label="Filter by type">${chips}</div>
     </div>
-    <div class="scroll" id="listScroll">${banner}${logicBanner()}${body}${empty}</div>`;
+    <div class="scroll" id="listScroll">${banner}${logicBanner()}${body}${empty}</div>`);
   $('#listScroll').scrollTop = scrollTop;
-  if (hadFocus) {
-    const s = $('#search', pane) as HTMLInputElement;
-    s.focus();
+  const s = $('#search', pane) as HTMLInputElement;
+  if (hadFocus && s !== had) {
+    s.focus({ preventScroll: true });
     if (caret !== null) s.setSelectionRange(caret, caret);
   }
 }
@@ -1307,7 +1337,7 @@ function renderMap() {
   };
   const other = stats.filter(r => ['NONE', 'POCKET'].includes(r.id) || (r.game !== 'oot' && r.game !== 'mm'));
   const t = totals();
-  pane.innerHTML = `<div class="toolbar"><div class="toolrow">
+  paint(pane, `<div class="toolbar"><div class="toolrow">
       <button class="back" data-back>Areas</button>
       <h2 style="font-size:1.42rem">Map</h2>
       ${viewSeg()}
@@ -1320,7 +1350,7 @@ function renderMap() {
       ${board('Hyrule', 'oot')}${board('Termina', 'mm')}
       ${other.length ? `<section class="board"><div class="section-head"><h2>Other</h2></div><div class="tile-row">${other.map(r => tile(r)).join('')}</div></section>` : ''}
       ${!stats.length ? `<div class="empty"><h3>${computing ? 'Reading your settings' : 'No checks yet'}</h3></div>` : ''}
-    </div>`;
+    </div>`);
   $('#mapScroll').scrollTop = scrollTop;
   /* On a phone the map is wider than the screen: start in the middle, or where the player left it. */
   pane.querySelectorAll<HTMLElement>('.world-wrap').forEach((w, i) => {
@@ -1494,7 +1524,7 @@ function renderItems() {
   const status = !logicShown() || !logicOn() ? '' : logicError ? `<p>OoTMM couldn't work out logic for these settings: ${esc(logicError)}</p>`
     : !logicOut ? '<p>Working out logic for these settings. The first time takes a few seconds.</p>'
     : `<p><b>${totals().reach.toLocaleString()}</b> checks are in logic with what you have.${logicOut.shuffled ? ` Shuffled entrances count once you log them: ${logicOut.logged} of ${logicOut.shuffled} logged.` : ''}</p>${logicOut.pricesShuffled ? '<p class="fine">Prices are random on this seed, so shops are treated as their normal price.</p>' : ''}`;
-  pane.innerHTML = `<div class="toolbar">
+  paint(pane, `<div class="toolbar">
       <div class="toolrow">
         <input class="search" id="itemSearch" type="search" placeholder="Search items" aria-label="Search items" value="${esc(itemQuery)}">
         <div class="seg" role="group" aria-label="Game">
@@ -1513,11 +1543,11 @@ function renderItems() {
       </div>`}
       ${logicReady() ? nextItemsHtml() : ''}
       ${sections.join('') || `<div class="empty"><h3>${!logicOn() ? 'Turn on logic to load the item list' : !logicOut ? 'Loading items' : 'No items match'}</h3></div>`}
-    </div></div>`;
+    </div></div>`);
   $('#itemScroll').scrollTop = scrollTop;
-  if (hadFocus) {
-    const i = $('#itemSearch', pane) as HTMLInputElement;
-    i.focus();
+  const i = $('#itemSearch', pane) as HTMLInputElement;
+  if (hadFocus && i !== had) {
+    i.focus({ preventScroll: true });
     if (caret !== null) i.setSelectionRange(caret, caret);
   }
 }
@@ -1831,11 +1861,11 @@ function renderEntrances() {
   const pane = $('#pane');
   const data = entranceData();
   if (!anyShuffled()) {
-    pane.innerHTML = `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Entrances</h2><button class="btn alt edit-only keep" data-add-entrance="">Add an entrance</button></div></div>
+    paint(pane, `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Entrances</h2><button class="btn alt edit-only keep" data-add-entrance="">Add an entrance</button></div></div>
       <div class="scroll"><div class="empty">${computing ? '<h3>Reading your settings</h3>' : data.error
         ? `<h3>OoTMM can't build these entrance settings</h3>${esc(data.error)}<div class="btns" style="margin-top:12px"><button class="btn" data-open-entr-settings>Open entrance settings</button></div>`
         : `<h3>No entrances are shuffled on this seed</h3>Turn on an entrance shuffle in Settings and those entrances show up here, ready for you to log as you find them.
-        <div class="btns" style="margin-top:12px"><button class="btn" data-open-entr-settings>Open entrance settings</button></div>`}</div></div>`;
+        <div class="btns" style="margin-top:12px"><button class="btn" data-open-entr-settings>Open entrance settings</button></div>`}</div></div>`);
     return;
   }
   const had = $('#entrSearch', pane) as HTMLInputElement | null;
@@ -1900,7 +1930,7 @@ function renderEntrances() {
       ${pinShut ? '' : `<div class="rows">${pinRows.map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
 
   const { found, total } = entranceStats();
-  pane.innerHTML = `<div class="toolbar">
+  paint(pane, `<div class="toolbar">
       <div class="toolrow">
         <button class="back" data-back>Areas</button>
         <input class="search" id="entrSearch" type="search" placeholder="Search entrances or where they lead" aria-label="Search entrances" value="${esc(entrQuery)}">
@@ -1915,11 +1945,11 @@ function renderEntrances() {
       </div>
       <div class="chips" role="group" aria-label="Filter by kind of entrance">${chips}</div>
     </div>
-    <div class="scroll" id="entrScroll">${pinHtml + body || (entrRegion === LATER && !words.length ? `<div class="empty"><h3>Nothing to check later yet</h3>Tap the clock on any entrance or check to put it on this list. Tap it again to take it off.</div>` : '') || `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more entrances.${saved.ui.hideFound ? ' Logged entrances are hidden too.' : ''}</div>`}</div>`;
+    <div class="scroll" id="entrScroll">${pinHtml + body || (entrRegion === LATER && !words.length ? `<div class="empty"><h3>Nothing to check later yet</h3>Tap the clock on any entrance or check to put it on this list. Tap it again to take it off.</div>` : '') || `<div class="empty"><h3>Nothing matches</h3>Clear the search or filters to see more entrances.${saved.ui.hideFound ? ' Logged entrances are hidden too.' : ''}</div>`}</div>`);
   $('#entrScroll').scrollTop = scrollTop;
-  if (hadFocus) {
-    const i = $('#entrSearch', pane) as HTMLInputElement;
-    i.focus();
+  const i = $('#entrSearch', pane) as HTMLInputElement;
+  if (hadFocus && i !== had) {
+    i.focus({ preventScroll: true });
     if (caret !== null) i.setSelectionRange(caret, caret);
   }
 }
@@ -2231,8 +2261,8 @@ function renderSettings() {
   const body = [...cats].map(([c, rows]) => `<details class="cat" data-cat="${esc(c)}"${openCats.has(c) || q ? ' open' : ''}>
     <summary class="keep"><span class="sum-t">${esc(catName(c))}</span> <span>${rows.length}</span></summary>${rows.map(settingHtml).join('')}</details>`).join('');
   const scrollTop = $('#setScroll')?.scrollTop ?? 0;
-  const searchFocus = document.activeElement?.id === 'setSearch';
-  pane.innerHTML = `<div class="toolbar">${settingsNav()}<div class="toolrow">
+  const hadSearch = document.activeElement?.id === 'setSearch' ? document.activeElement : null;
+  paint(pane, `<div class="toolbar">${settingsNav()}<div class="toolrow">
       <input class="search" id="setSearch" type="search" placeholder="Search all ${SETTINGS.length} settings" aria-label="Search settings" value="${esc(settingsQuery)}">
       <div class="seg" role="group" aria-label="Which settings to show">
         <button data-changes="1" aria-pressed="${!!saved.ui.changesOnly}">Changes your lists</button>
@@ -2260,16 +2290,17 @@ function renderSettings() {
         <div class="desc">Lists places your settings leave unshuffled, tagged Vanilla. They never count toward your total.</div></div>
       </div>
       <div>${body + extraSettingsHtml(q) || '<div class="empty"><h3>No settings match</h3>Try another word, or switch to All settings.</div>'}</div>
-    </div></div>`;
+    </div></div>`);
   $('#setScroll').scrollTop = scrollTop;
-  if (searchFocus) { const i = $('#setSearch') as HTMLInputElement; i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+  const setBox = $('#setSearch') as HTMLInputElement;
+  if (hadSearch && setBox !== hadSearch) { setBox.focus({ preventScroll: true }); setBox.setSelectionRange(setBox.value.length, setBox.value.length); }
   renderCount();
 }
 
 function renderPinsView() {
   const sw = (label: string, on: boolean, attr: string, desc: string) => `<div class="set"><div class="lab"><b>${label}</b></div>
     <div class="ctl"><button class="switch keep" role="switch" aria-checked="${on}" aria-label="${esc(label)}" ${attr}></button></div><div class="desc">${desc}</div></div>`;
-  $('#pane').innerHTML = `<div class="toolbar">${settingsNav()}</div>
+  paint($('#pane'), `<div class="toolbar">${settingsNav()}</div>
     <div class="scroll"><div class="page">
       <div class="box"><h3>Pins on each tab</h3>
         <p>A pin button on a check, entrance or item puts it in a Pinned section at the top of its tab.</p>
@@ -2278,7 +2309,7 @@ function renderPinsView() {
       <div class="box"><h3>Saving pins</h3>
         ${sw('Save pins', savingPins(), 'data-save-pins', 'Keeps your pins between visits. Turn it off and pins last until you close the app.')}
         <div class="btns"><button class="btn alt keep" data-clear-pins${anyPins() ? '' : ' disabled'}>Unpin all</button></div></div>
-    </div></div>`;
+    </div></div>`);
 }
 
 /* ---------- Game tracking ---------- */
@@ -2489,7 +2520,7 @@ function renderLook() {
     <span class="skin-swatches">${['gold', 'oot', 'mm', 'heart'].map(t => `<i style="background:${s.tokens[t]}"></i>`).join('')}</span>
     <strong style="font-family:${esc(s.tokens.display)}">${esc(s.name)}</strong><small style="color:${s.tokens.muted}">${esc(s.blurb)}</small></button>`).join('');
   const seg = (attr: string, value: string, opts: [string, string][]) => opts.map(([v, l]) => `<button data-${attr}="${v}" aria-pressed="${value === v}">${l}</button>`).join('');
-  $('#pane').innerHTML = `<div class="toolbar">${settingsNav()}</div>
+  paint($('#pane'), `<div class="toolbar">${settingsNav()}</div>
     <div class="scroll"><div class="page">
       <div class="box"><h3>Theme</h3><div class="skin-grid">${cards}</div></div>
       <div class="box"><h3>Check names</h3>${namesSliderHtml()}<div class="btns"><button class="btn alt keep" data-setview="edits">Rename checks</button></div></div>
@@ -2508,7 +2539,7 @@ function renderLook() {
         <div class="btns"><button class="btn keep" data-open-colors>Edit colors and fonts</button></div></div>
       <div class="box"><h3>OoTMM Checklist</h3><p>In Edit mode, tap the name above to rename the app. It shows in the window title.</p>
         <p class="fine">Built from OoTMM ${esc(__OOTMM__)}. Fan-made tool, not affiliated with Nintendo.</p></div>
-    </div></div>`;
+    </div></div>`);
 }
 
 function renderCount() {
@@ -2591,31 +2622,31 @@ function renderCoop() {
   const head = `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Coop</h2></div></div>`;
   if (!liveDb && __TARGET__ !== 'artifact' && firebaseReady()) {
     if (fireState === 'idle') useFirebase();
-    $('#pane').innerHTML = `${head}<div class="scroll"><div class="page">
+    paint($('#pane'), `${head}<div class="scroll"><div class="page">
       ${fireState === 'failed'
         ? `<div class="box"><h3>Can't reach the coop server</h3><p>Coop needs an internet connection. Check yours, then try again.</p>
           <div class="btns"><button class="btn keep" data-coop-retry>Try again</button></div></div>`
         : '<div class="box"><h3>Connecting to coop</h3><p>Getting the coop server ready. This takes a moment the first time.</p></div>'}
-    </div></div>`;
+    </div></div>`);
     return;
   }
   if (!liveDb) {
-    $('#pane').innerHTML = `${head}<div class="scroll"><div class="page">
+    paint($('#pane'), `${head}<div class="scroll"><div class="page">
       <div class="box"><h3>Coop isn't set up in this version</h3>
         <p>Playing a seed live needs a shared server. This build doesn't have one connected. The hosted page on Claude, and builds made with a Firebase project, do.</p>
         <p class="fine">This app can still move a seed between devices with a transfer code on the Seeds tab, but changes don't sync on their own.</p>
         <div class="btns"><button class="btn alt keep" data-tab="seeds">Go to Seeds</button></div></div>
-    </div></div>`;
+    </div></div>`);
     return;
   }
   const liveSeeds = saved.seeds.filter(s => s.live);
   const list = liveSeeds.map(s => `<div class="seed${s.id === seed.id ? ' on' : ''}">
       <button class="nmz" data-open-coop="${s.id}" data-edit="seed:${s.id}">${esc(s.name)}</button>
       <div class="meta">${s.id === seed.id ? 'Open now, ' : ''}code <span class="live-code">${esc(liveCode(s.live!))}</span>, ${s.done.length.toLocaleString()} ${s.done.length === 1 ? 'check' : 'checks'} done</div></div>`).join('');
-  $('#pane').innerHTML = `${head}<div class="scroll"><div class="page">
+  paint($('#pane'), `${head}<div class="scroll"><div class="page">
     ${liveBoxHtml()}
     ${liveSeeds.length ? `<div class="box"><h3>Your live seeds</h3><p>Seeds on this device that are shared live. Open one to play it together.</p><div id="coopList">${list}</div></div>` : ''}
-  </div></div>`;
+  </div></div>`);
 }
 
 function renderSeeds() {
@@ -2629,7 +2660,7 @@ function renderSeeds() {
         <button class="btn danger" data-del="${s.id}"${saved.seeds.length < 2 ? ' disabled' : ''}>Delete</button>
       </div></div>`;
   }).join('');
-  $('#pane').innerHTML = `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Your seeds</h2></div></div>
+  paint($('#pane'), `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Your seeds</h2></div></div>
   <div class="scroll"><div class="page">
     <div class="box">
       <div class="btns"><button class="btn" data-new>Start a new seed</button><button class="btn alt" data-dupe>Copy settings to a new seed</button><button class="btn danger" data-reset>Clear progress on this seed</button></div>
@@ -2647,7 +2678,7 @@ function renderSeeds() {
       <p>Saves every seed, your edits and your theme in one file. Load it on any device to restore them all.</p>
       <div class="btns"><button class="btn" data-backup>Save backup file</button><label class="btn alt file">Load backup file<input id="backupFile" type="file" accept=".json,application/json"></label></div>
     </div>
-  </div></div>`;
+  </div></div>`);
 }
 
 /* ---------- Windows ---------- */
@@ -3145,13 +3176,13 @@ function addNames(text: string) {
 function renderYourEdits() {
   const list = editList();
   const rows = list.map((x, i) => `<div class="seed"><div class="edit-label">${esc(x.label)}</div><div class="meta">${esc(x.what)}</div><div class="btns"><button class="btn alt" data-undo-edit="${i}">Put back</button></div></div>`).join('');
-  $('#pane').innerHTML = `<div class="toolbar">${settingsNav()}</div>
+  paint($('#pane'), `<div class="toolbar">${settingsNav()}</div>
     <div class="scroll"><div class="page">
       ${namesBoxHtml()}
       <div class="box"><h3>Your edits</h3>
         <p>Everything you've changed in Edit mode, on every seed. Put back any one of them, or all of them.</p>
         ${list.length ? `<div class="btns"><button class="btn danger" data-reset-edits>Put everything back</button></div>${rows}` : '<p>No edits yet. Press Edit mode, then tap anything to change it.</p>'}
-      </div></div></div>`;
+      </div></div></div>`);
 }
 
 async function saveBackup() {
@@ -3219,7 +3250,7 @@ function renderNotes() {
   const sel = (attr: string, label: string, opts: [string, string][], cur = '') =>
     `<select class="keep" data-${attr} aria-label="${esc(label)}" title="${esc(label)}">${opts.map(([val, l]) => `<option value="${esc(val)}"${val === cur ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   const sep = '<span class="doc-sep" aria-hidden="true"></span>';
-  $('#pane').innerHTML = `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Notes</h2><span class="doc-for">${esc(seed.name)}</span></div>
+  paint($('#pane'), `<div class="toolbar"><div class="toolrow"><h2 style="font-size:1.42rem">Notes</h2><span class="doc-for">${esc(seed.name)}</span></div>
     <div class="doc-tools" role="toolbar" aria-label="Formatting">
       ${docBtn('undo', 'Undo', '↶')}${docBtn('redo', 'Redo', '↷')}${sep}
       ${sel('doc-block', 'Text style', [['p', 'Normal text'], ['h1', 'Heading 1'], ['h2', 'Heading 2'], ['h3', 'Heading 3'], ['blockquote', 'Quote']])}
@@ -3241,7 +3272,7 @@ function renderNotes() {
     </div></div>
     <div class="scroll doc-scroll"><div class="doc-desk size-${v.size}${v.paper ? ' paper' : ''}" style="--zoom:${v.zoom}">
       <div class="doc-page keep" id="docPage" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Notes for ${esc(seed.name)}" data-placeholder="Hints, plans, anything you want to remember on this seed.">${cleanNotes(seed.doc ?? '')}</div>
-    </div></div>`;
+    </div></div>`);
   try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older browsers use font tags */ }
   updateDocCount();
   if (!docStateHooked) { docStateHooked = true; document.addEventListener('selectionchange', updateDocState); }
