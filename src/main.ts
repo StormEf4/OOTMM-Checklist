@@ -1332,7 +1332,7 @@ function renderMap() {
 /* ---------- Items page ----------
    The player's own item tracker. Logging an item at a check counts it here too. */
 
-const ITEM_GROUP_ORDER = ['Equipment', 'Ammo and shields', 'Songs', 'Masks', 'Medallions, stones and remains', 'Trade and quest items', 'Bottles and their contents', 'Owls and maps', 'Skulltula tokens', 'Keys and dungeon items'];
+const ITEM_GROUP_ORDER = ['Equipment', 'Ammo and shields', 'Songs', 'Masks', 'Medallions, stones and remains', 'Boss souls', 'Enemy souls', 'NPC souls', 'Animal souls', 'Other souls', 'Trade and quest items', 'Bottles and their contents', 'Owls and maps', 'Skulltula tokens', 'Keys and dungeon items'];
 
 /*
  * Items that come in steps get a tile for each step, named the way the games name them, instead of one "0/2" counter.
