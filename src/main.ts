@@ -24,7 +24,8 @@ import audit from './generated/audit.json';
 import shippedCustom from '../custom-checks.json';
 import { COLOR_TOKENS, FONT_CHOICES, SEALS, SKINS, skinById } from './skins';
 import { applyLayer, originalAttr, originalOf, templateOf, textAt } from './textlayer';
-import { startGameFeed, type GameItem, type GameLink } from './gamefeed';
+import { startGameFeed, type GameEntrance, type GameItem, type GameLink } from './gamefeed';
+import { arrivedAt, doorUsed, type FeedEntranceList, type Here } from './entrance-feed';
 import { readSave, type SaveSlot } from './savefile';
 
 declare const __TARGET__: 'web' | 'desktop' | 'artifact';
@@ -125,6 +126,8 @@ type Saved = {
     showLocked?: boolean; changesOnly?: boolean; collapsed?: string[];
     /** Game tracking (Windows app): off when false. gameItems false keeps the checks but not the items found at them. */
     gameTrack?: boolean; gameItems?: boolean;
+    /** Game tracking logs each entrance the player walks through, the first time. Off unless turned on. */
+    gameEntrances?: boolean;
     /** The game's save file on this computer (Project64-EM's .fla), for game tracking's catch-up. */
     saveFile?: string;
     logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; mapZoom?: number; haveOnly?: boolean; hideWritten?: boolean;
@@ -1329,7 +1332,7 @@ function renderMap() {
 /* ---------- Items page ----------
    The player's own item tracker. Logging an item at a check counts it here too. */
 
-const ITEM_GROUP_ORDER = ['Equipment', 'Ammo and shields', 'Songs', 'Masks', 'Medallions, stones and remains', 'Trade and quest items', 'Bottles and their contents', 'Owls and maps', 'Skulltula tokens', 'Keys and dungeon items'];
+const ITEM_GROUP_ORDER = ['Equipment', 'Ammo and shields', 'Songs', 'Masks', 'Medallions, stones and remains', 'Boss souls', 'Enemy souls', 'NPC souls', 'Animal souls', 'Other souls', 'Trade and quest items', 'Bottles and their contents', 'Owls and maps', 'Skulltula tokens', 'Keys and dungeon items'];
 
 /*
  * Items that come in steps get a tile for each step, named the way the games name them, instead of one "0/2" counter.
@@ -2294,6 +2297,7 @@ let gameRenderTimer = 0;
 function syncGameFeed() {
   if (gameTrackOn() && !stopGameFeed) stopGameFeed = startGameFeed({
     item: onGameItem,
+    entrance: onGameEntrance,
     start: m => { gameSession = m.session; gamePlayer = m.player; saveSeen = 0; },
     status: l => { const was = gameLink; gameLink = l; renderGameLink(); if (l === 'game' && was !== 'game') saveSeen = 0; },
   });
@@ -2426,17 +2430,54 @@ function flushGameItems() {
   }, 120);
 }
 
+/* ---------- Game tracking: entrances ----------
+   With "Log entrances" on, each door the player walks through is logged with where it took them, the same as picking
+   it on the Entrances tab. Only doors they have just used, never any other; a door they already logged stays as they
+   logged it. */
+let gameHere: Here = null;
+let feedRows: { from: EntranceData; rows: FeedEntranceList } | null = null;
+let gameEntrCount = 0;
+let gameEntrSkipped = 0;
+const gameEntrancesOn = () => saved.ui.gameEntrances === true;
+function feedList(): FeedEntranceList {
+  const data = entranceData();
+  if (feedRows?.from !== data) {
+    const ids = (i: number) => new Set((data.sets[i] ?? []).map(n => data.dests[n]?.id).filter(Boolean) as string[]);
+    feedRows = { from: data, rows: { rows: data.list.filter(e => !e.fixed && !e.id.startsWith('custom')).map(e => ({ id: e.id, allowed: ids(e.allowed) })), sides: data.sides ?? {} } };
+  }
+  return feedRows.rows;
+}
+function onGameEntrance(m: GameEntrance) {
+  const list = feedList();
+  const before = gameHere;
+  gameHere = arrivedAt(m.entrance, list);
+  if (!gameEntrancesOn() || !m.original) return;
+  if (m.session && seed.game && seed.game !== m.session) return;
+  if (m.session && !seed.game) seed.game = m.session;
+  const door = doorUsed(m.original, m.entrance, before, list);
+  if (!door) { if (m.original !== m.entrance) gameEntrSkipped++; return; }
+  if (seed.entrances[door]) return;
+  setEntrance(door, m.entrance);
+  gameEntrCount++;
+  afterEntranceChange();
+  const d = destById().get(m.entrance);
+  toast(`Logged an entrance: ${destText(d) || 'a new place'}.`, true);
+}
+
 function gameTrackBox() {
   if (!gameTrackAvailable()) return '';
   const on = saved.ui.gameTrack !== false;
   const seg = (attr: string, value: boolean, l: [string, string]) => `<button data-${attr}="1" aria-pressed="${value}">${l[0]}</button><button data-${attr}="0" aria-pressed="${!value}">${l[1]}</button>`;
   return `<div class="box"><h3>Game tracking</h3>
-    <p>Ticks checks off as you get them in the game. Play in Project64-EM with the OoTMM Client running (open your seed's patch file to start it), and keep this app open. Entrances are never read from the game; you still fill those in.</p>
+    <p>Ticks checks off as you get them in the game. Play in Project64-EM with the OoTMM Client running (open your seed's patch file to start it), and keep this app open.</p>
     <div class="seg" role="group" aria-label="Game tracking">${seg('game-track-set', on, ['On', 'Off'])}</div>
     ${on ? `<p class="fine" id="gameState">${esc(gameStateText())}</p>
     ${saveFileSection()}
     <h3>Items found</h3><p>Also log the item you got at each check, so the Items tab and item menu keep up.</p>
     <div class="seg" role="group" aria-label="Log items found">${seg('game-items-set', saved.ui.gameItems !== false, ['Log items', 'Checks only'])}</div>
+    <h3>Entrances</h3><p>Log each entrance the first time you go through it, with where it took you. Only doors you walk through are logged, and ones you already logged stay as you set them.</p>
+    <div class="seg" role="group" aria-label="Log entrances">${seg('game-entrances-set', gameEntrancesOn(), ['Log entrances', 'Off'])}</div>
+    ${gameEntrancesOn() && (gameEntrCount || gameEntrSkipped) ? `<p class="fine">This session: ${gameEntrCount} logged${gameEntrSkipped ? `, ${gameEntrSkipped} the game didn't say clearly which door it was (fill those in yourself)` : ''}.</p>` : ''}
     ${seed.game ? `<p class="fine">This seed follows one game. If you started a new seed in the game, let it follow that one.</p><div class="btns"><button class="btn alt keep" data-game-forget>Follow a different game</button></div>` : ''}
     ${gameUnknown.length ? `<p class="fine">Checks the game reported that aren't on this seed's list: ${gameUnknown.slice(-5).map(esc).join(', ')}. Check that this seed's settings match your game.</p>` : ''}` : ''}</div>`;
 }
@@ -3560,6 +3601,7 @@ function events() {
     if (d.scaleSet) { saved.ui.scale = Number(d.scaleSet); applyTheme(); save(); renderLook(); return; }
     if (d.gameTrackSet) { saved.ui.gameTrack = d.gameTrackSet === '1'; save(); syncGameFeed(); renderLook(); return; }
     if (d.gameItemsSet) { saved.ui.gameItems = d.gameItemsSet === '1'; save(); renderLook(); return; }
+    if (d.gameEntrancesSet) { saved.ui.gameEntrances = d.gameEntrancesSet === '1'; save(); renderLook(); return; }
     if ('savePick' in d) {
       saveBridge()?.pick().then(p => { if (!p) return; saved.ui.saveFile = p; saveNote = ''; saveSlotsSeen = []; save(); syncSaveWatch(); catchUpFromSave(true); renderLook(); });
       return;

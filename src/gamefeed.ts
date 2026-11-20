@@ -6,14 +6,21 @@
  * got and what was there, by OoTMM's own check and item names, read from the seed's patch file. The checklist only
  * listens; it never takes over the emulator's connection, so co-op keeps working alongside it.
  *
- * INFO_ENTRANCE messages are dropped here, before anything else sees them: the Entrances tab is filled in by the player.
+ * INFO_ENTRANCE says the player just went through a loading zone: the door they used (original, by OoTMM's name for its
+ * normal destination) and where it really took them (entrance). They're passed on only when the player turned on
+ * logging entrances as they walk through them (owner's choice, Nov 20 2026). Each message is one door the player has
+ * just used, so nothing they haven't been through is ever filled in.
  */
 
 export type GameItem = { location: string; item: string; self: boolean; session: string };
+/** original is empty when the game didn't go through a door (a void, a savewarp, Song of Time, Farore's Wind...). */
+export type GameEntrance = { original: string; entrance: string; age: string; session: string };
 /** none: the OoTMM Client isn't running. client: it is, but no game has reported in yet. game: a game is playing. */
 export type GameLink = 'none' | 'client' | 'game';
 export type GameFeedHandlers = {
   item(m: GameItem): void;
+  /** Only given when the player wants entrances logged. */
+  entrance?(m: GameEntrance): void;
   /** A game started: its session id and the save file's name, which the catch-up uses to pick the right save slot. */
   start?(m: { session: string; player: string }): void;
   status(link: GameLink): void;
@@ -53,7 +60,12 @@ export function startGameFeed(on: GameFeedHandlers) {
           on.item({ location: m.location, item: typeof m.item === 'string' ? m.item : '', self: m.self !== false, session: sessions.get(id) ?? '' });
         }
       }
-      /* INFO_ENTRANCE and anything else: ignored on purpose. */
+      else if (m.type === 'INFO_ENTRANCE' && on.entrance) {
+        if (!sessions.has(id)) { sessions.set(id, ''); status(); }
+        if (typeof m.entrance === 'string' && m.entrance) {
+          on.entrance({ original: typeof m.original === 'string' ? m.original : '', entrance: m.entrance, age: String(m.age ?? ''), session: sessions.get(id) ?? '' });
+        }
+      }
     };
     ws.onclose = () => { sockets.delete(id); sessions.delete(id); status(); };
     ws.onerror = () => ws.close();
