@@ -38,7 +38,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `src/engine/`: runs OoTMM's pipeline, entrance pools and spoiler header reading
 - `src/engine/logic.ts`: reachable checks, the item list, age tags, "opens with" and pre-completed dungeons, from
   OoTMM's pathfinder and solver code. It runs in its own worker
-- `src/mapspots.ts`: where each area sits on the Map view
+- `src/mapspots.ts`: the Map view's drawn Hyrule and Termina maps (area shapes, terrain, where names sit). `src/worldmap.ts` draws them as SVG. The art is original; never copy the games' map images
 - `src/main.ts`: the app and Edit mode
 - `src/textlayer.ts`: makes any on-screen text editable
 - `src/skins.ts`: themes
