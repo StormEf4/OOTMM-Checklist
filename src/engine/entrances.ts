@@ -23,12 +23,16 @@ export type EntranceEntry = {
   dir?: 'in' | 'out' | 'path' | 'other' | 'enter' | 'exit';
   /* OoTMM's code for the dungeon a dungeon entrance, exit or boss door belongs to. */
   dungeonOf?: string;
-  /* A road between two areas (dir 'path'). It lists under the area it leaves as a way out, and under toGroup, the
-     area it normally arrives in, as a way in. from and into name the spots it starts from and arrives at. */
+  /* A road between two areas (dir 'path'): toGroup is the area it normally arrives in. from and into name the spots
+     it starts from and arrives at. */
   toGroup?: string;
   toGroupName?: string;
   from?: string;
   into?: string;
+  /* The one area a road lists under: the place it leads into or out of (group or toGroup). */
+  home?: string;
+  homeName?: string;
+  homeDungeon?: boolean;
   /* A road these settings don't shuffle. It shows so every area has its ways in and out, but there's nothing to log. */
   fixed?: boolean;
 };
@@ -226,6 +230,28 @@ export function shuffledEntrances(state: any): EntranceData {
       toGroup: to, toGroupName: groupLabel(to), from: clean(e.from), into: clean(e.to), fixed: true,
     });
   }
+  /* Each road and its way back list under one area only: the place they lead into and out of, like Lon Lon Ranch for
+     the ranch's gate, never the hub they join (owner's choice, Nov 20 2026). OoTMM marks the hub side of region roads
+     (a region-exit leaves the place, a region road enters it). For other roads the place is the side OoTMM names the
+     road after, else the side with fewer roads, so a hub like Hyrule Field or Termina Field doesn't take them. */
+  const roads = list.filter(x => x.toGroup);
+  const near = new Map<string, Set<string>>();
+  for (const x of roads) for (const [a, b] of [[x.group, x.toGroup!], [x.toGroup!, x.group]]) (near.get(a) ?? near.set(a, new Set()).get(a)!).add(b);
+  const ends = (id: string) => { const e = (ENTRANCES as any)[id]; return [groupOf(e), roadEnd(e)] as const; };
+  const homeOf = (id: string): string => {
+    const e = (ENTRANCES as any)[id];
+    const [from, to] = ends(id);
+    const back = e.reverse && (ENTRANCES as any)[e.reverse];
+    if (e.type.startsWith('region')) return e.type === 'region-exit' ? from : to;
+    if (back?.type.startsWith('region')) return back.type === 'region-exit' ? to : from;
+    if (!back) return to;
+    const named = [id, e.reverse].filter(x => !x.includes('_FROM_'));
+    if (named.length === 1) return named[0] === id ? to : from;
+    const size = (g: string) => near.get(g)?.size ?? 0;
+    if (size(from) !== size(to)) return size(to) < size(from) ? to : from;
+    return id < e.reverse ? to : from;
+  };
+  for (const x of roads) { const home = homeOf(x.id); Object.assign(x, { home, homeName: groupLabel(home), homeDungeon: DUNGEON_REGIONS.has(home) }); }
   const bosses: Record<string, { door: string; name: string }> = {};
   for (const [id, e] of Object.entries(ENTRANCES as Record<string, any>)) {
     if (e.type !== 'boss') continue;

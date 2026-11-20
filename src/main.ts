@@ -1702,9 +1702,13 @@ const destLabel = (id: string, dests: ReturnType<typeof destById>) => id.startsW
 const visibleEntrances = () => entranceData().list.filter(e => editMode || !entranceHidden(e));
 /* Roads the settings leave alone still show under their areas, but there is nothing to log on them. */
 const anyShuffled = () => entranceData().list.some(e => !e.fixed);
-/* A road lists under both of its areas: as a way out of the area it leaves and a way into the area it reaches. */
+/* A road lists under one area, its home: the place it leads into (a way in) or out of (a way out), like Lon Lon Ranch
+   for both sides of the ranch gate. A road the player moved in Edit mode lists where they put it, as a way out. */
 const isRoad = (e: EntranceEntry) => e.dir === 'path' && !!e.toGroup;
-const inGroup = (e: EntranceEntry, gid: string) => entrGroup(e) === gid || (isRoad(e) && e.toGroup === gid);
+const roadMoved = (e: EntranceEntry) => !!saved.edits.entrances[e.id]?.area;
+const roadHome = (e: EntranceEntry) => roadMoved(e) ? e.group : e.home ?? e.group;
+const roadRole = (e: EntranceEntry): 'enter' | 'exit' => !roadMoved(e) && e.home === e.toGroup ? 'enter' : 'exit';
+const inGroup = (e: EntranceEntry, gid: string) => isRoad(e) ? roadHome(e) === gid : entrGroup(e) === gid;
 /* The row a road shows under one of its areas. A name the player gave it in Edit mode is kept on both sides. */
 function roadRow(e: EntranceEntry, role: 'enter' | 'exit'): EntranceEntry {
   const named = saved.edits.entrances[e.id]?.name;
@@ -1731,8 +1735,8 @@ function entranceStats() {
     if (seed.entrances[e.id]) r.found++;
   };
   for (const e of data.list.filter(x => !entranceHidden(x))) {
-    add(entrGroup(e), areaName(e.group, e.groupName), e, e.dungeon);
-    if (isRoad(e) && e.toGroup !== entrGroup(e)) add(e.toGroup!, areaName(e.toGroup!, e.toGroupName ?? ''), e, false);
+    if (isRoad(e)) add(roadHome(e), areaName(roadHome(e), roadRole(e) === 'enter' ? e.toGroupName ?? '' : e.groupName), e, roadMoved(e) ? e.dungeon : !!e.homeDungeon);
+    else add(entrGroup(e), areaName(e.group, e.groupName), e, e.dungeon);
     if (e.fixed) continue;
     total++;
     if (seed.entrances[e.id]) found++;
@@ -1846,13 +1850,13 @@ function renderEntrances() {
 
   const list = vis.filter(e => {
     if (entrGame !== 'all' && e.game !== entrGame) return false;
-    if (entrDir !== 'all' && e.dir !== entrDir && !isRoad(e)) return false;
+    if (entrDir !== 'all' && (isRoad(e) ? { in: 'enter', out: 'exit' }[entrDir] !== roadRole(e) : e.dir !== entrDir)) return false;
     if (entrKinds.size && !entrKinds.has(e.kind)) return false;
     if (saved.ui.hideFound && seed.entrances[e.id]) return false;
     if (entrRegion && !words.length && (entrRegion === LATER ? !isLater(e.id) : !inGroup(e, entrRegion))) return false;
     if (words.length) {
       const to = seed.entrances[e.id];
-      const road = isRoad(e) ? `${roadRow(e, 'exit').title} ${roadRow(e, 'enter').title} ${areaName(e.toGroup!, e.toGroupName ?? '')}` : '';
+      const road = isRoad(e) ? `${roadRow(e, roadRole(e)).title} ${areaName(e.toGroup!, e.toGroupName ?? '')}` : '';
       const hay = `${e.title} ${e.sub} ${road} ${areaName(e.group, e.groupName)} ${to ? destLabel(to, dests) : ''} ${seed.notes[e.id] ?? ''}`.toLowerCase();
       if (!words.every(w => hay.includes(w))) return false;
     }
@@ -1862,21 +1866,14 @@ function renderEntrances() {
   const pinRows = list.filter(e => pinIds.includes(e.id)).sort((a, b) => pinIds.indexOf(a.id) - pinIds.indexOf(b.id));
   const byGroup = new Map<string, EntranceEntry[]>();
   const put = (g: string, e: EntranceEntry) => { (byGroup.get(g) ?? byGroup.set(g, []).get(g)!).push(e); };
-  /* A road shows as a way out under the area it leaves and as a way in under the area it reaches. Looking at one area,
-     the Check later list or one direction, only the matching side shows. */
-  const one = entrRegion && !words.length ? entrRegion : null;
   for (const e of list) {
     if (pinIds.includes(e.id)) continue;
-    if (!isRoad(e)) { put(entrGroup(e), e); continue; }
-    const g = entrGroup(e);
-    const exit = entrDir !== 'in' && (!one || one === LATER || one === g);
-    const enter = entrDir !== 'out' && (!one || (one === LATER ? !exit : one === e.toGroup));
-    if (exit) put(g, roadRow(e, 'exit'));
-    if (enter) put(one === LATER ? g : e.toGroup!, roadRow(e, 'enter'));
+    if (isRoad(e)) put(roadHome(e), roadRow(e, roadRole(e)));
+    else put(entrGroup(e), e);
   }
   /* A section can hold only roads arriving from elsewhere, so its name and place come from its own key. */
   const nameOf = (gid: string, rows: EntranceEntry[]) => { const r = rows.find(x => x.dir !== 'enter'); return r ? r.groupName : rows[0].toGroupName ?? gid; };
-  const rank = ([gid, rows]: [string, EntranceEntry[]]) => { const i = ENTR_PINNED.findIndex(p => p.id === gid); const r = rows.find(x => x.dir !== 'enter'); return i >= 0 ? i - 100 : regionRank(gid, rows[0].game, r?.dungeon ?? false); };
+  const rank = ([gid, rows]: [string, EntranceEntry[]]) => { const i = ENTR_PINNED.findIndex(p => p.id === gid); const r = rows.find(x => !x.toGroup) ?? rows[0]; return i >= 0 ? i - 100 : regionRank(gid, r.game, r.toGroup ? !!r.homeDungeon : r.dungeon); };
   const body = [...byGroup].sort((a, b) => rank(a) - rank(b)).map(([gid, rows]) => {
     const pin = entrPin(gid);
     const all = vis.filter(e => inGroup(e, gid) && !entranceHidden(e) && !e.fixed);
