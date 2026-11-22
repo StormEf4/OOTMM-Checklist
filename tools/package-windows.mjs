@@ -3,7 +3,8 @@
 // (see README.md, or let it download Electron from GitHub the first time).
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, chmodSync, copyFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, chmodSync, copyFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -23,6 +24,22 @@ renameSync(path.join(work, 'electron.exe'), path.join(work, 'OoTMM Checklist.exe
 rmSync(path.join(work, 'resources/default_app.asar'), { force: true });
 cpSync(path.join(ROOT, 'dist/desktop'), path.join(work, 'resources/app'), { recursive: true });
 for (const f of readdirSync(path.join(work, 'locales'))) if (f !== 'en-US.pak') rmSync(path.join(work, 'locales', f));
+
+/* koffi (MIT), which the memory reader (desktop/memreader.js) uses to read the emulator's memory. Only its Windows x64
+   part is kept. The download is checked against npm's published hash. */
+const KOFFI = '2.16.4', KOFFI_SHA512 = 'EE31wJCADvsUntlzrbWvSh9Eii6hRJRWYSREWqWnKT+f3j0PWt7cFp7Gzb6FKtEk/yBIJu/HxfzfDl+FcDp1Sg==';
+const ktgz = path.join(pack, `koffi-${KOFFI}.tgz`);
+if (!existsSync(ktgz)) execFileSync('curl', ['-fsSL', '-o', ktgz, `https://registry.npmjs.org/koffi/-/koffi-${KOFFI}.tgz`], { stdio: 'inherit' });
+if (createHash('sha512').update(readFileSync(ktgz)).digest('base64') !== KOFFI_SHA512) throw new Error('koffi download does not match its published hash');
+const kx = path.join(pack, 'koffi');
+rmSync(kx, { recursive: true, force: true });
+mkdirSync(kx, { recursive: true });
+execFileSync('tar', ['-xzf', ktgz, '-C', kx]);
+const kdest = path.join(work, 'resources/app/node_modules/koffi');
+for (const f of ['package.json', 'index.js', 'LICENSE.txt', 'build/koffi/win32_x64/koffi.node']) {
+  mkdirSync(path.dirname(path.join(kdest, f)), { recursive: true });
+  copyFileSync(path.join(kx, 'package', f), path.join(kdest, f));
+}
 copyFileSync(path.join(ROOT, 'icons/app.ico'), path.join(work, 'app.ico'));
 
 const nsi = path.join(pack, 'installer.nsi');

@@ -4,6 +4,7 @@ import { execSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, rmSync, cpSync, existsSync } from 'node:fs';
 import { OOTMM, ROOT, aliases, esbuild, plugins } from './paths.mjs';
 import { saveLayoutHash } from './save-layout-hash.mjs';
+import { ramLayoutHash } from './ram-layout-hash.mjs';
 
 const css = ['src/generated/fonts.css', 'src/generated/fonts-extra.css', 'src/style.css'].map(f => readFileSync(path.join(ROOT, f), 'utf8')).join('');
 const changelog = readFileSync(path.join(OOTMM, 'CHANGELOG.md'), 'utf8');
@@ -66,6 +67,11 @@ if (existsSync(path.join(ROOT, 'icons'))) cpSync(path.join(ROOT, 'icons/web'), w
 const desk = out('desktop');
 writeFileSync(path.join(desk, 'index.html'), fullPage(await bundle('desktop')));
 cpSync(path.join(ROOT, 'desktop'), desk, { recursive: true });
+/* The memory reader's layout, only when it was made from this OoTMM (tools/ram-layout.mjs). Without it the reader stays off. */
+const ramFile = path.join(ROOT, 'src/generated/ram-layout.json');
+const ramOk = existsSync(ramFile) && JSON.parse(readFileSync(ramFile, 'utf8')).hash === ramLayoutHash(OOTMM);
+if (ramOk) cpSync(ramFile, path.join(desk, 'ram-layout.json'));
+else { rmSync(path.join(desk, 'ram-layout.json'), { force: true }); console.warn('Memory reader off in this build: OoTMM changed since src/generated/ram-layout.json. Run node tools/ram-layout.mjs.'); }
 
 /* Hosted page: the host adds the document skeleton */
 const art = out('artifact');

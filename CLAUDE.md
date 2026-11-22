@@ -11,6 +11,8 @@ a hosted page. This repository is the source of truth: start all work here, from
   App Settings > Game tracking > Entrances on (off by default), the Windows app logs a door the moment the game says the
   player walked through it. Only that door and where it led; never any door not yet used, never the game's entrance
   table, and never over a door the player already logged.
+- The Windows app's memory reader (App Settings > Game tracking > Memory reader, off by default) reads only each
+  game's name tag and OoTMM's grotto number (gGrottoData), never OoTMM's entrance table or anything else. It only reads.
 - Reachable checks use only the items and entrances the player logged. An unlogged shuffled entrance stays closed.
   Hints and found items are typed or picked by the player, never read from a spoiler log.
 - In Edit mode, everything is editable. The Edit mode button is the only exception: keep `data-locked` on it.
@@ -61,6 +63,13 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
   `src/generated/save-layout.json`, made by `node tools/save-layout.mjs` from OoTMM's own C headers (needs
   `mips-linux-gnu-gcc` and OoTMM's `scripts/deps.sh`). The build turns catch-up off, with a warning, when the OoTMM
   source changed since; rerun the tool then. `node tools/savefile-test.mjs` checks the reader
+- `desktop/memreader.js`: the memory reader. It finds Project64-EM, finds the game's memory in it, and watches the
+  grotto number so plain grottos (which the game reports by one shared name) can be told apart; `src/grotto-memory.ts`
+  turns those numbers into a door. Where they sit is `src/generated/ram-layout.json`, made by `node tools/ram-layout.mjs`
+  from OoTMM's link files, headers and `Play_EntranceForOverride` (needs `mips-linux-gnu-gcc` like save-layout). The
+  build leaves the reader off, with a warning, when the OoTMM source changed since. It calls Windows through koffi,
+  which `tools/package-windows.mjs` adds to the installer. `node tools/memreader-test.cjs` and
+  `node tools/grotto-memory-test.mjs` check it
 - `desktop/`: the Windows window (Electron)
 - `tools/`: build, tests and packaging
 - `dist/web/`: the built phone site, and `dist/desktop/`: the built Windows app files. Both are committed
@@ -78,7 +87,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
     about an hour over 3 shards. `LOGIC_RETRY=<file of case names>` retries skipped cases with looser placement rules.
   - `node tools/ui-toggles-data.mjs`, then `tools/ui-toggles.cjs`, uses every settings control in the browser.
 - Random shop prices are expected to differ in the logic sweep: the app counts shops at their normal price.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`, `tools/ui-gamefeed-entrances.cjs`, `tools/ui-souls.cjs`, `tools/ui-seg.cjs`, `tools/ui-roads.cjs`, `tools/ui-typing.cjs`, `tools/ui-hearts.cjs`, `tools/ui-shared.cjs`: browser tests. Run with
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`, `tools/ui-gamefeed-entrances.cjs`, `tools/ui-gamefeed-memory.cjs`, `tools/ui-souls.cjs`, `tools/ui-seg.cjs`, `tools/ui-roads.cjs`, `tools/ui-typing.cjs`, `tools/ui-hearts.cjs`, `tools/ui-shared.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 

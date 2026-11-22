@@ -70,6 +70,13 @@ ipcMain.handle('save:read', (_e, p) => {
   try { const b = fs.readFileSync(p); return b.length <= 4 * 1024 * 1024 ? new Uint8Array(b) : null; } catch { return null; }
 });
 
+/* Game tracking's memory reader (desktop/memreader.js): off until the player turns it on in App Settings. */
+const reader = require('./memreader.js').createReader();
+ipcMain.handle('mem:start', () => reader.start());
+ipcMain.handle('mem:stop', () => reader.stop());
+ipcMain.handle('mem:status', () => reader.status());
+ipcMain.handle('mem:grottos', (_e, g) => { g = g === 'mm' ? 'mm' : 'oot'; return { now: Date.now(), since: reader.watchingSince(g), history: reader.grottoHistory(g) }; });
+
 app.whenReady().then(createWindow);
 /* Write saved progress and renames to disk before the app closes, so nothing waits in memory. */
 app.on('before-quit', () => session.defaultSession.flushStorageData());
