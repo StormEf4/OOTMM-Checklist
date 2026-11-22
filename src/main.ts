@@ -29,6 +29,7 @@ import { startGameFeed, type GameEntrance, type GameItem, type GameLink } from '
 import { arrivedAt, whichDoor, type FeedEntranceList, type Here } from './entrance-feed';
 import { grottoFromMemory, grottoGame, warpFromMemory, type GrottoSeen, type NotesSeen } from './memory-doors';
 import { readSave, type SaveSlot } from './savefile';
+import { areasIn, findRoutes, pickRoute, searchPlaces, warpSong, type Step } from './directions';
 
 declare const __TARGET__: 'web' | 'desktop' | 'artifact';
 declare const __SAVE_LAYOUT_OK__: boolean;
@@ -88,6 +89,13 @@ type Seed = {
   saveSlot?: number;
   /** This seed's save file on this computer (Project64-EM's .fla), for game tracking's catch-up. Each seed has its own. */
   saveFile?: string;
+  /** Where the player is now, for the sidebar's "Where you are now": a place (a region's id, or 'a:' and an OoTMM area
+      for a room), the exact area when the game said, the entrance they came in by when known, and who said. */
+  here?: { place: string; area?: string; door?: string; by: 'game' | 'you' };
+  /** The place the player asked directions to. The sidebar shows the next step until they get there. */
+  goal?: string;
+  /** The entrances of the way the player picked to the goal, when there was more than one. */
+  via?: string[];
   notes: Record<string, string>;
   /** Plain text of the seed's notes, kept for older versions of the app. */
   pad: string;
@@ -276,7 +284,7 @@ function load(raw?: string | null): Saved {
         ui.skin ??= ui.theme === 'dark' ? 'termina' : ui.theme === 'light' ? 'day' : 'hero';
         ui.names ??= 'custom'; ui.nameBase ??= 'original';
         ui.savePins ??= true;
-        for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.later ??= []; s.cleared ??= []; s.notes ??= {}; s.pad ??= ''; s.doc ??= textToNotes(s.pad); s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
+        for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.later ??= []; s.cleared ??= []; s.notes ??= {}; s.pad ??= ''; s.doc ??= textToNotes(s.pad); s.found ??= {}; s.have ??= {}; s.hints ??= {}; if (s.here && typeof s.here.place !== 'string') delete s.here; if (typeof s.goal !== 'string') delete s.goal; if (!Array.isArray(s.via)) delete s.via; }
         /* The save file used to be one for the whole app. It now belongs to each seed: give it to the seed that was open. */
         if (ui.saveFile) {
           const open = v.seeds.find(s => s.id === v.current) ?? v.seeds[0];
@@ -958,6 +966,7 @@ function shell() {
       </defs></svg>
       <nav class="tabs" aria-label="Main">${tabs()}</nav>
       <div class="edit-slot">${editToggle()}</div>
+      <section class="here" id="here" aria-label="Where you are now"></section>
       <div class="regions" id="regions"></div>
     </aside>
     <main class="pane" id="pane"></main>
@@ -1119,6 +1128,7 @@ function railGroup(key: string, name: string, cls: string, rows: () => string) {
 }
 
 function renderRail() {
+  renderHere();
   if (tab === 'entrances') return renderEntranceRail();
   if (tab === 'items') return renderItemRail();
   const stats = regionStats();
@@ -1131,9 +1141,10 @@ function renderRail() {
   ];
   const t = totals();
   const hinted = areaHints();
+  const here = hereRegion();
   const row = (id: string, name: string, done: number, total: number, cur: boolean, skipped = false, reach = 0) =>
-    `<button class="reg keep${total && done === total ? ' complete' : ''}${saved.edits.areas[id]?.hidden ? ' ghost' : ''}" data-region="${esc(id)}" aria-current="${cur}">
-      <span class="n">${esc(name)}${areaTags(hinted.get(id))}${reach && !skipped ? `<i class="lg" title="Checks you can get now">${reach}</i>` : ''}</span><span class="c">${skipped ? 'Skipped' : `${done}/${total}`}</span>${id ? pen('area:' + id) : ''}
+    `<button class="reg keep${total && done === total ? ' complete' : ''}${saved.edits.areas[id]?.hidden ? ' ghost' : ''}${id && id === here ? ' is-here' : ''}" data-region="${esc(id)}" aria-current="${cur}">
+      <span class="n">${esc(name)}${id && id === here ? '<i class="here-mark" title="You are here"></i>' : ''}${areaTags(hinted.get(id))}${reach && !skipped ? `<i class="lg" title="Checks you can get now">${reach}</i>` : ''}</span><span class="c">${skipped ? 'Skipped' : `${done}/${total}`}</span>${id ? pen('area:' + id) : ''}
       <span class="bar"><i style="width:${total ? (done / total) * 100 : 0}%"></i></span></button>`;
   let html = row('', 'All areas', t.done, t.all, region === null, false, t.reach)
     + laterRow(checks.filter(c => isLater(c.id) && shown(c)).length, region === LATER, 'data-region');
@@ -1842,9 +1853,10 @@ function entranceStats() {
 
 function renderEntranceRail() {
   const { groups, found, total } = entranceStats();
+  const here = hereRegion();
   const row = (id: string, name: string, done: number, all: number, cur: boolean) =>
-    `<button class="reg keep${all && done === all ? ' complete' : ''}" data-entr-region="${esc(id)}" aria-current="${cur}">
-      <span class="n">${esc(name)}</span><span class="c">${all ? `${done}/${all}` : ''}</span>${id && !entrPin(id) ? pen('area:' + id) : ''}
+    `<button class="reg keep${all && done === all ? ' complete' : ''}${id && id === here ? ' is-here' : ''}" data-entr-region="${esc(id)}" aria-current="${cur}">
+      <span class="n">${esc(name)}${id && id === here ? '<i class="here-mark" title="You are here"></i>' : ''}</span><span class="c">${all ? `${done}/${all}` : ''}</span>${id && !entrPin(id) ? pen('area:' + id) : ''}
       <span class="bar"><i style="width:${all ? (done / all) * 100 : 0}%"></i></span></button>`;
   const pinned = ENTR_PINNED.map(p => groups.find(g => g.id === p.id)).filter(g => !!g);
   groups.splice(0, groups.length, ...groups.filter(g => !entrPin(g.id)));
@@ -1910,7 +1922,7 @@ function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?:
   const dest = to ? destLabel(to, dests) : '';
   const hid = !!saved.edits.entrances[e.id]?.hidden;
   const tag = hid ? '<span class="tag" data-text>Hidden</span>' : e.fixed ? '<span class="tag fixed-tag" data-text>Not shuffled</span>' : to ? '' : '<span class="ty" data-text>Add</span>';
-  return `<div class="row entr ${e.game}${to ? ' done' : ''}${hid ? ' ghost' : ''}${e.fixed ? ' fixed' : ''}${isLater(e.id) ? ' is-later' : ''}${isCleared(e.id) ? ' is-cleared' : ''}">
+  return `<div class="row entr ${e.game}${to ? ' done' : ''}${seed.here?.door === e.id ? ' here-row' : ''}${hid ? ' ghost' : ''}${e.fixed ? ' fixed' : ''}${isLater(e.id) ? ' is-later' : ''}${isCleared(e.id) ? ' is-cleared' : ''}">
     <button class="entr-btn" data-entr="${esc(e.id)}" data-edit="entr:${esc(e.id)}" aria-label="${esc(e.title)}: ${to ? `leads to ${esc(dest)}` : 'not logged yet'}">
       <span class="seal">${ICON.tick}</span>
       <span class="nm"><span class="t">${esc(shown)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}${boss ? `<span class="s boss-note">${esc(boss)}</span>` : ''}
@@ -1970,6 +1982,7 @@ function renderEntrances() {
   /* A section can hold only roads arriving from elsewhere, so its name and place come from its own key. */
   const nameOf = (gid: string, rows: EntranceEntry[]) => { const r = rows.find(x => x.dir !== 'enter'); return r ? r.groupName : rows[0].toGroupName ?? gid; };
   const rank = ([gid, rows]: [string, EntranceEntry[]]) => { const i = ENTR_PINNED.findIndex(p => p.id === gid); const r = rows.find(x => !x.toGroup) ?? rows[0]; return i >= 0 ? i - 100 : regionRank(gid, r.game, r.toGroup ? !!r.homeDungeon : r.dungeon); };
+  const here = hereRegion();
   const body = [...byGroup].sort((a, b) => rank(a) - rank(b)).map(([gid, rows]) => {
     const pin = entrPin(gid);
     const all = vis.filter(e => inGroup(e, gid) && !entranceHidden(e) && !e.fixed);
@@ -1982,9 +1995,9 @@ function renderEntrances() {
       <button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide this section"></button>
       <h2>${esc(pin.name)}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span></div>
       ${shut ? '' : `<div class="rows">${[...rows].sort((a, b) => (pin.order?.(a) ?? 0) - (pin.order?.(b) ?? 0)).map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
-    return `<section><div class="section-head">
+    return `<section${gid === here ? ' class="here-sec"' : ''}><div class="section-head">
       <button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide this area"></button>
-      <h2 data-edit="area:${esc(gid)}">${esc(areaName(gid, nameOf(gid, rows)))}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span>
+      <h2 data-edit="area:${esc(gid)}">${esc(areaName(gid, nameOf(gid, rows)))}</h2>${gid === here ? '<span class="here-badge">You are here</span>' : ''}<span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span>
       <span class="head-acts"><button class="linkish edit-only keep" data-add-entrance="${esc(gid)}">Add an entrance</button></span></div>
       ${shut ? '' : dirGroups(sortIn('e:' + gid, rows, e => e.id), dests)}</section>`;
   }).join('') + clearedSection('e:cleared', entrRegion, clearedRows.map(e => entranceRow(isRoad(e) ? roadRow(e, roadRole(e)) : e, dests)), `${clearedRows.length}`);
@@ -2057,6 +2070,7 @@ function afterEntranceChange() {
 
 function pickDest(id: string) {
   setEntrance(picking!, id);
+  hereFromLog(picking!, id);
   closeSheet();
   afterEntranceChange();
 }
@@ -2444,6 +2458,7 @@ function grottoFromReader(original: string, dest: string, choices: string[]) {
       if (!id || seed.entrances[id]) return;
       setEntrance(id, dest);
       gameEntrCount++; gameEntrSkipped = Math.max(0, gameEntrSkipped - 1); memDoors++;
+      hereDoorFound(id, dest);
       afterEntranceChange();
       toast(`Logged an entrance: ${destText(destById().get(dest)) || 'a new place'}.`, true);
     }, () => {});
@@ -2462,6 +2477,7 @@ function warpFromReader(q: DoorQuestion, arrivedAt: number) {
       if (!id || seed.entrances[id]) return;
       setEntrance(id, q.dest);
       gameEntrCount++; gameEntrSkipped = Math.max(0, gameEntrSkipped - 1); memDoors++;
+      hereDoorFound(id, q.dest);
       afterEntranceChange();
       toast(`Logged a warp: ${destText(destById().get(q.dest)) || 'a new place'}.`, true);
     }, () => {}).finally(ask);
@@ -2620,6 +2636,8 @@ type DoorQuestion = { dest: string; choices: string[]; ready: boolean };
 const doorQuestions: DoorQuestion[] = [];
 let doorAsking = false;
 let gameLastArrival = '';
+/* Names the game gives a few doors that share them (see entrance-feed.ts): those don't say which door it was. */
+const SHARED_NAME = /_GROTTO_TYPE_|_WATER$|^OOT_HYRULE_CASTLE_FROM_FAIRY$|^OOT_LOST_WOODS_FROM_KOKIRI_FOREST$|^UNKNOWN$/;
 /** When the game last said the player arrived somewhere (this computer's clock). */
 let gameLastArrivalAt = 0;
 function onGameEntrance(m: GameEntrance) {
@@ -2628,12 +2646,15 @@ function onGameEntrance(m: GameEntrance) {
   gameLastArrivalAt = Date.now();
   gameHere = arrivedAt(m.entrance, list);
   gameLastArrival = m.entrance;
-  if (!gameEntrancesOn()) return;
+  /* A different game than the one this seed follows isn't where this seed's player is. */
   if (m.session && seed.game && seed.game !== m.session) return;
+  const answer = whichDoor(m.original, m.entrance, before, last, list, id => !!seed.entrances[id]);
+  /* Where you are now: the place the game says, and the door when it's sure which (an unshuffled door is the one it named). */
+  hereFromGame(m.entrance, answer && 'door' in answer ? answer.door : m.original && !SHARED_NAME.test(m.original) && ways()?.doors[m.original] ? m.original : '');
+  if (!gameEntrancesOn()) return;
   if (m.session && !seed.game) seed.game = m.session;
   /* Leaving a place makes its waiting questions ready, after this door is logged. */
   for (const q of doorQuestions) q.ready = true;
-  const answer = whichDoor(m.original, m.entrance, before, last, list, id => !!seed.entrances[id]);
   if (answer && 'door' in answer) {
     if (!seed.entrances[answer.door]) {
       setEntrance(answer.door, m.entrance);
@@ -2666,6 +2687,7 @@ function askNextDoor() {
     const actions: Record<string, () => void> = {};
     for (const e of rows) actions['door:' + e.id] = () => {
       if (!seed.entrances[e.id]) { setEntrance(e.id, q.dest); gameEntrCount++; }
+      hereDoorFound(e.id, q.dest);
       closeSheet();
       afterEntranceChange();
     };
@@ -2676,6 +2698,231 @@ function askNextDoor() {
       <div class="btns"><button class="btn alt" data-sheet-close>None of these</button></div>`, actions, () => { doorAsking = false; askNextDoor(); });
     return;
   }
+}
+
+/* ---------- Where you are now, and directions ----------
+   The sidebar keeps a small panel above its list that doesn't scroll away: the place the player is in, and the entrance
+   they came in by. In the Windows app with game tracking on, the game says (each time the player goes through a loading
+   zone, through the OoTMM Client). Anywhere else, the player sets it, and logging an entrance by hand moves it to where
+   that entrance leads. The same place is marked on the Entrances tab.
+   Directions route from there to any place the player types, only through entrances they have logged and ones these
+   settings don't shuffle (see directions.ts). */
+const ways = () => entranceData().ways;
+let shuffledFor: { from: EntranceData; set: Set<string> } | null = null;
+/** Entrances these settings shuffle. Each one is closed to directions until the player logs it. */
+function shuffledSet() {
+  const data = entranceData();
+  if (shuffledFor?.from !== data) shuffledFor = { from: data, set: new Set(data.list.filter(e => !e.fixed && !e.id.startsWith('custom')).map(e => e.id)) };
+  return shuffledFor.set;
+}
+/** A place's name: a region by its area name (renamed in Edit mode or not), a room by OoTMM's name for it. */
+function placeName(key: string, withRegion = false) {
+  const p = ways()?.places[key];
+  if (!p) return '';
+  if (!key.startsWith('a:')) return areaName(key, p[0]);
+  return withRegion && p[1] ? `${p[0]}, ${p[1]}` : p[0];
+}
+/** The region the player is in, as the Entrances tab groups it. */
+function hereRegion() {
+  const w = ways(), h = seed.here;
+  if (!w || !h) return '';
+  if (h.area && w.areas[h.area]) return w.areas[h.area][1];
+  if (!h.place.startsWith('a:')) return h.place;
+  return w.areas[h.place.slice(2)]?.[1] ?? '';
+}
+/** An entrance's name as the Entrances tab shows it, or OoTMM's when it isn't on the tab (it isn't shuffled). */
+function doorName(id: string) {
+  const e = entranceData().list.find(x => x.id === id);
+  if (e) return e.title;
+  return ways()?.doors[id]?.[3] ?? '';
+}
+/** The song a warp needs, when the player has it on the Items tab (either game's, or the shared one). */
+function hasWarpSong(door: string) {
+  const song = warpSong(ways()!, door);
+  if (!song) return false;
+  const have = owned();
+  return ['OOT_', 'MM_', 'SHARED_'].some(g => itemCount(g + song, have) > 0);
+}
+function routeFromHere(goal: string): Step[][] | null | undefined {
+  const w = ways(), h = seed.here;
+  if (!w || !h || !w.places[goal]) return undefined;
+  const start = h.area && w.areas[h.area] ? [h.area] : areasIn(w, h.place);
+  if (!start.length) return undefined;
+  return findRoutes(w, { start, goal, logged: seed.entrances, shuffled: shuffledSet(), canWarp: hasWarpSong });
+}
+/** Sets where the player is. door is the entrance they came in by, when known. */
+function setHere(place: string, by: 'game' | 'you', area?: string, door?: string) {
+  if (!ways()?.places[place]) return;
+  const was = seed.here;
+  seed.here = { place, by, ...(area ? { area } : {}), ...(door ? { door } : {}) };
+  if (seed.goal && seed.goal === place) {
+    toast(`You made it to ${placeName(place)}.`);
+    delete seed.goal; delete seed.via;
+  }
+  save();
+  if (was?.place !== place) renderRail(); else renderHere();
+  if (tab === 'entrances' && (was?.place !== place || was?.door !== door)) renderEntrances();
+}
+/* The game said the player arrived through this entrance. */
+function hereFromGame(dest: string, door: string) {
+  const w = ways();
+  const area = w?.doors[dest]?.[1] ?? feedList().sides[dest]?.[1];
+  if (!w || !area || !w.areas[area]) return;
+  setHere(w.areas[area][0], 'game', area, door || undefined);
+}
+/* A door the app had to ask about was answered: if it's the one the player just came through, show it. */
+function hereDoorFound(door: string, dest: string) {
+  if (seed.here?.by !== 'game' || seed.here.door || dest !== gameLastArrival) return;
+  seed.here.door = door;
+  save();
+  renderHere();
+  if (tab === 'entrances') renderEntrances();
+}
+/* Logging an entrance by hand, without the game saying where the player is, moves them to where it leads. */
+function hereFromLog(src: string, dst: string) {
+  if (gameLink === 'game' || dst.startsWith('text:')) return;
+  const w = ways();
+  const area = w?.doors[dst]?.[1];
+  if (!w || !area || !w.areas[area]) return;
+  setHere(w.areas[area][0], 'you', area, src);
+}
+
+function stepHtml(s: Step, i: number) {
+  const tag = (logged: boolean) => `<span class="tag${logged ? '' : ' fixed-tag'}">${logged ? 'You logged this' : 'Not shuffled'}</span>`;
+  let what: string, where = '';
+  if (s.kind === 'walk') what = `Walk to <b>${esc(placeName(s.to))}</b>`;
+  else if (s.kind === 'warp') {
+    const type = ways()?.doors[s.door]?.[2] ?? '';
+    const name = doorName(s.door);
+    what = type === 'one-way-statue' ? `Play the Song of Soaring to <b>${esc(name.replace(/^SOS \((.*)\)$/, '$1'))}</b>` : `Play <b>${esc(name)}</b>`;
+    where = `<span class="s">From anywhere. It takes you to ${esc(placeName(s.to))}.</span>${tag(s.logged)}`;
+  } else {
+    what = `Take <b>${esc(doorName(s.door))}</b>`;
+    where = `<span class="s">In ${esc(placeName(s.from))}. It takes you to ${esc(placeName(s.to))}.</span>${tag(s.logged)}`;
+  }
+  return `<li class="step ${s.kind}"${s.kind === 'door' && entranceData().list.some(e => e.id === s.door) ? ` data-edit="entr:${esc(s.door)}"` : ''}><span class="num">${i + 1}</span><div class="what"><span class="t">${what}</span>${where}</div></li>`;
+}
+function routeHtml(goal: string) {
+  const routes = routeFromHere(goal);
+  if (routes === undefined) return '<p class="fine">Set where you are first.</p>';
+  const pick = routes ? pickRoute(routes, seed.via) : 0;
+  const steps = routes?.[pick] ?? null;
+  if (steps === null) return `<div class="empty route-none"><h3>No way there yet</h3>None of the entrances you've logged lead to ${esc(placeName(goal))} from here. Log more entrances as you find them and try again. Directions only use entrances you've logged and ones that aren't shuffled.</div>`;
+  if (!steps.length) return `<p class="route-there">You're already in ${esc(placeName(goal))}.</p>`;
+  const count = (r: Step[]) => r.filter(x => x.kind !== 'walk').length;
+  const doors = count(steps);
+  const choose = routes!.length > 1 ? `<div class="route-pick"><span>${routes!.length} ways there. Pick one:</span><div class="seg" role="group" aria-label="Pick a way">${routes!.map((r, i) =>
+    `<button class="keep" data-act="route:${i}" data-route="${i}" aria-pressed="${i === pick}">${i === 0 ? 'Shortest' : `Way ${i + 1}`}: ${count(r)} ${count(r) === 1 ? 'entrance' : 'entrances'}</button>`).join('')}</div></div>` : '';
+  return `${choose}<p class="route-sum">${doors} ${doors === 1 ? 'entrance' : 'entrances'} from ${esc(placeName(seed.here!.place))} to ${esc(placeName(goal))}.</p>
+    <ol class="route">${steps.map(stepHtml).join('')}<li class="step end"><span class="num">✓</span><div class="what"><span class="t">You're in <b>${esc(placeName(goal))}</b></span></div></li></ol>
+    <p class="fine">Directions don't check the items each step needs.</p>`;
+}
+
+function renderHere() {
+  const box = document.getElementById('here');
+  if (!box) return;
+  const w = ways();
+  if (!w) { box.hidden = true; return; }
+  box.hidden = false;
+  const h = seed.here?.place && w.places[seed.here.place] ? seed.here : null;
+  const goal = seed.goal && w.places[seed.goal] ? seed.goal : '';
+  let next = '';
+  if (h && goal) {
+    const routes = routeFromHere(goal);
+    const steps = routes ? routes[pickRoute(routes, seed.via)] : routes;
+    const first = steps?.[0];
+    next = !steps ? `<span class="here-next none">No logged way there from here yet.</span>`
+      : !first ? '' : `<span class="here-next">Next: ${first.kind === 'walk' ? `walk to ${esc(placeName(first.to))}` : first.kind === 'warp' ? `play ${esc(doorName(first.door))}` : `take ${esc(doorName(first.door))}`}</span>`;
+  }
+  const region = hereRegion();
+  box.innerHTML = `<div class="here-head"><span class="here-dot${h?.by === 'game' ? ' live' : ''}" aria-hidden="true"></span><span class="here-label">Where you are now</span>${h ? `<span class="here-by">${h.by === 'game' ? 'From the game' : 'Set by you'}</span>` : ''}</div>
+    ${h ? `<button class="here-place keep" data-here-show title="Show it on the Entrances tab"${region ? ` data-edit="area:${esc(region)}"` : ''}>${esc(placeName(h.place, true))}</button>
+      ${h.door ? `<div class="here-door">Came in by ${esc(doorName(h.door))}</div>` : ''}`
+      : `<p class="here-none">${gameLink === 'game' ? 'Go through any door in the game and it shows here.' : 'Not set yet. Pick where you are, or log an entrance.'}</p>`}
+    ${goal ? `<div class="here-goal"><span>Heading to <b>${esc(placeName(goal))}</b></span>${next}<button class="linkish keep" data-goal-stop>Stop</button></div>` : ''}
+    <div class="here-acts"><button class="btn keep" data-directions>${goal ? 'See directions' : 'Directions'}</button><button class="btn alt keep" data-here-set>${h ? 'Change' : 'Set where you are'}</button></div>`;
+}
+
+/* Shows the player's place on the Entrances tab: opens its area and scrolls to the entrance they came in by. */
+function showHere() {
+  const region = hereRegion();
+  const has = region && entranceData().list.some(e => inGroup(e, region) && !e.fixed);
+  tab = 'entrances';
+  entrRegion = has ? region : null;
+  entrQuery = '';
+  phoneView = 'pane';
+  renderRail(); renderTabs(); renderEntrances();
+  const row = document.querySelector<HTMLElement>('#entrScroll .here-row') ?? document.querySelector<HTMLElement>('#entrScroll .here-sec');
+  if (row) row.scrollIntoView({ block: 'center' });
+  else $('#entrScroll')?.scrollTo(0, 0);
+  if (!has) toast(`${placeName(seed.here?.place ?? '') || 'This place'} has no shuffled entrances to show.`);
+}
+
+/* The place search, for directions and for setting where you are. */
+let placeQuery = '';
+let placeMode: 'goal' | 'here' = 'goal';
+function renderPlaceList() {
+  const box = document.getElementById('placeList'), w = ways();
+  if (!box || !w) return;
+  const actions = layers[layers.length - 1]?.actions;
+  const keys = placeQuery.trim() ? searchPlaces(w, placeQuery)
+    : Object.keys(w.places).filter(k => !k.startsWith('a:') && k !== 'NONE').sort((a, b) => regionRank(a, w.places[a][2], false) - regionRank(b, w.places[b][2], false));
+  if (actions) for (const k of keys) actions['place:' + k] = () => pickPlace(k);
+  box.innerHTML = keys.map(k => `<button class="pick ${w.places[k][2]}" data-act="place:${esc(k)}" data-place="${esc(k)}"><span class="t">${esc(placeName(k))}</span>${w.places[k][1] ? `<span class="s">${esc(w.places[k][1])}</span>` : ''}</button>`).join('')
+    || '<div class="empty">No place by that name. Try another word.</div>';
+}
+function pickPlace(key: string) {
+  if (placeMode === 'here') {
+    setHere(key, 'you');
+    const go = pendingDirections;
+    closeSheet();
+    if (go) openDirections();
+    return;
+  }
+  seed.goal = key;
+  delete seed.via;
+  save();
+  renderHere();
+  showRoute();
+}
+/* Shows the way to the goal in the directions window, with a button for each other way there. */
+function showRoute() {
+  const box = document.getElementById('placeArea'), goal = seed.goal;
+  if (!box || !goal) return;
+  box.innerHTML = routeAreaHtml(goal);
+  const actions = layers[layers.length - 1]?.actions;
+  const routes = routeFromHere(goal);
+  if (actions && routes) routes.forEach((r, i) => {
+    actions['route:' + i] = () => {
+      seed.via = r.flatMap(x => x.kind === 'walk' ? [] : [x.door]);
+      save(); renderHere(); showRoute();
+    };
+  });
+}
+let pendingDirections = false;
+const routeAreaHtml = (goal: string) => `${routeHtml(goal)}<div class="btns"><button class="btn alt" data-act="other">Go somewhere else</button>${seed.goal ? '<button class="btn alt" data-act="stop">Stop directions</button>' : ''}</div>`;
+const placeSearchHtml = (hint: string) => `<input class="search" id="placeSearch" type="search" placeholder="${esc(hint)}" aria-label="${esc(hint)}" autocomplete="off">
+  <div class="pick-list" id="placeList"></div>`;
+function openSetHere() {
+  placeMode = 'here';
+  placeQuery = '';
+  openSheet('Where are you now?', 'Pick the place you are in. Directions start from here.', placeSearchHtml('Type a place, like Kokiri Forest'), {}, () => { pendingDirections = false; });
+  renderPlaceList();
+}
+function openDirections() {
+  if (!ways()) return toast('Directions need the seed to finish loading.');
+  if (!seed.here) { pendingDirections = true; openSetHere(); return; }
+  placeMode = 'goal';
+  placeQuery = '';
+  const goal = seed.goal && ways()!.places[seed.goal] ? seed.goal : '';
+  const actions: Record<string, () => void> = {
+    from() { closeSheet(); pendingDirections = true; openSetHere(); },
+    other() { placeQuery = ''; const box = document.getElementById('placeArea'); if (box) { box.innerHTML = placeSearchHtml('Where to? Type a place, like Fire Temple'); renderPlaceList(); $('#placeSearch')?.focus(); } },
+    stop() { delete seed.goal; delete seed.via; save(); renderHere(); actions.other(); },
+  };
+  openSheet('Directions', '', `<div class="dir-from"><span>From <b>${esc(placeName(seed.here.place, true))}</b></span><button class="linkish" data-act="from">Change</button></div>
+    <div id="placeArea">${goal ? routeAreaHtml(goal) : placeSearchHtml('Where to? Type a place, like Fire Temple')}</div>`, actions);
+  if (goal) showRoute(); else renderPlaceList();
 }
 
 function gameTrackBox() {
@@ -3726,6 +3973,10 @@ function events() {
       entrQuery = t.value;
       clearTimeout(searchTimer);
       searchTimer = window.setTimeout(renderEntrances, 120);
+    } else if (t.id === 'placeSearch') {
+      placeQuery = t.value;
+      clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(renderPlaceList, 100);
     } else if (t.id === 'pickSearch') {
       pickQuery = t.value;
       clearTimeout(searchTimer);
@@ -3867,6 +4118,10 @@ function events() {
       return;
     }
 
+    if ('hereShow' in d) { showHere(); return; }
+    if ('hereSet' in d) { openSetHere(); return; }
+    if ('directions' in d) { openDirections(); return; }
+    if ('goalStop' in d) { delete seed.goal; delete seed.via; save(); renderHere(); return; }
     if (d.tab) { tab = d.tab as typeof tab; phoneView = 'rail'; renderRail(); renderTabs(); renderPane(); return; }
     if ('entrRegion' in d) {
       entrRegion = d.entrRegion || null; entrQuery = ''; phoneView = 'pane';

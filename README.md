@@ -106,6 +106,23 @@ tracking > Save file, choose Project64-EM's save file for OoTMM (the `.fla` file
 ticks every check your last in-game save has, and reads it again each time you save while playing. It can't tell what
 item was at those checks, only that they're done. If the save file holds two games, pick which one is the seed.
 
+## Where you are now and directions
+
+A small "Where you are now" panel sits in the sidebar above the area list, and stays put while the list scrolls. It
+shows the place you're in and the entrance you came in by. Tap the place to see it on the Entrances tab: its area is
+marked "You are here" and the entrance you came through is highlighted.
+
+- In the Windows app with game tracking on, the game says where you are each time you go through a loading zone (it
+  doesn't need entrance logging on). The memory reader helps name the door for plain grottos and warp songs.
+- On the phone, or without the game, tap Change to pick where you are. Logging an entrance by hand also moves you to
+  where it leads.
+
+Directions: tap Directions, type a place (a region, a house, a grotto or a dungeon), and the app lists each entrance to
+take, in order, from where you are. It only goes through entrances you've logged and ones your settings don't shuffle,
+so an entrance you haven't logged stays closed. Warp songs are used once the song is on your Items tab. The sidebar
+then shows the next step until you get there. When there's more than one way, the directions show up to four, shortest
+first, and you can pick the one to follow. Directions don't check which items each step needs.
+
 ## Check names
 
 **Settings > Your edits > Check names** has a three-way slider:
@@ -238,8 +255,7 @@ Electron's default file icon; the shortcuts, the window and the taskbar use the 
 
 Ideas the owner wants, not built yet:
 
-- **Directions.** Type any place and the app gives the way to get there, routed only through the entrances and areas
-  the player has logged so far. Unlogged shuffled entrances stay closed, as in reachable checks.
+- **Directions.** Done (Nov 22, 2026). See [Where you are now and directions](#where-you-are-now-and-directions).
 
 ## Credits
 

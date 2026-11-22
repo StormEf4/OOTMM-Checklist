@@ -73,6 +73,11 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
   build leaves the reader off, with a warning, when the OoTMM source changed since. It calls Windows through koffi,
   which `tools/package-windows.mjs` adds to the installer. `node tools/memreader-test.cjs` and
   `node tools/memory-doors-test.mjs` check it
+- `src/directions.ts`: "Where you are now" (the sidebar panel) and directions. Routes run on OoTMM's normal map (`ways` in
+  `src/engine/entrances.ts`: areas, walking between them, every entrance, and what the settings fix), through only the
+  entrances the player logged plus ones the settings don't shuffle. Item rules aren't checked. Where the player is comes
+  from game tracking's entrance messages (whether or not entrance logging is on), or the player sets it; logging an
+  entrance by hand moves it when the game isn't connected. Saved per seed as `seed.here` and `seed.goal`
 - `desktop/`: the Windows window (Electron)
 - `tools/`: build, tests and packaging
 - `dist/web/`: the built phone site, and `dist/desktop/`: the built Windows app files. Both are committed
@@ -82,6 +87,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `npm run verify`: compares the checklist with OoTMM's `locationList()` on random settings. Runs where OoTMM reports
   `Expression is not allowed at runtime` are combinations OoTMM refuses, not list errors.
 - `node tools/seed-test.mjs` and `node tools/er-test.mjs`: compare against real seeds from the full solver.
+- `node tools/directions-test.mjs`: directions on OoTMM's real map never use an unlogged shuffled entrance.
 - `node tools/logic-test.mjs`: reachable checks must match OoTMM's own pathfinder on solved seeds. `LOGIC_FUZZ=n` adds random
   settings. Random settings that OoTMM can't generate are skipped and can take minutes each.
 - Full sweeps, slow, split with `SHARD=i/n` across processes:
@@ -90,7 +96,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
     about an hour over 3 shards. `LOGIC_RETRY=<file of case names>` retries skipped cases with looser placement rules.
   - `node tools/ui-toggles-data.mjs`, then `tools/ui-toggles.cjs`, uses every settings control in the browser.
 - Random shop prices are expected to differ in the logic sweep: the app counts shops at their normal price.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`, `tools/ui-gamefeed-entrances.cjs`, `tools/ui-gamefeed-memory.cjs`, `tools/ui-save-seeds.cjs`, `tools/ui-souls.cjs`, `tools/ui-seg.cjs`, `tools/ui-roads.cjs`, `tools/ui-typing.cjs`, `tools/ui-hearts.cjs`, `tools/ui-shared.cjs`, `tools/ui-clear.cjs`: browser tests. Run with
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`, `tools/ui-gamefeed-entrances.cjs`, `tools/ui-gamefeed-memory.cjs`, `tools/ui-save-seeds.cjs`, `tools/ui-souls.cjs`, `tools/ui-seg.cjs`, `tools/ui-roads.cjs`, `tools/ui-typing.cjs`, `tools/ui-hearts.cjs`, `tools/ui-shared.cjs`, `tools/ui-clear.cjs`, `tools/ui-here.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 
