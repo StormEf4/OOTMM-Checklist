@@ -3,7 +3,9 @@
  *
  * It finds Project64-EM on this PC, finds the game's memory inside it, and every 50 ms reads a few bytes:
  * - each game's name tag ("ZELDAZ" for OoT, "ZELDA3" for MM), to know which game is running;
- * - the running game's grotto number (OoTMM's gGrottoData), which a grotto hole sets as Link drops in.
+ * - the running game's grotto number (OoTMM's gGrottoData), which a grotto hole sets as Link drops in;
+ * - the running game's last ocarina notes (the 8 the free-play staff shows), how many there are, and the note each button
+ *   plays, which together say which warp song was just played.
  * Where those sit comes from ram-layout.json, made from OoTMM's own code by tools/ram-layout.mjs. Nothing else is ever
  * read: not OoTMM's entrance table, nor anything that says where a door leads. It only reads, so the game, the OoTMM
  * Client and co-op aren't touched.
@@ -59,6 +61,10 @@ function createReader(opts = {}) {
   const last = { oot: null, mm: null };
   /* When the reader started watching each game this time round: numbers seen before then aren't trusted to be fresh. */
   const since = { oot: 0, mm: 0 };
+  /* The ocarina's last notes in each game, and when they last changed. lastKey: what was there at the last look (null:
+     not looked since the game started, so the first look only sets it). */
+  const notes = { oot: null, mm: null };
+  const lastKey = { oot: null, mm: null };
 
   const status = () => ({
     available: !!(layout && win),
@@ -83,6 +89,15 @@ function createReader(opts = {}) {
   }
   /* The byte at N64 address a. */
   const byteAt = a => { const b = read(base + ((a & 0x7fffff) ^ 3), 1); return b ? b[0] : null; };
+  /* n bytes from N64 address a, read in one go. */
+  const bytesAt = (a, n) => {
+    const start = a & ~3, end = (a + n + 3) & ~3;
+    const b = read(base + (start & 0x7fffff), end - start);
+    if (!b) return null;
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(b[((a + i) - start) ^ 3]);
+    return out;
+  };
   const tagAt = (a, len) => { let s = ''; for (let i = 0; i < len; i++) { const c = byteAt(a + i); if (c === null) return null; s += String.fromCharCode(c); } return s; };
   const whichGame = () => {
     for (const g of ['oot', 'mm']) if (tagAt(layout.addr[g].tag, layout.tags[g].length) === layout.tags[g]) return g;
@@ -143,7 +158,7 @@ function createReader(opts = {}) {
       game = null;
       return;
     }
-    if (g !== game) since[g] = Date.now();
+    if (g !== game) { since[g] = Date.now(); lastKey[g] = null; }
     game = g;
     const v = byteAt(layout.addr[g].grotto);
     if (v === null) { detach(); return; }
@@ -151,6 +166,17 @@ function createReader(opts = {}) {
       last[g] = v;
       history[g].push({ v, t: Date.now() });
       if (history[g].length > KEEP) history[g].shift();
+    }
+    const oc = layout.ocarina && layout.ocarina[g];
+    if (oc) {
+      const len = layout.ocarinaBufLen;
+      const buf = bytesAt(oc.buf, len + 1), pitch = bytesAt(oc.pitch, 5);
+      if (!buf || !pitch) return;
+      const cursor = Math.min(buf[len], len);
+      const played = buf.slice(0, cursor);
+      const key = played.join(',') + '|' + pitch.join(',');
+      if (lastKey[g] !== null && key !== lastKey[g]) notes[g] = { notes: played, pitch, t: Date.now() };
+      lastKey[g] = key;
     }
   }
 
@@ -164,6 +190,9 @@ function createReader(opts = {}) {
     stop() { clearInterval(timer); timer = null; if (win) detach(); return status(); },
     /* The grotto numbers seen lately in this game, oldest first, with when each was first seen (ms since 1970). */
     grottoHistory(g) { return (history[g] || []).slice(); },
+    /* The ocarina's last notes in this game, the note each button plays, and when they last changed; null when they
+       haven't changed since the reader started watching. */
+    lastNotes(g) { return notes[g] ? { ...notes[g] } : null; },
     /* Since when the reader has been watching this game without a break (0: not now). */
     watchingSince(g) { return game === g ? since[g] : 0; },
     now: () => Date.now(),

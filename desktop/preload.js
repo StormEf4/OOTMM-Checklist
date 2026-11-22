@@ -21,4 +21,5 @@ contextBridge.exposeInMainWorld('ootmmMem', {
   stop: () => ipcRenderer.invoke('mem:stop'),
   status: () => ipcRenderer.invoke('mem:status'),
   grottos: g => ipcRenderer.invoke('mem:grottos', g),
+  notes: () => ipcRenderer.invoke('mem:notes'),
 });

@@ -27,7 +27,7 @@ import { COLOR_TOKENS, FONT_CHOICES, SEALS, SKINS, skinById } from './skins';
 import { applyLayer, originalAttr, originalOf, templateOf, textAt } from './textlayer';
 import { startGameFeed, type GameEntrance, type GameItem, type GameLink } from './gamefeed';
 import { arrivedAt, whichDoor, type FeedEntranceList, type Here } from './entrance-feed';
-import { grottoFromMemory, grottoGame, type GrottoSeen } from './grotto-memory';
+import { grottoFromMemory, grottoGame, warpFromMemory, type GrottoSeen, type NotesSeen } from './memory-doors';
 import { readSave, type SaveSlot } from './savefile';
 
 declare const __TARGET__: 'web' | 'desktop' | 'artifact';
@@ -2375,15 +2375,15 @@ function syncGameFeed() {
 
 /* ---------- Game tracking: the memory reader ----------
    The Windows app can read one number from the game's memory in Project64-EM: the one that says which plain grotto
-   hole the player dropped into (see desktop/memreader.js and grotto-memory.ts). It runs only while entrance logging and
+   hole the player dropped into (see desktop/memreader.js and memory-doors.ts). It runs only while entrance logging and
    this switch are both on. */
 type MemStatus = { available: boolean; running: boolean; found: boolean; game: 'oot' | 'mm' | null; note: string };
-type MemBridge = { start(): Promise<MemStatus>; stop(): Promise<MemStatus>; status(): Promise<MemStatus>; grottos(g: 'oot' | 'mm'): Promise<{ now: number; since: number; history: GrottoSeen[] }> };
+type MemBridge = { start(): Promise<MemStatus>; stop(): Promise<MemStatus>; status(): Promise<MemStatus>; grottos(g: 'oot' | 'mm'): Promise<{ now: number; since: number; history: GrottoSeen[] }>; notes?(): Promise<{ now: number; oot: NotesSeen; mm: NotesSeen }> };
 const memBridge = (): MemBridge | undefined => (globalThis as any).ootmmMem;
 const memWanted = () => !!memBridge() && gameTrackOn() && gameEntrancesOn() && saved.ui.gameMemory === true;
 let memStatus: MemStatus | null = null;
 let memTimer = 0;
-let memGrottos = 0;
+let memDoors = 0;
 function syncMemReader() {
   const b = memBridge();
   if (!b) return;
@@ -2402,7 +2402,7 @@ function memStateText() {
   if (!s.available || !s.running) return s.note || 'Off.';
   if (!s.found) return (s.note || 'Looking for Project64-EM...') + ' It keeps looking.';
   const game = s.game === 'oot' ? 'Ocarina of Time' : s.game === 'mm' ? "Majora's Mask" : 'the game';
-  return `Reading ${game} in Project64-EM.${memGrottos ? ` Grottos told apart this session: ${memGrottos}.` : ''}`;
+  return `Reading ${game} in Project64-EM.${memDoors ? ` Doors it told apart this session: ${memDoors}.` : ''}`;
 }
 /* Settles a plain grotto question from the reader, if it can tell which hole it was. The question stays queued
    meanwhile; once the door is logged it is skipped. */
@@ -2416,11 +2416,29 @@ function grottoFromReader(original: string, dest: string, choices: string[]) {
       const id = grottoFromMemory(original, dest, history, now, since, open);
       if (!id || seed.entrances[id]) return;
       setEntrance(id, dest);
-      gameEntrCount++; gameEntrSkipped = Math.max(0, gameEntrSkipped - 1); memGrottos++;
+      gameEntrCount++; gameEntrSkipped = Math.max(0, gameEntrSkipped - 1); memDoors++;
       afterEntranceChange();
       toast(`Logged an entrance: ${destText(destById().get(dest)) || 'a new place'}.`, true);
     }, () => {});
   }, 300);
+}
+
+/* Settles a warp question from the reader, if the last ocarina notes played since arriving are one warp song. The
+   question waits meanwhile, and is asked if the reader can't tell. */
+function warpFromReader(q: DoorQuestion, arrivedAt: number) {
+  const b = memBridge();
+  const ask = () => { q.ready = true; askNextDoor(); };
+  if (!b?.notes || !memTimer) { ask(); return; }
+  setTimeout(() => {
+    b.notes!().then(r => {
+      const id = warpFromMemory({ oot: r.oot, mm: r.mm }, arrivedAt, q.choices.filter(c => !seed.entrances[c]));
+      if (!id || seed.entrances[id]) return;
+      setEntrance(id, q.dest);
+      gameEntrCount++; gameEntrSkipped = Math.max(0, gameEntrSkipped - 1); memDoors++;
+      afterEntranceChange();
+      toast(`Logged a warp: ${destText(destById().get(q.dest)) || 'a new place'}.`, true);
+    }, () => {}).finally(ask);
+  }, 150);
 }
 
 /* ---------- Game tracking: catching up from the save file ----------
@@ -2572,9 +2590,12 @@ type DoorQuestion = { dest: string; choices: string[]; ready: boolean };
 const doorQuestions: DoorQuestion[] = [];
 let doorAsking = false;
 let gameLastArrival = '';
+/** When the game last said the player arrived somewhere (this computer's clock). */
+let gameLastArrivalAt = 0;
 function onGameEntrance(m: GameEntrance) {
   const list = feedList();
-  const before = gameHere, last = gameLastArrival;
+  const before = gameHere, last = gameLastArrival, lastAt = gameLastArrivalAt;
+  gameLastArrivalAt = Date.now();
   gameHere = arrivedAt(m.entrance, list);
   gameLastArrival = m.entrance;
   if (!gameEntrancesOn()) return;
@@ -2592,8 +2613,10 @@ function onGameEntrance(m: GameEntrance) {
     }
   } else if (answer) {
     gameEntrSkipped++;
-    doorQuestions.push({ dest: m.entrance, choices: answer.choices, ready: answer.now });
-    grottoFromReader(m.original, m.entrance, answer.choices);
+    const q: DoorQuestion = { dest: m.entrance, choices: answer.choices, ready: answer.now };
+    doorQuestions.push(q);
+    if (!m.original && memTimer) { q.ready = false; warpFromReader(q, lastAt); }
+    else grottoFromReader(m.original, m.entrance, answer.choices);
   }
   askNextDoor();
 }
@@ -2638,8 +2661,8 @@ function gameTrackBox() {
     <div class="seg" role="group" aria-label="Log items found">${seg('game-items-set', saved.ui.gameItems !== false, ['Log items', 'Checks only'])}</div>
     <h3>Entrances</h3><p>Log each entrance the first time you go through it, with where it took you. Only doors you walk through are logged, and ones you already logged stay as you set them. When the game doesn't say which way you came (a warp song, or one of a few grottos in the same field), the app asks you.</p>
     <div class="seg" role="group" aria-label="Log entrances">${seg('game-entrances-set', gameEntrancesOn(), ['Log entrances', 'Off'])}</div>
-    ${gameEntrancesOn() && memBridge() ? `<h3>Memory reader</h3><p>Tells the plain grottos apart, so they're logged without asking you. It reads only the game's name and the number that says which grotto hole you dropped into, from Project64-EM's memory on this PC, and never changes anything. Some antivirus programs warn about apps that read another program's memory.</p>
-    <div class="seg" role="group" aria-label="Memory reader">${seg('game-memory-set', saved.ui.gameMemory === true, ['Read grottos', 'Off'])}</div>
+    ${gameEntrancesOn() && memBridge() ? `<h3>Memory reader</h3><p>Tells which plain grotto you dropped into and which warp song you played, so they're logged without asking you. It reads only the game's name, the number that says which grotto hole you used, and the last ocarina notes you played, from Project64-EM's memory on this PC, and never changes anything. Owl soaring still asks. Some antivirus programs warn about apps that read another program's memory.</p>
+    <div class="seg" role="group" aria-label="Memory reader">${seg('game-memory-set', saved.ui.gameMemory === true, ['Read memory', 'Off'])}</div>
     ${saved.ui.gameMemory === true ? `<p class="fine" id="memState">${esc(memStateText())}</p>` : ''}` : ''}
     ${gameEntrancesOn() && (gameEntrCount || gameEntrSkipped) ? `<p class="fine">This session: ${gameEntrCount} logged${gameEntrSkipped ? `, ${gameEntrSkipped} the game didn't name clearly (you were asked about those)` : ''}.</p>` : ''}
     ${seed.game ? `<p class="fine">This seed follows one game. If you started a new seed in the game, let it follow that one.</p><div class="btns"><button class="btn alt keep" data-game-forget>Follow a different game</button></div>` : ''}

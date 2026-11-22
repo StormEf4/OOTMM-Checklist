@@ -12,7 +12,8 @@ a hosted page. This repository is the source of truth: start all work here, from
   player walked through it. Only that door and where it led; never any door not yet used, never the game's entrance
   table, and never over a door the player already logged.
 - The Windows app's memory reader (App Settings > Game tracking > Memory reader, off by default) reads only each
-  game's name tag and OoTMM's grotto number (gGrottoData), never OoTMM's entrance table or anything else. It only reads.
+  game's name tag, OoTMM's grotto number (gGrottoData) and the ocarina's last notes (buffer, length, button notes),
+  never OoTMM's entrance table or anything else. It only reads.
 - Reachable checks use only the items and entrances the player logged. An unlogged shuffled entrance stays closed.
   Hints and found items are typed or picked by the player, never read from a spoiler log.
 - In Edit mode, everything is editable. The Edit mode button is the only exception: keep `data-locked` on it.
@@ -64,12 +65,14 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
   `mips-linux-gnu-gcc` and OoTMM's `scripts/deps.sh`). The build turns catch-up off, with a warning, when the OoTMM
   source changed since; rerun the tool then. `node tools/savefile-test.mjs` checks the reader
 - `desktop/memreader.js`: the memory reader. It finds Project64-EM, finds the game's memory in it, and watches the
-  grotto number so plain grottos (which the game reports by one shared name) can be told apart; `src/grotto-memory.ts`
-  turns those numbers into a door. Where they sit is `src/generated/ram-layout.json`, made by `node tools/ram-layout.mjs`
-  from OoTMM's link files, headers and `Play_EntranceForOverride` (needs `mips-linux-gnu-gcc` like save-layout). The
+  grotto number (plain grottos are reported by one shared name) and the ocarina's last notes (warp songs name no door);
+  `src/memory-doors.ts` turns those into a door. Owl soaring can't be read (OoTMM keeps the choice where no fixed
+  address finds it), so it still asks. Where things sit is `src/generated/ram-layout.json`, made by
+  `node tools/ram-layout.mjs` from OoTMM's link files, headers, `Play_EntranceForOverride`, MM's song list in
+  `src/mm/ocarina.c` and the warp song order in `randomizerWarps` (needs `mips-linux-gnu-gcc` like save-layout). The
   build leaves the reader off, with a warning, when the OoTMM source changed since. It calls Windows through koffi,
   which `tools/package-windows.mjs` adds to the installer. `node tools/memreader-test.cjs` and
-  `node tools/grotto-memory-test.mjs` check it
+  `node tools/memory-doors-test.mjs` check it
 - `desktop/`: the Windows window (Electron)
 - `tools/`: build, tests and packaging
 - `dist/web/`: the built phone site, and `dist/desktop/`: the built Windows app files. Both are committed

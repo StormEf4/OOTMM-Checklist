@@ -1,12 +1,19 @@
 /*
- * Game tracking's memory reader, on the app's side: tells which plain grotto hole the player just dropped into.
+ * Game tracking's memory reader, on the app's side: tells which plain grotto hole the player just dropped into, and
+ * which warp song they just played.
  *
+ * Plain grottos:
  * The game reports every plain grotto by the same name (OOT_GROTTO_TYPE_GENERIC, MM_GROTTO_TYPE_GENERIC). The Windows
  * app's memory reader (desktop/memreader.js) watches the one byte OoTMM itself uses to tell them apart (gGrottoData):
  * - the hole sets it as Link drops in;
  * - when the hole leads into a plain grotto, OoTMM then sets it to that grotto's number on the way in
  *   (Play_ApplyCustomEntrance), so the hole's number is the one just before.
  * Which number is which hole comes from OoTMM's Play_EntranceForOverride, through tools/ram-layout.mjs.
+ *
+ * Warp songs: the game names no door for a warp. The reader keeps the last notes played on the ocarina (the same 8 the
+ * free-play staff shows, which stay until the ocarina next comes out) and the note each button plays. A warp song played
+ * since the player last arrived somewhere ends those notes. Each song's buttons, and which warp it is, come from OoTMM
+ * through tools/ram-layout.mjs.
  *
  * The answer is only ever one of the doors the app would have asked about, and only when exactly one fits; anything
  * else goes back to asking the player.
@@ -64,4 +71,24 @@ export function grottoFromMemory(original: string, dest: string, seen: GrottoSee
   }
   const fit = [...new Set(maybe.filter((id): id is string => !!id && choices.includes(id)))];
   return fit.length === 1 ? fit[0] : null;
+}
+
+export type NotesSeen = { notes: number[]; pitch: number[]; t: number } | null;
+
+/**
+ * The warp song the player just played, or null when it can't be told for sure. seen holds each game's last ocarina
+ * notes (a warp song played in MM can land in OoT, so both count); arrivedAt is when the player last arrived somewhere
+ * before this, so only notes played since then count; choices are the doors the app would ask about.
+ */
+export function warpFromMemory(seen: Partial<Record<Game, NotesSeen>>, arrivedAt: number, choices: string[]): string | null {
+  const latest = (Object.values(seen).filter(Boolean) as NonNullable<NotesSeen>[]).sort((a, b) => b.t - a.t)[0];
+  if (!latest || !arrivedAt || latest.t <= arrivedAt) return null;
+  const { notes, pitch } = latest;
+  const songs = (layout.warpSongs as { row: string; buttons: number[] }[]).filter(s => {
+    const want = s.buttons.map(b => pitch[b]);
+    if (want.length > notes.length || want.some(p => p === undefined)) return false;
+    const tail = notes.slice(notes.length - want.length);
+    return want.every((p, i) => p === tail[i]);
+  });
+  return songs.length === 1 && choices.includes(songs[0].row) ? songs[0].row : null;
 }

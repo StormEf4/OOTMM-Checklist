@@ -44,11 +44,12 @@ const FAKE = () => {
 
 /* The stand-in reader. */
 const MEM = () => {
-  window.__mem = { calls: [], history: { oot: [], mm: [] }, status: { available: true, running: false, found: false, game: null, note: '' } };
+  window.__mem = { calls: [], notes: { oot: null, mm: null }, history: { oot: [], mm: [] }, status: { available: true, running: false, found: false, game: null, note: '' } };
   window.ootmmMem = {
     start: async () => { __mem.calls.push('start'); __mem.status = { available: true, running: true, found: true, game: 'oot', note: '' }; return __mem.status; },
     stop: async () => { __mem.calls.push('stop'); __mem.status = { available: true, running: false, found: false, game: null, note: '' }; return __mem.status; },
     status: async () => __mem.status,
+    notes: async () => { __mem.calls.push('notes'); return { now: Date.now(), ...__mem.notes }; },
     grottos: async g => { __mem.calls.push('grottos:' + g); return { now: Date.now(), since: Date.now() - 60000, history: __mem.history[g] }; },
   };
 };
@@ -76,6 +77,10 @@ const MEM = () => {
   await p.fill('#setSearch', 'grotto shuffle');
   await p.waitForTimeout(300);
   await p.selectOption('[data-enum=erGrottos]', 'full');
+  await p.waitForTimeout(800);
+  await p.fill('#setSearch', 'warp songs and soaring');
+  await p.waitForTimeout(300);
+  await p.selectOption('[data-enum=erWarps]', 'ootOnly');
   await p.waitForTimeout(800);
   await p.waitForFunction(() => window.__feedSockets.length > 0, null, { timeout: 10000 });
   await p.evaluate(() => window.__feed({ type: 'GAME_START', sessionId: 'aaaa', playerName: 'Link', worldId: 1 }));
@@ -130,6 +135,29 @@ const MEM = () => {
   await feed([{ entrance: 'OOT_GROTTO_GENERIC_KAKARIKO' }]);
   await p.waitForTimeout(800);
   ok('no question once the reader told it', !(await p.isVisible('[data-door-choice]')));
+
+  /* A warp song: Minuet's notes, played since arriving, log the Minuet warp without a question. */
+  const notes = (g, buttons) => p.evaluate(([g, buttons]) => { const P = [2, 5, 9, 11, 14]; __mem.notes[g] = { notes: buttons.map(b => P[b]), pitch: P, t: Date.now() }; }, [g, buttons]);
+  await feed([{ original: 'OOT_KOKIRI_FOREST_FROM_LOST_WOODS', entrance: 'OOT_KOKIRI_FOREST_FROM_LOST_WOODS' }]);
+  await p.waitForTimeout(100);
+  await notes('oot', [0, 4, 3, 2, 3, 2]);
+  await feed([{ entrance: 'OOT_WARP_SONG_LAKE' }]);
+  await p.waitForTimeout(1000);
+  s = await state();
+  ok('warp song told by its notes: Minuet logged', s.entrances.OOT_WARP_SONG_MEADOW === 'OOT_WARP_SONG_LAKE', JSON.stringify(s.entrances));
+  ok('no question for that warp', !(await p.isVisible('[data-door-choice]')));
+  /* Notes from before arriving don't count: it asks. */
+  await notes('oot', [1, 0, 1, 0, 2, 1, 2, 1]);
+  await p.waitForTimeout(100);
+  await feed([{ original: 'OOT_KOKIRI_FOREST_FROM_LOST_WOODS', entrance: 'OOT_KOKIRI_FOREST_FROM_LOST_WOODS' }]);
+  await p.waitForTimeout(100);
+  await feed([{ entrance: 'OOT_WARP_SONG_CRATER' }]);
+  await p.waitForSelector('[data-door-choice]', { timeout: 3000 }).catch(() => {});
+  ok('old notes: asks instead', await p.isVisible('[data-door-choice]'));
+  s = await state();
+  ok('old notes: nothing logged', !s.entrances.OOT_WARP_SONG_CRATER, JSON.stringify(s.entrances));
+  await p.click('.sheet [data-sheet-close].btn:has-text("None of these")');
+  await p.waitForTimeout(300);
 
   /* Off again: stopped. */
   await p.click('[data-setview=look]');
