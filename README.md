@@ -33,6 +33,9 @@ rules, so a rebuild picks up changes in the randomizer.
 - **Items.** Tap an item to add one. The list comes from your settings. The bag button on any check logs what you found
   there, marks the check done and counts the item. Found items show on the check. The pin beside an item moves it to a
   Pinned section at the top. **Settings > Appearance > Item pins** chooses whether pins are saved between visits.
+- **Clearing.** The checkmark beside the pin and clock on any check or entrance clears it off the main list into a
+  Cleared checks section at the bottom. Press it again there to put it back. Cleared entries are kept per seed and shared
+  in Coop.
 - **Map.** Switch the Checks tab to Map for a sketch of Hyrule and Termina with each area's progress. Gold areas have
   checks in logic. In Edit mode, tap an area to move it.
 
@@ -230,6 +233,13 @@ electron-builder-binaries goes in `.cache/pack/nsis`. On Windows, install NSIS a
 
 The installer isn't code-signed, so Windows SmartScreen warns on first run. The installed `.exe` file keeps
 Electron's default file icon; the shortcuts, the window and the taskbar use the app's icon.
+
+## Roadmap
+
+Ideas the owner wants, not built yet:
+
+- **Directions.** Type any place and the app gives the way to get there, routed only through the entrances and areas
+  the player has logged so far. Unlogged shuffled entrances stay closed, as in reachable checks.
 
 ## Credits
 
