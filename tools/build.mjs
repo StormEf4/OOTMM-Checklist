@@ -30,7 +30,7 @@ const bundle = async target => {
 const title = 'OoTMM Checklist';
 const fullPage = (js, head = '') => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <title>${title}</title>${head}
 <style>${css}</style></head>
 <body><div id="app"></div><script>${js}</script></body></html>`;
