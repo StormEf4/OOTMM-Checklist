@@ -14,3 +14,11 @@ contextBridge.exposeInMainWorld('ootmmSave', {
   stat: p => ipcRenderer.invoke('save:stat', p),
   read: p => ipcRenderer.invoke('save:read', p),
 });
+
+/* Game tracking's memory reader: reads a few bytes of the game's memory in Project64-EM, only while turned on. */
+contextBridge.exposeInMainWorld('ootmmMem', {
+  start: () => ipcRenderer.invoke('mem:start'),
+  stop: () => ipcRenderer.invoke('mem:stop'),
+  status: () => ipcRenderer.invoke('mem:status'),
+  grottos: g => ipcRenderer.invoke('mem:grottos', g),
+});

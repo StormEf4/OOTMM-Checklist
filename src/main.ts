@@ -27,6 +27,7 @@ import { COLOR_TOKENS, FONT_CHOICES, SEALS, SKINS, skinById } from './skins';
 import { applyLayer, originalAttr, originalOf, templateOf, textAt } from './textlayer';
 import { startGameFeed, type GameEntrance, type GameItem, type GameLink } from './gamefeed';
 import { arrivedAt, whichDoor, type FeedEntranceList, type Here } from './entrance-feed';
+import { grottoFromMemory, grottoGame, type GrottoSeen } from './grotto-memory';
 import { readSave, type SaveSlot } from './savefile';
 
 declare const __TARGET__: 'web' | 'desktop' | 'artifact';
@@ -129,6 +130,8 @@ type Saved = {
     gameTrack?: boolean; gameItems?: boolean;
     /** Game tracking logs each entrance the player walks through, the first time. Off unless turned on. */
     gameEntrances?: boolean;
+    /** The Windows app's memory reader, which tells plain grottos apart. Off unless turned on. */
+    gameMemory?: boolean;
     /** The game's save file on this computer (Project64-EM's .fla), for game tracking's catch-up. */
     saveFile?: string;
     logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; mapZoom?: number; haveOnly?: boolean; hideWritten?: boolean;
@@ -2367,6 +2370,57 @@ function syncGameFeed() {
   });
   else if (!gameTrackOn() && stopGameFeed) { stopGameFeed(); stopGameFeed = null; gameLink = 'none'; renderGameLink(); }
   syncSaveWatch();
+  syncMemReader();
+}
+
+/* ---------- Game tracking: the memory reader ----------
+   The Windows app can read one number from the game's memory in Project64-EM: the one that says which plain grotto
+   hole the player dropped into (see desktop/memreader.js and grotto-memory.ts). It runs only while entrance logging and
+   this switch are both on. */
+type MemStatus = { available: boolean; running: boolean; found: boolean; game: 'oot' | 'mm' | null; note: string };
+type MemBridge = { start(): Promise<MemStatus>; stop(): Promise<MemStatus>; status(): Promise<MemStatus>; grottos(g: 'oot' | 'mm'): Promise<{ now: number; since: number; history: GrottoSeen[] }> };
+const memBridge = (): MemBridge | undefined => (globalThis as any).ootmmMem;
+const memWanted = () => !!memBridge() && gameTrackOn() && gameEntrancesOn() && saved.ui.gameMemory === true;
+let memStatus: MemStatus | null = null;
+let memTimer = 0;
+let memGrottos = 0;
+function syncMemReader() {
+  const b = memBridge();
+  if (!b) return;
+  const show = (s: MemStatus) => { memStatus = s; const el = document.getElementById('memState'); if (el) el.textContent = memStateText(); };
+  if (memWanted() && !memTimer) {
+    b.start().then(show, () => {});
+    memTimer = window.setInterval(() => { b.status().then(show, () => {}); }, 2000);
+  } else if (!memWanted() && memTimer) {
+    clearInterval(memTimer); memTimer = 0;
+    b.stop().then(show, () => {});
+  }
+}
+function memStateText() {
+  const s = memStatus;
+  if (!s) return 'Starting...';
+  if (!s.available || !s.running) return s.note || 'Off.';
+  if (!s.found) return (s.note || 'Looking for Project64-EM...') + ' It keeps looking.';
+  const game = s.game === 'oot' ? 'Ocarina of Time' : s.game === 'mm' ? "Majora's Mask" : 'the game';
+  return `Reading ${game} in Project64-EM.${memGrottos ? ` Grottos told apart this session: ${memGrottos}.` : ''}`;
+}
+/* Settles a plain grotto question from the reader, if it can tell which hole it was. The question stays queued
+   meanwhile; once the door is logged it is skipped. */
+function grottoFromReader(original: string, dest: string, choices: string[]) {
+  const g = grottoGame(original), b = memBridge();
+  if (!g || !b || !memTimer) return;
+  /* Give the reader a moment to see the last change (it looks every 50 ms). */
+  setTimeout(() => {
+    b.grottos(g).then(({ now, since, history }) => {
+      const open = choices.filter(id => !seed.entrances[id]);
+      const id = grottoFromMemory(original, dest, history, now, since, open);
+      if (!id || seed.entrances[id]) return;
+      setEntrance(id, dest);
+      gameEntrCount++; gameEntrSkipped = Math.max(0, gameEntrSkipped - 1); memGrottos++;
+      afterEntranceChange();
+      toast(`Logged an entrance: ${destText(destById().get(dest)) || 'a new place'}.`, true);
+    }, () => {});
+  }, 300);
 }
 
 /* ---------- Game tracking: catching up from the save file ----------
@@ -2539,6 +2593,7 @@ function onGameEntrance(m: GameEntrance) {
   } else if (answer) {
     gameEntrSkipped++;
     doorQuestions.push({ dest: m.entrance, choices: answer.choices, ready: answer.now });
+    grottoFromReader(m.original, m.entrance, answer.choices);
   }
   askNextDoor();
 }
@@ -2583,6 +2638,9 @@ function gameTrackBox() {
     <div class="seg" role="group" aria-label="Log items found">${seg('game-items-set', saved.ui.gameItems !== false, ['Log items', 'Checks only'])}</div>
     <h3>Entrances</h3><p>Log each entrance the first time you go through it, with where it took you. Only doors you walk through are logged, and ones you already logged stay as you set them. When the game doesn't say which way you came (a warp song, or one of a few grottos in the same field), the app asks you.</p>
     <div class="seg" role="group" aria-label="Log entrances">${seg('game-entrances-set', gameEntrancesOn(), ['Log entrances', 'Off'])}</div>
+    ${gameEntrancesOn() && memBridge() ? `<h3>Memory reader</h3><p>Tells the plain grottos apart, so they're logged without asking you. It reads only the game's name and the number that says which grotto hole you dropped into, from Project64-EM's memory on this PC, and never changes anything. Some antivirus programs warn about apps that read another program's memory.</p>
+    <div class="seg" role="group" aria-label="Memory reader">${seg('game-memory-set', saved.ui.gameMemory === true, ['Read grottos', 'Off'])}</div>
+    ${saved.ui.gameMemory === true ? `<p class="fine" id="memState">${esc(memStateText())}</p>` : ''}` : ''}
     ${gameEntrancesOn() && (gameEntrCount || gameEntrSkipped) ? `<p class="fine">This session: ${gameEntrCount} logged${gameEntrSkipped ? `, ${gameEntrSkipped} the game didn't name clearly (you were asked about those)` : ''}.</p>` : ''}
     ${seed.game ? `<p class="fine">This seed follows one game. If you started a new seed in the game, let it follow that one.</p><div class="btns"><button class="btn alt keep" data-game-forget>Follow a different game</button></div>` : ''}
     ${gameUnknown.length ? `<p class="fine">Checks the game reported that aren't on this seed's list: ${gameUnknown.slice(-5).map(esc).join(', ')}. Check that this seed's settings match your game.</p>` : ''}` : ''}</div>`;
@@ -3708,7 +3766,8 @@ function events() {
     if (d.scaleSet) { saved.ui.scale = Number(d.scaleSet); applyTheme(); save(); renderLook(); return; }
     if (d.gameTrackSet) { saved.ui.gameTrack = d.gameTrackSet === '1'; save(); syncGameFeed(); renderLook(); return; }
     if (d.gameItemsSet) { saved.ui.gameItems = d.gameItemsSet === '1'; save(); renderLook(); return; }
-    if (d.gameEntrancesSet) { saved.ui.gameEntrances = d.gameEntrancesSet === '1'; save(); renderLook(); return; }
+    if (d.gameEntrancesSet) { saved.ui.gameEntrances = d.gameEntrancesSet === '1'; save(); syncMemReader(); renderLook(); return; }
+    if (d.gameMemorySet) { saved.ui.gameMemory = d.gameMemorySet === '1'; save(); syncMemReader(); renderLook(); return; }
     if ('savePick' in d) {
       saveBridge()?.pick().then(p => { if (!p) return; saved.ui.saveFile = p; saveNote = ''; saveSlotsSeen = []; save(); syncSaveWatch(); catchUpFromSave(true); renderLook(); });
       return;
