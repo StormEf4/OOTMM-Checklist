@@ -52,7 +52,29 @@ export type EntranceData = {
      reaches]. Only OoTMM's normal layout, never a seed's connections. It tells which door the player just used when the
      game only says what kind of door it was (a grotto, say), from the place the player was in. */
   sides?: Record<string, [string, string, string, string]>;
+  /* For directions: OoTMM's normal map of the world. See Ways. */
+  ways?: Ways;
   error?: string;
+};
+
+/**
+ * OoTMM's normal map, for directions. Only the layout every seed starts from and what the settings themselves fix (the
+ * link between the games, plando), never a seed's shuffled connections: the app routes through a shuffled entrance only
+ * once the player has logged where it leads (see directions.ts).
+ */
+export type Ways = {
+  /** Each area: [the place it belongs to, the region it lists under]. A place is a region's id, or 'a:' and the area for
+      a room of its own (a house, a grotto). */
+  areas: Record<string, [string, string]>;
+  /** Each place: [name, the region it's in for a room ('' for a region), game]. */
+  places: Record<string, [string, string, 'oot' | 'mm']>;
+  /** Walking from area to area without a loading zone: OoTMM's area exits that aren't entrances, rules left out. */
+  walk: Record<string, string[]>;
+  /** Every entrance the directions can use: [area it leaves, area it normally reaches, OoTMM's entrance type, name]. A
+      warp song or soaring is played from anywhere: its area is '*' and OoTMM's area for the song ('*OOT SONG_TP_FOREST'). */
+  doors: Record<string, [string, string, string, string]>;
+  /** Entrances the settings send elsewhere without shuffling them (the link between the games, plando). */
+  set: Record<string, string>;
 };
 
 const EMPTY: EntranceData = { list: [], dests: [], sets: [], rev: {} };
@@ -268,7 +290,53 @@ export function shuffledEntrances(state: any): EntranceData {
     const reg = (a: string) => [ownRegion(a), regionOf(a)].find(validRegion) ?? 'NONE';
     sides[id] = [e.from, e.to, reg(e.from), reg(e.to)];
   }
-  return { list, dests, sets, rev, bosses, dungeonItems: dungeonItems(), sides };
+  return { list, dests, sets, rev, bosses, dungeonItems: dungeonItems(), sides, ways: worldWays(world, shuffler.overrides ?? {}, ownRegion, regionOf, groupLabel) };
+}
+
+/* The pieces of OoTMM's normal map that directions need (see Ways). */
+function worldWays(world: any, overrides: Record<string, string>, ownRegion: (a: string) => string | undefined, regionOf: (a: string) => string | undefined, groupLabel: (g: string) => string): Ways {
+  const system = (a: string) => isSystemName(clean(a));
+  const doorAt = new Set<string>();
+  const doors: Ways['doors'] = {};
+  const SKIP = /^(spawn|wallmaster|one-way-water-void)/;
+  for (const [id, e] of Object.entries(ENTRANCES as Record<string, any>)) {
+    if (!e.from || !e.to || e.from === 'NONE') continue;
+    doorAt.add(e.from + '\n' + e.to);
+    if (SKIP.test(e.type) || system(e.to) || !world.areas[e.to]) continue;
+    const anywhere = system(e.from);
+    if (!anywhere && !world.areas[e.from]?.exits?.[e.to]) continue;
+    const d = describeSource(e);
+    doors[id] = [anywhere ? '*' + e.from : e.from, e.to, e.type, d.title];
+  }
+  const walk: Ways['walk'] = {};
+  for (const [a, area] of Object.entries(world.areas as Record<string, any>)) {
+    if (system(a)) continue;
+    const out = Object.keys(area.exits ?? {}).filter(b => !system(b) && world.areas[b] && !doorAt.has(a + '\n' + b));
+    if (out.length) walk[a] = out;
+  }
+  /* A place is a region, or a room of its own: an area with no region that an entrance leads into (a house, a grotto),
+     with the region-less areas it walks on to (the rest of the house). Any other area without a region belongs to the
+     nearest region. */
+  const room = new Map<string, string>();
+  const ring = [...new Set(Object.values(doors).map(d => d[1]))].filter(a => !validRegion(ownRegion(a)));
+  for (const a of ring) room.set(a, 'a:' + a);
+  for (let i = 0; i < ring.length; i++) for (const b of walk[ring[i]] ?? []) {
+    if (room.has(b) || validRegion(ownRegion(b))) continue;
+    room.set(b, room.get(ring[i])!);
+    ring.push(b);
+  }
+  const areas: Ways['areas'] = {};
+  const places: Ways['places'] = {};
+  for (const [a, area] of Object.entries(world.areas as Record<string, any>)) {
+    if (system(a)) continue;
+    const own = ownRegion(a), near = validRegion(own) ? own! : regionOf(a) ?? 'NONE';
+    const key = room.get(a) ?? (near === 'NONE' ? 'a:' + a : near);
+    areas[a] = [key, near];
+    if (!places[key]) places[key] = key.startsWith('a:') ? [clean(key.slice(2)), near === 'NONE' ? '' : groupLabel(near), area.game] : [groupLabel(key), '', area.game];
+  }
+  const set: Ways['set'] = {};
+  for (const [src, dst] of Object.entries(overrides)) if (doors[src] && (ENTRANCES as any)[dst]) set[src] = dst;
+  return { areas, places, walk, doors, set };
 }
 
 /* OoTMM keeps one map and compass for a dungeon whose halves are separate dungeons in its world, such as Stone Tower
