@@ -84,6 +84,8 @@ type Seed = {
   game?: string;
   /** Which file in the game's save file is this seed (0 or 1), when the player had to pick. */
   saveSlot?: number;
+  /** This seed's save file on this computer (Project64-EM's .fla), for game tracking's catch-up. Each seed has its own. */
+  saveFile?: string;
   notes: Record<string, string>;
   /** Plain text of the seed's notes, kept for older versions of the app. */
   pad: string;
@@ -132,7 +134,7 @@ type Saved = {
     gameEntrances?: boolean;
     /** The Windows app's memory reader, which tells plain grottos apart. Off unless turned on. */
     gameMemory?: boolean;
-    /** The game's save file on this computer (Project64-EM's .fla), for game tracking's catch-up. */
+    /** Older versions kept one save file for every seed. load() moves it onto the seed that was open. */
     saveFile?: string;
     logicOff?: boolean; logicOnly?: boolean; checksView?: 'list' | 'map'; mapZoom?: number; haveOnly?: boolean; hideWritten?: boolean;
     /** Which check names show. Custom puts the player's renames on top of nameBase. */
@@ -273,6 +275,12 @@ function load(raw?: string | null): Saved {
         ui.names ??= 'custom'; ui.nameBase ??= 'original';
         ui.savePins ??= true;
         for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.later ??= []; s.notes ??= {}; s.pad ??= ''; s.doc ??= textToNotes(s.pad); s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
+        /* The save file used to be one for the whole app. It now belongs to each seed: give it to the seed that was open. */
+        if (ui.saveFile) {
+          const open = v.seeds.find(s => s.id === v.current) ?? v.seeds[0];
+          open.saveFile ??= ui.saveFile;
+          delete ui.saveFile;
+        }
         const edits = { ...blankEdits(), ...v.edits };
         edits.tabs = edits.tabs.filter(t => t !== 'hints');
         /* The Map view was a grid of boxes before it was drawn. Only "off the map" carries over to the drawn maps. */
@@ -2458,7 +2466,7 @@ let saveSlotsSeen: SaveSlot[] = [];
 function syncSaveWatch() {
   clearInterval(saveTimer2);
   saveTimer2 = 0;
-  if (gameTrackOn() && saveCatchUpAvailable() && saved.ui.saveFile) saveTimer2 = window.setInterval(() => { if (gameLink === 'game') catchUpFromSave(false); }, 3000);
+  if (gameTrackOn() && saveCatchUpAvailable() && seed.saveFile) saveTimer2 = window.setInterval(() => { if (gameLink === 'game') catchUpFromSave(false); }, 3000);
 }
 
 /** Which file in the save is this seed: the one with the playing game's file name, the one the player picked, or the only one. */
@@ -2471,14 +2479,17 @@ function pickSlot(slots: SaveSlot[]): SaveSlot | null {
 }
 
 async function catchUpFromSave(byHand: boolean) {
-  const bridge = saveBridge(), file = saved.ui.saveFile;
+  const bridge = saveBridge(), mine = seed, file = mine.saveFile;
   if (!bridge || !file || !__SAVE_LAYOUT_OK__) return;
   /* A different game than the one this seed follows: its save isn't this seed's. */
   if (!byHand && gameSession && seed.game && gameSession !== seed.game) return;
   const mtime = await bridge.stat(file);
+  /* The player switched seeds while the file was being read: this file isn't the open seed's. */
+  if (seed !== mine) return;
   if (mtime == null) { saveNote = "The save file couldn't be opened. Choose it again."; return renderSaveNote(); }
   if (!byHand && mtime === saveSeen) return;
   const raw = await bridge.read(file);
+  if (seed !== mine) return;
   saveSeen = mtime;
   const slots = raw ? readSave(raw) : null;
   if (!slots) { saveNote = "No saved game found in that file. Save in the game first, and check it's the .fla file in Project64-EM's Save folder."; return renderSaveNote(); }
@@ -2508,11 +2519,11 @@ function renderSaveNote() {
 function saveFileSection() {
   if (!saveBridge()) return '';
   if (!__SAVE_LAYOUT_OK__) return `<h3>Save file</h3><p class="fine">Catching up from the save file is off in this build, because it was made from a different OoTMM than its save layout.</p>`;
-  const file = saved.ui.saveFile;
+  const file = seed.saveFile;
   const choose = saveSlotsSeen.length > 1 && !pickSlot(saveSlotsSeen);
   return `<h3>Save file</h3>
-    <p>Ticks checks you got before the app was listening, from your last save in the game. Choose Project64-EM's save file for OoTMM: the .fla file in its Save folder. While you play, the app reads it again each time you save.</p>
-    <p class="fine">${file ? esc(file) : 'No save file chosen.'}</p>
+    <p>Ticks checks you got before the app was listening, from your last save in the game. Choose Project64-EM's save file for OoTMM: the .fla file in its Save folder. While you play, the app reads it again each time you save. Each seed keeps its own save file.</p>
+    <p class="fine">${file ? `This seed's save file: ${esc(file)}` : 'No save file chosen for this seed.'}</p>
     ${choose ? `<div class="seg" role="group" aria-label="Which file is this seed">${saveSlotsSeen.map(s => `<button class="keep" data-save-slot="${s.slot}" aria-pressed="false">File ${s.slot + 1}: ${esc(s.name || 'no name')}</button>`).join('')}</div>` : ''}
     <div class="btns"><button class="btn alt keep" data-save-pick>${file ? 'Choose a different save file' : 'Choose save file'}</button>${file ? '<button class="btn keep" data-save-now>Catch up now</button>' : ''}</div>
     ${saveNote ? `<p class="fine" id="saveState">${esc(saveNote)}</p>` : ''}`;
@@ -3524,6 +3535,9 @@ function openSeed(id: string) {
   reachSet = new Set();
   stoneSet = new Set();
   if (seed.live) liveBase.set(seed.id, flatten(seed));
+  /* Each seed has its own save file: forget what the last seed's file said and watch this one's. */
+  saveSeen = 0; saveNote = ''; saveSlotsSeen = [];
+  syncSaveWatch();
   recompute();
   liveFollow();
 }
@@ -3792,7 +3806,7 @@ function events() {
     if (d.gameEntrancesSet) { saved.ui.gameEntrances = d.gameEntrancesSet === '1'; save(); syncMemReader(); renderLook(); return; }
     if (d.gameMemorySet) { saved.ui.gameMemory = d.gameMemorySet === '1'; save(); syncMemReader(); renderLook(); return; }
     if ('savePick' in d) {
-      saveBridge()?.pick().then(p => { if (!p) return; saved.ui.saveFile = p; saveNote = ''; saveSlotsSeen = []; save(); syncSaveWatch(); catchUpFromSave(true); renderLook(); });
+      saveBridge()?.pick().then(p => { if (!p) return; seed.saveFile = p; saveSeen = 0; saveNote = ''; saveSlotsSeen = []; save(); syncSaveWatch(); catchUpFromSave(true); renderLook(); });
       return;
     }
     if ('saveNow' in d) { catchUpFromSave(true); return; }
