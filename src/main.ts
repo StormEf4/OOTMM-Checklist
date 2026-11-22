@@ -26,7 +26,7 @@ import shippedCustom from '../custom-checks.json';
 import { COLOR_TOKENS, FONT_CHOICES, SEALS, SKINS, skinById } from './skins';
 import { applyLayer, originalAttr, originalOf, templateOf, textAt } from './textlayer';
 import { startGameFeed, type GameEntrance, type GameItem, type GameLink } from './gamefeed';
-import { arrivedAt, doorUsed, type FeedEntranceList, type Here } from './entrance-feed';
+import { arrivedAt, whichDoor, type FeedEntranceList, type Here } from './entrance-feed';
 import { readSave, type SaveSlot } from './savefile';
 
 declare const __TARGET__: 'web' | 'desktop' | 'artifact';
@@ -2511,21 +2511,63 @@ function feedList(): FeedEntranceList {
   }
   return feedRows.rows;
 }
+/* Doors the game couldn't name for sure, to ask the player about. A grotto waits until the player leaves it, since
+   walking back out usually logs the hole too; a warp is asked about straight away. Each question goes once the door is
+   logged, however that happens. */
+type DoorQuestion = { dest: string; choices: string[]; ready: boolean };
+const doorQuestions: DoorQuestion[] = [];
+let doorAsking = false;
+let gameLastArrival = '';
 function onGameEntrance(m: GameEntrance) {
   const list = feedList();
-  const before = gameHere;
+  const before = gameHere, last = gameLastArrival;
   gameHere = arrivedAt(m.entrance, list);
-  if (!gameEntrancesOn() || !m.original) return;
+  gameLastArrival = m.entrance;
+  if (!gameEntrancesOn()) return;
   if (m.session && seed.game && seed.game !== m.session) return;
   if (m.session && !seed.game) seed.game = m.session;
-  const door = doorUsed(m.original, m.entrance, before, list);
-  if (!door) { if (m.original !== m.entrance) gameEntrSkipped++; return; }
-  if (seed.entrances[door]) return;
-  setEntrance(door, m.entrance);
-  gameEntrCount++;
-  afterEntranceChange();
-  const d = destById().get(m.entrance);
-  toast(`Logged an entrance: ${destText(d) || 'a new place'}.`, true);
+  /* Leaving a place makes its waiting questions ready, after this door is logged. */
+  for (const q of doorQuestions) q.ready = true;
+  const answer = whichDoor(m.original, m.entrance, before, last, list, id => !!seed.entrances[id]);
+  if (answer && 'door' in answer) {
+    if (!seed.entrances[answer.door]) {
+      setEntrance(answer.door, m.entrance);
+      gameEntrCount++;
+      afterEntranceChange();
+      toast(`Logged an entrance: ${destText(destById().get(m.entrance)) || 'a new place'}.`, true);
+    }
+  } else if (answer) {
+    gameEntrSkipped++;
+    doorQuestions.push({ dest: m.entrance, choices: answer.choices, ready: answer.now });
+  }
+  askNextDoor();
+}
+function askNextDoor() {
+  if (doorAsking || layers.length) return;
+  while (doorQuestions.length) {
+    const i = doorQuestions.findIndex(q => q.ready);
+    if (i < 0) return;
+    const q = doorQuestions.splice(i, 1)[0];
+    /* Already answered, by walking back out or by the player. */
+    if (q.choices.some(id => seed.entrances[id] === q.dest)) continue;
+    const open = q.choices.filter(id => !seed.entrances[id]);
+    if (!open.length) continue;
+    const data = entranceData(), dests = destById();
+    const rows = open.map(id => data.list.find(e => e.id === id)).filter(Boolean) as EntranceEntry[];
+    if (!rows.length) continue;
+    const actions: Record<string, () => void> = {};
+    for (const e of rows) actions['door:' + e.id] = () => {
+      if (!seed.entrances[e.id]) { setEntrance(e.id, q.dest); gameEntrCount++; }
+      closeSheet();
+      afterEntranceChange();
+    };
+    const to = destLabel(q.dest, dests);
+    doorAsking = true;
+    openSheet('Which way did you take?', `The game says you arrived at ${to}, but not which way you came. Pick it to log it.`, `
+      <div class="pick-list">${rows.map(e => `<button class="pick ${e.game}" data-act="door:${esc(e.id)}" data-door-choice="${esc(e.id)}"><span class="t">${esc(e.title)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}</button>`).join('')}</div>
+      <div class="btns"><button class="btn alt" data-sheet-close>None of these</button></div>`, actions, () => { doorAsking = false; askNextDoor(); });
+    return;
+  }
 }
 
 function gameTrackBox() {
@@ -2539,9 +2581,9 @@ function gameTrackBox() {
     ${saveFileSection()}
     <h3>Items found</h3><p>Also log the item you got at each check, so the Items tab and item menu keep up.</p>
     <div class="seg" role="group" aria-label="Log items found">${seg('game-items-set', saved.ui.gameItems !== false, ['Log items', 'Checks only'])}</div>
-    <h3>Entrances</h3><p>Log each entrance the first time you go through it, with where it took you. Only doors you walk through are logged, and ones you already logged stay as you set them.</p>
+    <h3>Entrances</h3><p>Log each entrance the first time you go through it, with where it took you. Only doors you walk through are logged, and ones you already logged stay as you set them. When the game doesn't say which way you came (a warp song, or one of a few grottos in the same field), the app asks you.</p>
     <div class="seg" role="group" aria-label="Log entrances">${seg('game-entrances-set', gameEntrancesOn(), ['Log entrances', 'Off'])}</div>
-    ${gameEntrancesOn() && (gameEntrCount || gameEntrSkipped) ? `<p class="fine">This session: ${gameEntrCount} logged${gameEntrSkipped ? `, ${gameEntrSkipped} the game didn't say clearly which door it was (fill those in yourself)` : ''}.</p>` : ''}
+    ${gameEntrancesOn() && (gameEntrCount || gameEntrSkipped) ? `<p class="fine">This session: ${gameEntrCount} logged${gameEntrSkipped ? `, ${gameEntrSkipped} the game didn't name clearly (you were asked about those)` : ''}.</p>` : ''}
     ${seed.game ? `<p class="fine">This seed follows one game. If you started a new seed in the game, let it follow that one.</p><div class="btns"><button class="btn alt keep" data-game-forget>Follow a different game</button></div>` : ''}
     ${gameUnknown.length ? `<p class="fine">Checks the game reported that aren't on this seed's list: ${gameUnknown.slice(-5).map(esc).join(', ')}. Check that this seed's settings match your game.</p>` : ''}` : ''}</div>`;
 }
