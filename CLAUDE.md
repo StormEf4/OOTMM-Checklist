@@ -54,7 +54,8 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `src/gamefeed.ts`: game tracking in the Windows app. It listens to the OoTMM Client's local feed
   (`127.0.0.1:39278`), never the emulator's own pipe, so co-op keeps working. Entrance messages are used only when the
   player turns on entrance logging; `src/entrance-feed.ts` works out which door it was (grottos and a few doors share a
-  name, so it uses the place the player was in, and skips the door when more than one fits). Item names map to the checklist through OoTMM's own `gi()` (`giItems` in `logic.ts`)
+  name, so it uses the place the player was in; when more than one fits, or for warp songs and soaring, which name no
+  door, the app asks the player which way they came, a grotto only after they leave it). Item names map to the checklist through OoTMM's own `gi()` (`giItems` in `logic.ts`)
 - `src/savefile.ts`: game tracking's catch-up. It reads which checks the game's save file (Project64-EM's `.fla`) says
   are collected, mirroring OoTMM's `Mark_GetOot`/`Mark_GetMm` in `mark.c`. Where things sit in the file is in
   `src/generated/save-layout.json`, made by `node tools/save-layout.mjs` from OoTMM's own C headers (needs

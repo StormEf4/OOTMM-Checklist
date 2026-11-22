@@ -58,8 +58,8 @@ const FAKE = () => {
   /* Shuffle grottos and interiors. */
   await p.click('.rail .tab[data-tab=settings]');
   await p.click('[data-setview=game]');
-  for (const [k, v] of [['erGrottos', 'full'], ['erIndoors', 'full']]) {
-    await p.fill('#setSearch', k === 'erGrottos' ? 'grotto shuffle' : 'interiors shuffle');
+  for (const [k, v, q] of [['erGrottos', 'full', 'grotto shuffle'], ['erIndoors', 'full', 'interiors shuffle'], ['erWarps', 'ootOnly', 'warp songs and soaring']]) {
+    await p.fill('#setSearch', q);
     await p.waitForTimeout(300);
     await p.selectOption(`[data-enum=${k}]`, v);
     await p.waitForTimeout(800);
@@ -97,19 +97,65 @@ const FAKE = () => {
   s = await state();
   ok("Mido's house door logged", s.entrances.OOT_HOUSE_MIDO === 'OOT_HOUSE_SARIA', JSON.stringify(s.entrances));
 
-  /* Hyrule Field has three plain grottos: can't tell which, so nothing. */
+  /* Hyrule Field has three plain grottos: the game can't say which, so nothing yet, and no question while inside. */
   const n = Object.keys(s.entrances).length;
   await feed([{ original: 'OOT_FIELD_FROM_KAKARIKO', entrance: 'OOT_FIELD_FROM_KAKARIKO' }, { original: 'OOT_GROTTO_TYPE_GENERIC', entrance: 'OOT_GROTTO_GENERIC_KAKARIKO' }]);
   await p.waitForTimeout(500);
   s = await state();
-  ok('Hyrule Field plain grotto: not logged', Object.keys(s.entrances).length === n, JSON.stringify(s.entrances));
+  ok('Hyrule Field plain grotto: not logged on the way in', Object.keys(s.entrances).length === n, JSON.stringify(s.entrances));
+  ok('no question while still inside', !(await p.isVisible('[data-door-choice]')));
+
+  /* Walking back out names the hole: both ways logged, and the question is dropped. */
+  await feed([{ original: 'OOT_GROTTO_EXIT_GENERIC_KAKARIKO', entrance: 'OOT_GROTTO_EXIT_GENERIC_HF_OPEN' }]);
+  await p.waitForTimeout(500);
+  s = await state();
+  ok('walking out logs the hole', s.entrances.OOT_GROTTO_GENERIC_HF_OPEN === 'OOT_GROTTO_GENERIC_KAKARIKO', JSON.stringify(s.entrances));
+  ok('no question once walking out answered it', !(await p.isVisible('[data-door-choice]')));
+
+  /* Another Hyrule Field grotto, left by a void (no door): now it asks, among the two not logged yet. */
+  await feed([{ original: 'OOT_FIELD_FROM_KAKARIKO', entrance: 'OOT_FIELD_FROM_KAKARIKO' }, { original: 'OOT_GROTTO_TYPE_GENERIC', entrance: 'OOT_GROTTO_GENERIC_DMC' }]);
+  await p.waitForTimeout(300);
+  ok('still no question inside the second grotto', !(await p.isVisible('[data-door-choice]')));
+  await feed([{ entrance: 'OOT_GROTTO_GENERIC_DMC' }]);
+  await p.waitForSelector('[data-door-choice]', { timeout: 3000 }).catch(() => {});
+  const asked = await p.$$eval('[data-door-choice]', bs => bs.map(b => b.dataset.doorChoice));
+  ok('asks which Hyrule Field grotto', asked.length === 2 && asked.includes('OOT_GROTTO_GENERIC_HF_MARKET') && asked.includes('OOT_GROTTO_GENERIC_HF_SOUTHEAST'), asked.join(', '));
+  fs.mkdirSync('.cache/shots', { recursive: true });
+  await p.screenshot({ path: '.cache/shots/door-question.png' });
+  await p.click('[data-door-choice="OOT_GROTTO_GENERIC_HF_MARKET"]');
+  await p.waitForTimeout(400);
+  s = await state();
+  ok('picked grotto logged', s.entrances.OOT_GROTTO_GENERIC_HF_MARKET === 'OOT_GROTTO_GENERIC_DMC', JSON.stringify(s.entrances));
+
+  /* A warp song: the game names no door, so it asks straight away among the songs that could land there. */
+  await feed([{ entrance: 'OOT_WARP_SONG_LAKE' }]);
+  await p.waitForSelector('[data-door-choice]', { timeout: 3000 }).catch(() => {});
+  const songs = await p.$$eval('[data-door-choice]', bs => bs.map(b => b.dataset.doorChoice));
+  ok('warp song asks among the songs', songs.length >= 2 && songs.every(x => x.startsWith('OOT_WARP_SONG_')), songs.join(', '));
+  await p.click('[data-door-choice="OOT_WARP_SONG_MEADOW"]');
+  await p.waitForTimeout(400);
+  s = await state();
+  ok('picked song logged', s.entrances.OOT_WARP_SONG_MEADOW === 'OOT_WARP_SONG_LAKE', JSON.stringify(s.entrances));
+  /* Landing back where you last arrived (a respawn) isn't taken for a warp. */
+  await feed([{ entrance: 'OOT_WARP_SONG_LAKE' }]);
+  await p.waitForTimeout(400);
+  ok('respawn asks nothing', !(await p.isVisible('[data-door-choice]')));
+  /* None of these closes it. */
+  await feed([{ original: 'OOT_KOKIRI_FOREST_FROM_LOST_WOODS', entrance: 'OOT_KOKIRI_FOREST_FROM_LOST_WOODS' }, { entrance: 'OOT_WARP_SONG_CRATER' }]);
+  await p.waitForSelector('[data-door-choice]', { timeout: 3000 }).catch(() => {});
+  ok('second warp asks', await p.isVisible('[data-door-choice]'));
+  await p.click('.sheet [data-sheet-close].btn:has-text("None of these")');
+  await p.waitForTimeout(300);
+  ok('None of these closes it', !(await p.isVisible('[data-door-choice]')));
+  s = await state();
+  const n2 = Object.keys(s.entrances).length;
 
   /* A void or savewarp (no door), an unknown place, and another game: nothing. */
   await feed([{ entrance: 'OOT_HOUSE_SARIA' }, { original: 'UNKNOWN', entrance: 'UNKNOWN' }]);
   await p.evaluate(() => { window.__feed({ type: 'GAME_START', sessionId: 'bbbb' }); window.__feed({ type: 'INFO_ENTRANCE', original: 'OOT_HOUSE_SARIA', entrance: 'OOT_HOUSE_KNOW_IT_ALL', age: 'CHILD' }); });
   await p.waitForTimeout(500);
   s = await state();
-  ok('no door, unknown place or other game: nothing', Object.keys(s.entrances).length === n && !s.entrances.OOT_HOUSE_SARIA, JSON.stringify(s.entrances));
+  ok('no door, unknown place or other game: nothing', Object.keys(s.entrances).length === n2 && !s.entrances.OOT_HOUSE_SARIA, JSON.stringify(s.entrances));
 
   /* A door the player already logged stays as they set it. */
   await p.evaluate(() => window.__feed({ type: 'GAME_START', sessionId: 'aaaa' }));
@@ -122,7 +168,6 @@ const FAKE = () => {
   await p.click('[data-setview=look]');
   ok('settings note counts what was logged', /logged/.test(await p.textContent('.box:has([data-game-entrances-set])')));
   await p.locator('[data-game-entrances-set]').first().evaluate(e => e.closest('.box').scrollIntoView({ block: 'center' }));
-  fs.mkdirSync('.cache/shots', { recursive: true });
   await p.screenshot({ path: '.cache/shots/game-entrances.png' });
 
   /* Turned off again: stops. */
