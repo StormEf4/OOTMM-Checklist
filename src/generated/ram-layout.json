@@ -1,6 +1,6 @@
 {
  "version": 1,
- "hash": "e93a546e0e2c11cd",
+ "hash": "15b215a05820751d",
  "tags": {
   "oot": "ZELDAZ",
   "mm": "ZELDA3"
@@ -43,5 +43,88 @@
    "30": "MM_GROTTO_GENERIC_PATH_SWAMP",
    "31": "MM_GROTTO_GENERIC_GRASS"
   }
- }
+ },
+ "ocarina": {
+  "oot": {
+   "buf": 2148671288,
+   "cursor": 2148671296,
+   "pitch": 2148541032
+  },
+  "mm": {
+   "buf": 2149412896,
+   "cursor": 2149412904,
+   "pitch": 2149412912
+  }
+ },
+ "ocarinaBufLen": 8,
+ "warpSongs": [
+  {
+   "row": "OOT_WARP_SONG_MEADOW",
+   "buttons": [
+    0,
+    4,
+    3,
+    2,
+    3,
+    2
+   ]
+  },
+  {
+   "row": "OOT_WARP_SONG_CRATER",
+   "buttons": [
+    1,
+    0,
+    1,
+    0,
+    2,
+    1,
+    2,
+    1
+   ]
+  },
+  {
+   "row": "OOT_WARP_SONG_LAKE",
+   "buttons": [
+    0,
+    1,
+    2,
+    2,
+    3
+   ]
+  },
+  {
+   "row": "OOT_WARP_SONG_DESERT",
+   "buttons": [
+    0,
+    1,
+    0,
+    2,
+    1,
+    0
+   ]
+  },
+  {
+   "row": "OOT_WARP_SONG_GRAVE",
+   "buttons": [
+    3,
+    2,
+    2,
+    0,
+    3,
+    2,
+    1
+   ]
+  },
+  {
+   "row": "OOT_WARP_SONG_TEMPLE",
+   "buttons": [
+    4,
+    2,
+    4,
+    2,
+    3,
+    4
+   ]
+  }
+ ]
 }

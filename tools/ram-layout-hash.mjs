@@ -4,8 +4,9 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 
-const headerDirs = ['packages/generator/include/combo', 'packages/generator/include/combo/oot', 'packages/generator/include/combo/mm'];
-export const RAM_LAYOUT_INPUTS = ['packages/generator/src/link_oot.in', 'packages/generator/src/link_mm.in', 'packages/generator/src/oot/play/play.c', 'packages/generator/src/mm/play/play.c'];
+const headerDirs = ['packages/generator/include/combo', 'packages/generator/include/combo/common', 'packages/generator/include/combo/oot', 'packages/generator/include/combo/mm'];
+export const RAM_LAYOUT_INPUTS = ['packages/generator/src/link_oot.in', 'packages/generator/src/link_mm.in', 'packages/generator/src/oot/play/play.c', 'packages/generator/src/mm/play/play.c',
+  'packages/generator/src/mm/ocarina.c', 'packages/generator/lib/combo/randomizer/config.ts'];
 
 export function ramLayoutHash(ootmm) {
   const h = createHash('sha256');

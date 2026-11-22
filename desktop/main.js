@@ -75,6 +75,7 @@ const reader = require('./memreader.js').createReader();
 ipcMain.handle('mem:start', () => reader.start());
 ipcMain.handle('mem:stop', () => reader.stop());
 ipcMain.handle('mem:status', () => reader.status());
+ipcMain.handle('mem:notes', () => ({ now: Date.now(), oot: reader.lastNotes('oot'), mm: reader.lastNotes('mm') }));
 ipcMain.handle('mem:grottos', (_e, g) => { g = g === 'mm' ? 'mm' : 'oot'; return { now: Date.now(), since: reader.watchingSince(g), history: reader.grottoHistory(g) }; });
 
 app.whenReady().then(createWindow);

@@ -6,13 +6,17 @@
 // - each game's save context name tag ("ZELDAZ" in OoT, "ZELDA3" in MM), to find the game's memory and tell which game
 //   is running;
 // - each game's "grotto data" (gGrottoData in OoTMM, one byte), the number a grotto hole sets as Link drops in, which says which
-//   of the plain grottos it was.
+//   of the plain grottos it was;
+// - each game's ocarina note buffer (the last notes played, as the free-play staff shows them), its length, and the
+//   note each button plays, which say which warp song was just played.
 // It never reads OoTMM's entrance table or anything else that says where a door leads.
 //
 // Where the save contexts sit comes from OoTMM's link_oot.in and link_mm.in. Which field gGrottoData is comes from
 // OoTMM's headers, and its offset from compiling those headers for the N64 (as tools/save-layout.mjs does; bool is
 // spelled out for older compilers, which doesn't change any layout). Which number
-// means which grotto comes from Play_EntranceForOverride in OoTMM's play.c files.
+// means which grotto comes from Play_EntranceForOverride in OoTMM's play.c files. The ocarina buffer's place is in the
+// link files too. Each warp song's buttons come from OoTMM's MM song list (src/mm/ocarina.c, the same songs OoT plays),
+// and which warp each song is from the order OoTMM writes its warp song table in (randomizerWarps in config.ts).
 //
 // Needs mips-linux-gnu-gcc (apt install gcc-mips-linux-gnu) and OoTMM's ultralib (OoTMM's scripts/deps.sh). Run:
 // node tools/ram-layout.mjs
@@ -49,6 +53,38 @@ const codes = (file, game) => {
 const grottoCodes = { oot: codes('src/oot/play/play.c', 'OOT'), mm: codes('src/mm/play/play.c', 'MM') };
 const mask = 0x1f;
 
+/* The ocarina's last notes. */
+const ocarina = Object.fromEntries([['oot', 'src/link_oot.in'], ['mm', 'src/link_mm.in']].map(([g, f]) =>
+  [g, { buf: linkAddr(f, 'gOcarinaSongBuffer'), cursor: linkAddr(f, 'gOcarinaSongBufferCursor'), pitch: linkAddr(f, 'gOcarinaButtonPitchMap') }]));
+
+/* The buffer sits just before its length in both games, as in the games' own code. */
+for (const g of ['oot', 'mm']) need(ocarina[g].cursor - ocarina[g].buf === 8, `${g} ocarina buffer of 8 notes`);
+
+/* The warp songs: which warp each is, in the order of OoTMM's warp song table, and the buttons that play it. */
+const warpRows = (() => {
+  const src = readFileSync(path.join(gen, 'lib/combo/randomizer/config.ts'), 'utf8');
+  const m = src.match(/const songs = \[([^\]]*)\];\s*const warpSongs = /);
+  need(m, 'the warp song list in randomizerWarps');
+  return [...m[1].matchAll(/'(\w+)'/g)].map(x => x[1]);
+})();
+need(warpRows.length === 6, 'six warp songs');
+const btn = (() => {
+  const h = read('include/combo/common/ocarina.h');
+  const e = h.slice(h.indexOf('OCARINA_BTN_A = 0'), h.indexOf('OcarinaButtonIndex;'));
+  const names = [...e.matchAll(/(OCARINA_BTN_\w+)/g)].map(x => x[1]);
+  need(names[0] === 'OCARINA_BTN_A' && names.includes('OCARINA_BTN_C_UP'), 'the ocarina button list');
+  return Object.fromEntries(names.slice(0, 5).map((n, i) => [n, i]));
+})();
+const warpButtons = (() => {
+  const src = read('src/mm/ocarina.c');
+  const list = src.slice(src.indexOf('sCustomSongs['), src.indexOf('};', src.indexOf('sCustomSongs[')));
+  const songs = [...list.matchAll(/\/\*\s*(\w+)\s*\*\/\s*\{\s*(\d+),\s*\{([^}]*)\}/g)].map(([, name, n, b]) => ({ name, buttons: [...b.matchAll(/OCARINA_BTN_\w+/g)].map(x => btn[x[0]]), n: Number(n) }));
+  const want = ['MINUET', 'BOLERO', 'SERENADE', 'REQUIEM', 'NOCTURNE', 'PRELUDE'];
+  need(songs.length >= 6 && want.every((w, i) => songs[i].name.startsWith(w)), 'the warp songs in sCustomSongs');
+  for (const s of songs.slice(0, 6)) need(s.buttons.length === s.n && s.buttons.every(x => x !== undefined), `the notes of ${s.name}`);
+  return songs.slice(0, 6).map(s => s.buttons);
+})();
+
 /* Offsets, from OoTMM's headers compiled for the N64. */
 const inc = ['third_party/ultralib/include', 'third_party/ultralib/include/compiler/modern_gcc', 'packages/generator/include', 'packages/generator/build/include', 'packages/data/dist/include'];
 for (const i of inc) need(existsSync(path.join(OOTMM, i)), `${i} is missing (run OoTMM's scripts/deps.sh, and tools/save-layout.mjs once for OoTMM's codegen)`);
@@ -72,6 +108,7 @@ const out = {
   tags: { oot: 'ZELDAZ', mm: 'ZELDA3' },
   addr: { oot: { tag: offsets.oot.newf, grotto: offsets.oot.grotto }, mm: { tag: offsets.mm.newf, grotto: offsets.mm.grotto } },
   grottoMask: mask, grottoCodes,
+  ocarina, ocarinaBufLen: ocarina.oot.cursor - ocarina.oot.buf, warpSongs: warpRows.map((row, i) => ({ row, buttons: warpButtons[i] })),
 };
 writeFileSync(path.join(ROOT, 'src/generated/ram-layout.json'), JSON.stringify(out, null, 1) + '\n');
 console.log(`RAM layout written from ${RAM_LAYOUT_INPUTS.length} OoTMM files.`, JSON.stringify(out.addr));

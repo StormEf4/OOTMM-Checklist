@@ -49,9 +49,19 @@ const win = {
   const h = r.grottoHistory('oot').map(x => x.v);
   ok('watching OoT since it was found', r.watchingSince('oot') > 0 && r.watchingSince('mm') === 0);
   ok('grotto numbers seen in order', h.slice(-3).join(',') === [0x25, 0x03, 0x1a].join(','), h.join(','));
+  /* The ocarina: notes already there when the game was found don't count; new ones do. */
+  ok('no notes yet', r.lastNotes('oot') === null);
+  const oc = layout.ocarina.oot;
+  [2, 5, 9, 11, 14].forEach((v, i) => put(oc.pitch + i, v));
+  [2, 14, 11, 9, 11, 9].forEach((v, i) => put(oc.buf + i, v));
+  put(oc.cursor, 6);
+  await wait(150);
+  const n = r.lastNotes('oot');
+  ok('reads the last notes played', n && n.notes.join(',') === '2,14,11,9,11,9' && n.pitch.join(',') === '2,5,9,11,14', JSON.stringify(n));
   /* Switching to MM. */
   tag('oot', '\0\0\0\0\0\0'); tag('mm', 'ZELDA3'); put(layout.addr.mm.grotto, 0x1f);
   await wait(150);
+  ok('OoT notes kept after switching games', r.lastNotes('oot')?.notes.length === 6);
   ok('follows the switch to MM', r.status().game === 'mm' && r.grottoHistory('mm').at(-1)?.v === 0x1f, JSON.stringify(r.status()));
   /* The emulator closes. */
   tag('mm', '\0\0\0\0\0\0'); alive = false;
