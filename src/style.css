@@ -95,7 +95,7 @@ body:not(.editing) .ghost { display: none !important; }
 .editing .scroll { padding-bottom: 92px; }
 .regions { overflow-y: auto; flex: 1; min-height: 0; padding: 0 8px 14px; }
 .group { font: 700 1rem var(--display); color: var(--muted); padding: 13px 10px 3px; }
-.group.oot { color: var(--oot); } .group.mm { color: var(--mm); }
+.group.oot { color: var(--oot); } .group.mm { color: var(--mm); } .group.shared { color: var(--gold); }
 .reg { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; align-items: baseline; text-align: left; padding: 7px 10px; border-radius: 7px; position: relative; }
 .reg:hover { background: var(--raised); }
 .reg[aria-current="true"] { background: var(--raised); box-shadow: inset 3px 0 0 var(--gold); }

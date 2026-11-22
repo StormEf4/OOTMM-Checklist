@@ -247,7 +247,7 @@ let logicError = '';
 let itemQuery = '';
 /** The Items sidebar's choice, as game:group, or null for every item. */
 let itemArea: string | null = null;
-let itemGame: 'all' | 'oot' | 'mm' = 'all';
+let itemGame: 'all' | 'oot' | 'mm' | 'shared' = 'all';
 let pickingItemFor: string | null = null;
 let itemPickQuery = '';
 
@@ -1433,8 +1433,12 @@ function itemViews(i: CatalogItem): ItemView[] {
   return lv.map((name, k) => ({ i, level: k + 1, key: `${i.id}#${k + 1}`, name: own ? `${own} ${k + 1}` : name }));
 }
 const viewOn = (v: ItemView, have: Record<string, number>) => v.level ? countOf(v.i, have) >= v.level : countOf(v.i, have) > 0;
-/* Shared items belong to both games, so they show under Hyrule and Termina alike. */
-const inGame = (i: CatalogItem, game: 'oot' | 'mm') => i.game === game || i.game === 'shared';
+/* The Items tab lists each game's own items under Hyrule and Termina, and the items the seed's settings share between
+   the games (OoTMM's shared* settings, which swap both games' copies for one SHARED_ item) in a Shared section of their
+   own. The catalog comes from the seed's item pool, so an item moves between the sections as its setting changes. */
+type ItemSide = 'oot' | 'mm' | 'shared';
+const ITEM_SIDES: [ItemSide, string][] = [['oot', 'Hyrule'], ['mm', 'Termina'], ['shared', 'Shared']];
+const inGame = (i: CatalogItem, side: ItemSide) => i.game === side;
 
 function renderItemRail() {
   const have = owned();
@@ -1448,7 +1452,7 @@ function renderItemRail() {
       <span class="n">${esc(name)}</span><span class="c">${c.done}/${c.total}</span>
       <span class="bar"><i style="width:${c.total ? (c.done / c.total) * 100 : 0}%"></i></span></button>`;
   let html = row('', 'All items', count(all));
-  for (const [game, name] of [['oot', 'Hyrule'], ['mm', 'Termina']] as const) {
+  for (const [game, name] of ITEM_SIDES) {
     const mine = all.filter(i => inGame(i, game));
     const groups = [...new Set(mine.map(i => i.group))].sort((a, b) => ITEM_GROUP_ORDER.indexOf(a) - ITEM_GROUP_ORDER.indexOf(b));
     if (!groups.length) continue;
@@ -1518,7 +1522,7 @@ function renderItems() {
   const list = catalog().filter(i => {
     const hid = !!saved.edits.items[i.id]?.hidden;
     if (hid && !editMode) return false;
-    if (areaGame && (!inGame(i, areaGame as 'oot' | 'mm') || i.group !== areaGroup)) return false;
+    if (areaGame && (!inGame(i, areaGame as ItemSide) || i.group !== areaGroup)) return false;
     return true;
   });
   const keep = (v: ItemView) => (!saved.ui.haveOnly || viewOn(v, have))
@@ -1531,7 +1535,7 @@ function renderItems() {
     sections.push(`<section class="items pinned"><div class="section-head"><button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide pinned items"></button><h2>Pinned</h2></div>
       ${shut ? '' : `<div class="item-grid">${pinnedViews.map(v => itemTile(v, have)).join('')}</div>`}</section>`);
   }
-  for (const game of ['oot', 'mm'] as const) {
+  for (const [game, gameName] of ITEM_SIDES) {
     if (itemGame !== 'all' && game !== itemGame) continue;
     if (areaGame && areaGame !== game) continue;
     const mine = list.filter(i => inGame(i, game));
@@ -1546,7 +1550,7 @@ function renderItems() {
       return `<div class="item-group"><div class="section-head"><button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide these items"></button><h3>${esc(g)}</h3></div>
         ${shut ? '' : `<div class="item-grid">${sortIn(`i:${game}:${g}`, rows, v => v.key).map(v => itemTile(v, have)).join('')}</div>`}</div>`;
     }).join('');
-    sections.push(`<section class="items ${game}"><div class="section-head"><h2>${game === 'oot' ? 'Hyrule' : 'Termina'}</h2></div>${body}</section>`);
+    sections.push(`<section class="items ${game}"><div class="section-head"><h2>${gameName}</h2>${game === 'shared' ? '<span class="c">Both games</span>' : ''}</div>${body}</section>`);
   }
   const loggedCount = Object.keys(seed.found).length;
   const status = !logicShown() || !logicOn() ? '' : logicError ? `<p>OoTMM couldn't work out logic for these settings: ${esc(logicError)}</p>`
@@ -1556,7 +1560,7 @@ function renderItems() {
       <div class="toolrow">
         <input class="search" id="itemSearch" type="search" placeholder="Search items" aria-label="Search items" value="${esc(itemQuery)}">
         <div class="seg" role="group" aria-label="Game">
-          ${(['all', 'oot', 'mm'] as const).map(g => `<button data-item-game="${g}" aria-pressed="${itemGame === g}">${{ all: 'Both', oot: 'OoT', mm: 'MM' }[g]}</button>`).join('')}
+          ${(['all', 'oot', 'mm', 'shared'] as const).filter(g => g !== 'shared' || catalog().some(i => i.game === 'shared')).map(g => `<button data-item-game="${g}" aria-pressed="${itemGame === g}">${{ all: 'All', oot: 'OoT', mm: 'MM', shared: 'Shared' }[g]}</button>`).join('')}
         </div>
         <div class="seg"><button data-haveonly aria-pressed="${!!saved.ui.haveOnly}">Have only</button></div>
       </div>

@@ -78,8 +78,9 @@ const PORT = Number(process.env.PORT ?? 8943);
   await setBools([['shared enemy souls', 'sharedSoulsEnemy']]);
   s = await items();
   await p.waitForFunction(() => document.querySelector('.item-btn[data-item^="SHARED_SOUL_ENEMY_"]'), null, { timeout: 120000 }).catch(() => {});
-  const shared = await p.$$eval('section.items .item-btn[data-item^="SHARED_SOUL_ENEMY_"]', bs => bs.length);
-  ok('shared enemy souls show (under both games)', shared > 0 && shared % 2 === 0, String(shared));
+  const shared = await p.$$eval('section.items.shared .item-btn[data-item^="SHARED_SOUL_ENEMY_"]', bs => bs.length);
+  const twice = await p.$$eval('section.items.oot .item-btn[data-item^="SHARED_SOUL_ENEMY_"], section.items.mm .item-btn[data-item^="SHARED_SOUL_ENEMY_"]', bs => bs.length);
+  ok('shared enemy souls show once, in the Shared section', shared > 0 && twice === 0, `${shared} shared, ${twice} under a game`);
 
   console.log('errors', errs.length, errs.slice(0, 5));
   ok('no page errors', errs.length === 0);
