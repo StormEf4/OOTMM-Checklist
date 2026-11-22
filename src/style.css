@@ -29,7 +29,16 @@ h1, h2, h3 { font-family: var(--display); font-weight: 700; margin: 0; text-wrap
 .brand[data-meter="clock"] .hearts, .brand[data-meter="none"] .hearts { display: none; }
 .brand[data-meter="hearts"] .legend { font-size: .82rem; }
 .brand-text { flex: 1 1 0; }
-.hearts { width: 100%; display: grid; gap: 1px; }
+.hearts { width: 100%; display: grid; gap: 4px; }
+.heart-rows { display: grid; gap: 1px; }
+.heart-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 26px; }
+.heart-name { font-size: .82rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Switches between the two games' hearts when health isn't shared, like the item menu's game button. */
+.heart-game { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 12px; border-radius: 15px; font-size: .74rem; font-weight: 800; letter-spacing: .03em;
+  color: var(--bg); background: var(--heart); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .3); touch-action: manipulation; }
+.heart-game.mm { background: var(--mm); }
+.heart-game:hover { filter: brightness(1.15); }
+.heart-game:active { transform: translateY(1px); }
 .heart-row { display: grid; grid-template-columns: repeat(10, 1fr); gap: 1px; }
 .heart-row svg { width: 100%; height: auto; display: block; }
 .he { fill: var(--moon); stroke: var(--ink); stroke-width: 1.3; stroke-opacity: .55; }

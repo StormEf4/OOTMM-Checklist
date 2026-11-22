@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS, SETTINGS, compute, enableFastMode, exportSettings, im
 import { computeLogic } from './engine/logic';
 import { checklistNormalDungeons } from '@ootmm/logic';
 import { PAGES, alt, slotView } from './cube';
+import { MAX_HEARTS, heartQuarters, heartsText } from './hearts';
 import { menuIcon as drawnIcon } from './menu-icons';
 import { customIcons, iconFolderAvailable, loadIcons, openIconFolder, putIcon, readIconFile, removeAllIcons, removeIcon } from './icon-store';
 import { WORLD, MAP_W, MAP_H } from './mapspots';
@@ -122,7 +123,7 @@ type Edits = {
 type Saved = {
   v: 1; seeds: Seed[]; current: string; custom: CustomCheck[]; edits: Edits;
   ui: {
-    skin?: string; theme?: string; meter?: string; cubeGame?: 'oot' | 'mm'; cubePage?: string; railOpen?: string[]; railW?: number; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
+    skin?: string; theme?: string; meter?: string; cubeGame?: 'oot' | 'mm'; cubePage?: string; heartGame?: 'oot' | 'mm'; railOpen?: string[]; railW?: number; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
     showLocked?: boolean; changesOnly?: boolean; collapsed?: string[];
     /** Game tracking (Windows app): off when false. gameItems false keeps the checks but not the items found at them. */
     gameTrack?: boolean; gameItems?: boolean;
@@ -979,17 +980,44 @@ function renderTabs() {
 
 const HEART = 'M12 21.300C5.600 16.500 1.500 12.800 1.500 8.200 1.500 5 4 2.800 6.900 2.800c2 0 3.900 1 5.100 2.800 1.200-1.800 3.100-2.800 5.100-2.800 2.900 0 5.400 2.200 5.400 5.400 0 4.600-4.100 8.300-10.500 13.100z';
 /* Double Defense gives the hearts a bold gold outline, the way the games show it. */
-function hasDoubleDefense(game: 'oot' | 'mm') {
-  const have = owned(), items = catalogById();
-  return [`${game.toUpperCase()}_DEFENSE_UPGRADE`, 'SHARED_DEFENSE_UPGRADE'].some(id => { const i = items.get(id); return (i ? countOf(i, have) : have[id] ?? 0) > 0; });
+function hasDoubleDefense(game: 'oot' | 'mm' | 'shared') {
+  return itemCount(`${game.toUpperCase()}_DEFENSE_UPGRADE`) > 0;
 }
-function heartRow(fraction: number, cls: 'oot' | 'mm') {
-  const pieces = Math.floor(fraction * 40 + 1e-9);
-  return `<div class="heart-row ${cls}${hasDoubleDefense('oot') || hasDoubleDefense('mm') ? ' dd' : ''}">${Array.from({ length: 10 }, (_, i) => {
-    const q = Math.max(0, Math.min(4, pieces - i * 4));
+/** How many of an item the player has, starting items included. */
+function itemCount(id: string, have = owned()) {
+  const i = catalogById().get(id);
+  return i ? countOf(i, have) : have[id] ?? 0;
+}
+/* With Shared Health on (OoTMM's sharedHealth setting), both games share one life meter, filled by the shared Heart
+   Containers and Pieces (OoTMM swaps each game's own for SHARED_ ones). With it off, each game has its own 20 hearts,
+   and a button switches between them. */
+function heartGames(): ('oot' | 'mm' | 'shared')[] {
+  if (S?.sharedHealth && S.games !== 'oot' && S.games !== 'mm') return ['shared'];
+  return S?.games === 'oot' ? ['oot'] : S?.games === 'mm' ? ['mm'] : ['oot', 'mm'];
+}
+function heartsFor(game: 'oot' | 'mm' | 'shared') {
+  const have = owned();
+  const g = game.toUpperCase();
+  return heartQuarters(itemCount(`${g}_HEART_CONTAINER`, have), itemCount(`${g}_HEART_PIECE`, have));
+}
+function heartRow(quarters: number[], cls: string) {
+  return `<div class="heart-row ${cls}">${quarters.map(q => {
     const fill = q === 0 ? '' : `<path class="hf" d="${HEART}"${q < 4 ? ` clip-path="url(#hq${q})"` : ''}/>`;
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path class="he" d="${HEART}"/>${fill}</svg>`;
   }).join('')}</div>`;
+}
+function heartsHtml() {
+  const games = heartGames();
+  const game = games.includes(saved.ui.heartGame as any) ? saved.ui.heartGame! : games[0];
+  const q = heartsFor(game);
+  const cls = `${game === 'shared' ? 'shared' : game}${hasDoubleDefense(game) ? ' dd' : ''}`;
+  const name = { oot: 'Ocarina of Time', mm: "Majora's Mask", shared: 'Shared health' }[game];
+  const other = games.find(g => g !== game);
+  const pieces = q.reduce((t, n) => t + (n % 4), 0);
+  const label = `${name}: ${heartsText(q)} of ${MAX_HEARTS}${pieces ? `, ${pieces} of 4 pieces toward the next` : ''}`;
+  return `<div class="heart-head"><span class="heart-name">${game === 'shared' ? 'Shared' : game === 'oot' ? 'OoT' : 'MM'} · ${heartsText(q)}</span>${other
+    ? `<button class="heart-game keep ${game}" data-heart-game="${other}" title="Switch to ${other === 'oot' ? 'Ocarina of Time' : "Majora's Mask"}'s hearts">${game === 'oot' ? 'OoT' : 'MM'}<span aria-hidden="true">⇄</span></button>` : ''}</div>
+    <div class="heart-rows" role="img" aria-label="${esc(label)}" title="${esc(label)}">${heartRow(q.slice(0, 10), cls)}${heartRow(q.slice(10), cls)}</div>`;
 }
 
 function renderDial() {
@@ -1005,7 +1033,7 @@ function renderDial() {
   ring($('#ringMm'), 39.5, t.mm ? t.mmDone / t.mm : 0);
   const meter = saved.ui.meter || skinById(saved.ui.skin).meter;
   $('.brand').dataset.meter = meter;
-  $('#hearts').innerHTML = meter === 'hearts' ? (t.oot ? heartRow(t.ootDone / t.oot, 'oot') : '') + (t.mm ? heartRow(t.mmDone / t.mm, 'mm') : '') : '';
+  $('#hearts').innerHTML = meter === 'hearts' ? heartsHtml() : '';
   renderCube();
   $('#dialPct').textContent = `${Math.floor(pct * 100)}%`;
   $('#seedName').textContent = seed.name;
@@ -1362,7 +1390,7 @@ function renderMap() {
 /* ---------- Items page ----------
    The player's own item tracker. Logging an item at a check counts it here too. */
 
-const ITEM_GROUP_ORDER = ['Equipment', 'Ammo and shields', 'Songs', 'Masks', 'Medallions, stones and remains', 'Boss souls', 'Enemy souls', 'NPC souls', 'Animal souls', 'Other souls', 'Trade and quest items', 'Bottles and their contents', 'Owls and maps', 'Skulltula tokens', 'Keys and dungeon items'];
+const ITEM_GROUP_ORDER = ['Equipment', 'Hearts', 'Ammo and shields', 'Songs', 'Masks', 'Medallions, stones and remains', 'Boss souls', 'Enemy souls', 'NPC souls', 'Animal souls', 'Other souls', 'Trade and quest items', 'Bottles and their contents', 'Owls and maps', 'Skulltula tokens', 'Keys and dungeon items'];
 
 /*
  * Items that come in steps get a tile for each step, named the way the games name them, instead of one "0/2" counter.
@@ -1582,6 +1610,7 @@ function setItemCount(id: string, n: number) {
 }
 function afterItemChange() {
   save();
+  renderDial();
   if (tab === 'items') renderItems(); else renderPane();
   scheduleLogic();
   noteDungeonItems();
@@ -3620,6 +3649,7 @@ function events() {
     if (d.setview) { settingsView = d.setview as typeof settingsView; renderSettings(); return; }
     if (d.skinSet) { saved.ui.skin = d.skinSet; saved.ui.font = undefined; applyTheme(); save(); renderDial(); renderLook(); return; }
     if (d.cubePage) { cubeSpin = el.getAttribute('aria-label') === 'Previous page' ? ' spin-l' : ' spin-r'; cubeSel = -1; saved.ui.cubePage = d.cubePage; save(); renderCube(); return; }
+    if (d.heartGame) { saved.ui.heartGame = d.heartGame as 'oot' | 'mm'; save(); renderDial(); return; }
     if (d.cubeGame) { cubeSpin = ' spin-r'; cubeSel = -1; saved.ui.cubeGame = d.cubeGame as 'oot' | 'mm'; saved.ui.cubePage = undefined; save(); renderCube(); return; }
     if ('openIcons' in d) { openIconFolder(); return; }
     if ('resetIcons' in d) {
