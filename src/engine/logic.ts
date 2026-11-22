@@ -50,6 +50,7 @@ const monitor = new Monitor({ onLog: () => {}, onWarn: () => {}, onProgress: () 
 function itemGroup(id: string, item: any): string {
   const soul = /_SOUL_(BOSS|ENEMY|NPC|ANIMAL|MISC)_/.exec(id)?.[1];
   if (soul) return SOUL_GROUPS[soul];
+  if (/_HEART_(CONTAINER|PIECE)$|_DEFENSE_UPGRADE$/.test(id)) return 'Hearts';
   if (ItemHelpers.isSong(item) || /_SONG_/.test(id)) return 'Songs';
   if (/_MASK_/.test(id)) return 'Masks';
   if (/MEDALLION|_STONE_(EMERALD|RUBY|SAPPHIRE)|_REMAINS_|TRIFORCE/.test(id)) return 'Medallions, stones and remains';
@@ -153,10 +154,11 @@ async function buildBase(input: Partial<Settings>): Promise<Base> {
    */
   const consumable = (item: any) => ItemGroups.CONSUMABLES.has(item) && !itemProperties.license.has(item);
   const family = new Map<string, string>();
-  /* Double Defense doesn't open checks, but the hearts display shows it, so it can be logged too. Dungeon maps and
+  /* Heart Containers, Heart Pieces and Double Defense don't open checks, but the hearts display shows them, so they can
+     be logged too. Dungeon maps and
      compasses don't open checks either, but finding one asks the player about that dungeon's way in or boss. Every soul
      in the pool is listed, even ones logic doesn't need, so the Souls sections are complete. */
-  const tracked = (item: any) => itemProperties.important.has(item) || /_SOUL_/.test(item.id) || /_DEFENSE_UPGRADE$/.test(item.id) || ItemGroups.MAPS.has(item) || ItemGroups.COMPASSES.has(item);
+  const tracked = (item: any) => itemProperties.important.has(item) || /_SOUL_/.test(item.id) || /_HEART_(CONTAINER|PIECE)$|_DEFENSE_UPGRADE$/.test(item.id) || ItemGroups.MAPS.has(item) || ItemGroups.COMPASSES.has(item);
   const add = (item: any, n: number) => {
     let id: string = item.id;
     if (consumable(item)) {

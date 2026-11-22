@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS, SETTINGS, compute, enableFastMode, exportSettings, im
 import { computeLogic } from './engine/logic';
 import { checklistNormalDungeons } from '@ootmm/logic';
 import { PAGES, alt, slotView } from './cube';
+import { MAX_HEARTS, heartQuarters, heartsText } from './hearts';
 import { menuIcon as drawnIcon } from './menu-icons';
 import { customIcons, iconFolderAvailable, loadIcons, openIconFolder, putIcon, readIconFile, removeAllIcons, removeIcon } from './icon-store';
 import { WORLD, MAP_W, MAP_H } from './mapspots';
@@ -122,7 +123,7 @@ type Edits = {
 type Saved = {
   v: 1; seeds: Seed[]; current: string; custom: CustomCheck[]; edits: Edits;
   ui: {
-    skin?: string; theme?: string; meter?: string; cubeGame?: 'oot' | 'mm'; cubePage?: string; railOpen?: string[]; railW?: number; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
+    skin?: string; theme?: string; meter?: string; cubeGame?: 'oot' | 'mm'; cubePage?: string; heartGame?: 'oot' | 'mm'; railOpen?: string[]; railW?: number; font?: string; seal?: string; noPattern?: boolean; scale?: number; compact?: boolean; hideDone?: boolean; hideFound?: boolean;
     showLocked?: boolean; changesOnly?: boolean; collapsed?: string[];
     /** Game tracking (Windows app): off when false. gameItems false keeps the checks but not the items found at them. */
     gameTrack?: boolean; gameItems?: boolean;
@@ -246,7 +247,7 @@ let logicError = '';
 let itemQuery = '';
 /** The Items sidebar's choice, as game:group, or null for every item. */
 let itemArea: string | null = null;
-let itemGame: 'all' | 'oot' | 'mm' = 'all';
+let itemGame: 'all' | 'oot' | 'mm' | 'shared' = 'all';
 let pickingItemFor: string | null = null;
 let itemPickQuery = '';
 
@@ -979,17 +980,44 @@ function renderTabs() {
 
 const HEART = 'M12 21.300C5.600 16.500 1.500 12.800 1.500 8.200 1.500 5 4 2.800 6.900 2.800c2 0 3.900 1 5.100 2.800 1.200-1.800 3.100-2.800 5.100-2.800 2.900 0 5.400 2.200 5.400 5.400 0 4.600-4.100 8.300-10.500 13.100z';
 /* Double Defense gives the hearts a bold gold outline, the way the games show it. */
-function hasDoubleDefense(game: 'oot' | 'mm') {
-  const have = owned(), items = catalogById();
-  return [`${game.toUpperCase()}_DEFENSE_UPGRADE`, 'SHARED_DEFENSE_UPGRADE'].some(id => { const i = items.get(id); return (i ? countOf(i, have) : have[id] ?? 0) > 0; });
+function hasDoubleDefense(game: 'oot' | 'mm' | 'shared') {
+  return itemCount(`${game.toUpperCase()}_DEFENSE_UPGRADE`) > 0;
 }
-function heartRow(fraction: number, cls: 'oot' | 'mm') {
-  const pieces = Math.floor(fraction * 40 + 1e-9);
-  return `<div class="heart-row ${cls}${hasDoubleDefense('oot') || hasDoubleDefense('mm') ? ' dd' : ''}">${Array.from({ length: 10 }, (_, i) => {
-    const q = Math.max(0, Math.min(4, pieces - i * 4));
+/** How many of an item the player has, starting items included. */
+function itemCount(id: string, have = owned()) {
+  const i = catalogById().get(id);
+  return i ? countOf(i, have) : have[id] ?? 0;
+}
+/* With Shared Health on (OoTMM's sharedHealth setting), both games share one life meter, filled by the shared Heart
+   Containers and Pieces (OoTMM swaps each game's own for SHARED_ ones). With it off, each game has its own 20 hearts,
+   and a button switches between them. */
+function heartGames(): ('oot' | 'mm' | 'shared')[] {
+  if (S?.sharedHealth && S.games !== 'oot' && S.games !== 'mm') return ['shared'];
+  return S?.games === 'oot' ? ['oot'] : S?.games === 'mm' ? ['mm'] : ['oot', 'mm'];
+}
+function heartsFor(game: 'oot' | 'mm' | 'shared') {
+  const have = owned();
+  const g = game.toUpperCase();
+  return heartQuarters(itemCount(`${g}_HEART_CONTAINER`, have), itemCount(`${g}_HEART_PIECE`, have));
+}
+function heartRow(quarters: number[], cls: string) {
+  return `<div class="heart-row ${cls}">${quarters.map(q => {
     const fill = q === 0 ? '' : `<path class="hf" d="${HEART}"${q < 4 ? ` clip-path="url(#hq${q})"` : ''}/>`;
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path class="he" d="${HEART}"/>${fill}</svg>`;
   }).join('')}</div>`;
+}
+function heartsHtml() {
+  const games = heartGames();
+  const game = games.includes(saved.ui.heartGame as any) ? saved.ui.heartGame! : games[0];
+  const q = heartsFor(game);
+  const cls = `${game === 'shared' ? 'shared' : game}${hasDoubleDefense(game) ? ' dd' : ''}`;
+  const name = { oot: 'Ocarina of Time', mm: "Majora's Mask", shared: 'Shared health' }[game];
+  const other = games.find(g => g !== game);
+  const pieces = q.reduce((t, n) => t + (n % 4), 0);
+  const label = `${name}: ${heartsText(q)} of ${MAX_HEARTS}${pieces ? `, ${pieces} of 4 pieces toward the next` : ''}`;
+  return `<div class="heart-head"><span class="heart-name">${game === 'shared' ? 'Shared' : game === 'oot' ? 'OoT' : 'MM'} · ${heartsText(q)}</span>${other
+    ? `<button class="heart-game keep ${game}" data-heart-game="${other}" title="Switch to ${other === 'oot' ? 'Ocarina of Time' : "Majora's Mask"}'s hearts">${game === 'oot' ? 'OoT' : 'MM'}<span aria-hidden="true">⇄</span></button>` : ''}</div>
+    <div class="heart-rows" role="img" aria-label="${esc(label)}" title="${esc(label)}">${heartRow(q.slice(0, 10), cls)}${heartRow(q.slice(10), cls)}</div>`;
 }
 
 function renderDial() {
@@ -1005,7 +1033,7 @@ function renderDial() {
   ring($('#ringMm'), 39.5, t.mm ? t.mmDone / t.mm : 0);
   const meter = saved.ui.meter || skinById(saved.ui.skin).meter;
   $('.brand').dataset.meter = meter;
-  $('#hearts').innerHTML = meter === 'hearts' ? (t.oot ? heartRow(t.ootDone / t.oot, 'oot') : '') + (t.mm ? heartRow(t.mmDone / t.mm, 'mm') : '') : '';
+  $('#hearts').innerHTML = meter === 'hearts' ? heartsHtml() : '';
   renderCube();
   $('#dialPct').textContent = `${Math.floor(pct * 100)}%`;
   $('#seedName').textContent = seed.name;
@@ -1362,7 +1390,7 @@ function renderMap() {
 /* ---------- Items page ----------
    The player's own item tracker. Logging an item at a check counts it here too. */
 
-const ITEM_GROUP_ORDER = ['Equipment', 'Ammo and shields', 'Songs', 'Masks', 'Medallions, stones and remains', 'Boss souls', 'Enemy souls', 'NPC souls', 'Animal souls', 'Other souls', 'Trade and quest items', 'Bottles and their contents', 'Owls and maps', 'Skulltula tokens', 'Keys and dungeon items'];
+const ITEM_GROUP_ORDER = ['Equipment', 'Hearts', 'Ammo and shields', 'Songs', 'Masks', 'Medallions, stones and remains', 'Boss souls', 'Enemy souls', 'NPC souls', 'Animal souls', 'Other souls', 'Trade and quest items', 'Bottles and their contents', 'Owls and maps', 'Skulltula tokens', 'Keys and dungeon items'];
 
 /*
  * Items that come in steps get a tile for each step, named the way the games name them, instead of one "0/2" counter.
@@ -1405,8 +1433,12 @@ function itemViews(i: CatalogItem): ItemView[] {
   return lv.map((name, k) => ({ i, level: k + 1, key: `${i.id}#${k + 1}`, name: own ? `${own} ${k + 1}` : name }));
 }
 const viewOn = (v: ItemView, have: Record<string, number>) => v.level ? countOf(v.i, have) >= v.level : countOf(v.i, have) > 0;
-/* Shared items belong to both games, so they show under Hyrule and Termina alike. */
-const inGame = (i: CatalogItem, game: 'oot' | 'mm') => i.game === game || i.game === 'shared';
+/* The Items tab lists each game's own items under Hyrule and Termina, and the items the seed's settings share between
+   the games (OoTMM's shared* settings, which swap both games' copies for one SHARED_ item) in a Shared section of their
+   own. The catalog comes from the seed's item pool, so an item moves between the sections as its setting changes. */
+type ItemSide = 'oot' | 'mm' | 'shared';
+const ITEM_SIDES: [ItemSide, string][] = [['oot', 'Hyrule'], ['mm', 'Termina'], ['shared', 'Shared']];
+const inGame = (i: CatalogItem, side: ItemSide) => i.game === side;
 
 function renderItemRail() {
   const have = owned();
@@ -1420,7 +1452,7 @@ function renderItemRail() {
       <span class="n">${esc(name)}</span><span class="c">${c.done}/${c.total}</span>
       <span class="bar"><i style="width:${c.total ? (c.done / c.total) * 100 : 0}%"></i></span></button>`;
   let html = row('', 'All items', count(all));
-  for (const [game, name] of [['oot', 'Hyrule'], ['mm', 'Termina']] as const) {
+  for (const [game, name] of ITEM_SIDES) {
     const mine = all.filter(i => inGame(i, game));
     const groups = [...new Set(mine.map(i => i.group))].sort((a, b) => ITEM_GROUP_ORDER.indexOf(a) - ITEM_GROUP_ORDER.indexOf(b));
     if (!groups.length) continue;
@@ -1490,7 +1522,7 @@ function renderItems() {
   const list = catalog().filter(i => {
     const hid = !!saved.edits.items[i.id]?.hidden;
     if (hid && !editMode) return false;
-    if (areaGame && (!inGame(i, areaGame as 'oot' | 'mm') || i.group !== areaGroup)) return false;
+    if (areaGame && (!inGame(i, areaGame as ItemSide) || i.group !== areaGroup)) return false;
     return true;
   });
   const keep = (v: ItemView) => (!saved.ui.haveOnly || viewOn(v, have))
@@ -1503,7 +1535,7 @@ function renderItems() {
     sections.push(`<section class="items pinned"><div class="section-head"><button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide pinned items"></button><h2>Pinned</h2></div>
       ${shut ? '' : `<div class="item-grid">${pinnedViews.map(v => itemTile(v, have)).join('')}</div>`}</section>`);
   }
-  for (const game of ['oot', 'mm'] as const) {
+  for (const [game, gameName] of ITEM_SIDES) {
     if (itemGame !== 'all' && game !== itemGame) continue;
     if (areaGame && areaGame !== game) continue;
     const mine = list.filter(i => inGame(i, game));
@@ -1518,7 +1550,7 @@ function renderItems() {
       return `<div class="item-group"><div class="section-head"><button class="caret keep" data-collapse="${esc(key)}" aria-expanded="${!shut}" aria-label="Show or hide these items"></button><h3>${esc(g)}</h3></div>
         ${shut ? '' : `<div class="item-grid">${sortIn(`i:${game}:${g}`, rows, v => v.key).map(v => itemTile(v, have)).join('')}</div>`}</div>`;
     }).join('');
-    sections.push(`<section class="items ${game}"><div class="section-head"><h2>${game === 'oot' ? 'Hyrule' : 'Termina'}</h2></div>${body}</section>`);
+    sections.push(`<section class="items ${game}"><div class="section-head"><h2>${gameName}</h2>${game === 'shared' ? '<span class="c">Both games</span>' : ''}</div>${body}</section>`);
   }
   const loggedCount = Object.keys(seed.found).length;
   const status = !logicShown() || !logicOn() ? '' : logicError ? `<p>OoTMM couldn't work out logic for these settings: ${esc(logicError)}</p>`
@@ -1528,7 +1560,7 @@ function renderItems() {
       <div class="toolrow">
         <input class="search" id="itemSearch" type="search" placeholder="Search items" aria-label="Search items" value="${esc(itemQuery)}">
         <div class="seg" role="group" aria-label="Game">
-          ${(['all', 'oot', 'mm'] as const).map(g => `<button data-item-game="${g}" aria-pressed="${itemGame === g}">${{ all: 'Both', oot: 'OoT', mm: 'MM' }[g]}</button>`).join('')}
+          ${(['all', 'oot', 'mm', 'shared'] as const).filter(g => g !== 'shared' || catalog().some(i => i.game === 'shared')).map(g => `<button data-item-game="${g}" aria-pressed="${itemGame === g}">${{ all: 'All', oot: 'OoT', mm: 'MM', shared: 'Shared' }[g]}</button>`).join('')}
         </div>
         <div class="seg"><button data-haveonly aria-pressed="${!!saved.ui.haveOnly}">Have only</button></div>
       </div>
@@ -1582,6 +1614,7 @@ function setItemCount(id: string, n: number) {
 }
 function afterItemChange() {
   save();
+  renderDial();
   if (tab === 'items') renderItems(); else renderPane();
   scheduleLogic();
   noteDungeonItems();
@@ -3620,6 +3653,7 @@ function events() {
     if (d.setview) { settingsView = d.setview as typeof settingsView; renderSettings(); return; }
     if (d.skinSet) { saved.ui.skin = d.skinSet; saved.ui.font = undefined; applyTheme(); save(); renderDial(); renderLook(); return; }
     if (d.cubePage) { cubeSpin = el.getAttribute('aria-label') === 'Previous page' ? ' spin-l' : ' spin-r'; cubeSel = -1; saved.ui.cubePage = d.cubePage; save(); renderCube(); return; }
+    if (d.heartGame) { saved.ui.heartGame = d.heartGame as 'oot' | 'mm'; save(); renderDial(); return; }
     if (d.cubeGame) { cubeSpin = ' spin-r'; cubeSel = -1; saved.ui.cubeGame = d.cubeGame as 'oot' | 'mm'; saved.ui.cubePage = undefined; save(); renderCube(); return; }
     if ('openIcons' in d) { openIconFolder(); return; }
     if ('resetIcons' in d) {
