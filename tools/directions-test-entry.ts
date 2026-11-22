@@ -58,6 +58,36 @@ const show = (ways: any, steps: any[] | null) => steps ? steps.map((s, i) => `  
   ok(leadsTo(ways, 'OOT_HOUSE_SARIA', { logged: { OOT_HOUSE_SARIA: 'text:somewhere' }, shuffled }) === null, "the player's own words lead nowhere known");
 }
 
+/* Back to the spawn: save and reset from anywhere, as the age Link is. */
+{
+  const r = await compute({});
+  const ways = r.entrances.ways!;
+  const spawns = r.entrances.list.filter(e => e.kind === 'Spawns');
+  ok(spawns.length === 2 && spawns.every(e => e.fixed), `unshuffled spawns still listed: ${spawns.map(e => e.title + ' / ' + e.sub).join('; ')}`);
+  const find = (t: string) => searchPlaces(ways, t)[0];
+  const lh = find("Link's House"), tot = find('Temple of Time'), dmc = find('Death Mountain Crater'), zd = find("Zora's Domain");
+  const all: Record<string, number> = {};
+  const none = await computeLogic({ settings: {}, entrances: {}, items: {} });
+  for (const i of none.catalog) all[i.id] = i.max;
+  const full = await computeLogic({ settings: {}, entrances: {}, items: all });
+  const ask = (goal: string, age: any, start = dmc, rules: any = full.travel) => findRoute(ways, { start: areasIn(ways, start), goal, age, logged: {}, shuffled: new Set<string>(), rules });
+  const a = ask(lh, 'child', zd);
+  console.log(show(ways, a));
+  ok(!!a && a.length === 1 && a[0].kind === 'warp' && (a[0] as any).door === 'OOT_SPAWN_CHILD', "child far away: back to the child spawn at Link's House");
+  const b = ask(tot, 'adult');
+  ok(!!b && b.length === 1 && (b[0] as any).door === 'OOT_SPAWN_ADULT', 'adult: back to the adult spawn at the Temple of Time');
+  const c = ask(lh, 'adult', zd);
+  ok(!!c && !c.some(x => (x as any).door === 'OOT_SPAWN_CHILD'), 'adult never uses the child spawn');
+  const d = findRoute(ways, { start: areasIn(ways, zd), goal: lh, age: 'child', logged: {}, shuffled: new Set<string>() });
+  ok(!!d && d.length === 1, 'without item rules too');
+  /* A shuffled spawn leads only where the player logged it. */
+  const sh = await compute({ erSpawns: 'both' } as any);
+  const w2 = sh.entrances.ways!;
+  const shuf = new Set(sh.entrances.list.filter(e => !e.fixed).map(e => e.id));
+  const e1 = findRoute(w2, { start: areasIn(w2, zd), goal: lh, age: 'child', logged: {}, shuffled: shuf });
+  ok(!e1?.some(x => (x as any).door === 'OOT_SPAWN_CHILD'), 'unlogged shuffled spawn is never used');
+}
+
 /* Warp songs only with the song. */
 {
   const r = await compute({});
@@ -66,7 +96,7 @@ const show = (ways: any, steps: any[] | null) => steps ? steps.map((s, i) => `  
   const ask = { start: areasIn(ways, searchPlaces(ways, 'Desert Colossus')[0]), goal: meadow, logged: {}, shuffled: new Set<string>() };
   const a = findRoute(ways, ask), b = findRoute(ways, { ...ask, canWarp: id => id === 'OOT_WARP_SONG_MEADOW' });
   console.log(show(ways, b));
-  ok(!!a && !a.some(x => x.kind === 'warp'), 'no song: walks');
+  ok(!!a && !a.some(x => x.kind === 'warp' && /SONG/.test(x.door)), 'no song: no warp song (going back to spawn is fine)');
   ok(!!b && b.length === 1 && b[0].kind === 'warp', 'with Minuet: one warp');
   void kf;
 }
@@ -107,6 +137,62 @@ const show = (ways: any, steps: any[] | null) => steps ? steps.map((s, i) => `  
     }
   }
   ok(bad === 0, 'no door taken by an age its rule shuts out');
+}
+/* Tricks, glitches and "anywhere" settings: OoTMM's rules read them from the seed's settings, so directions do too. */
+{
+  const { TRICKS } = await import('@ootmm/core') as any;
+  const r = await compute({});
+  const ways = r.entrances.ways!;
+  const base = await computeLogic({ settings: {}, entrances: {}, items: {} });
+  const all: Record<string, number> = {};
+  for (const i of base.catalog) all[i.id] = i.max;
+  const plain = await computeLogic({ settings: { tricks: [] }, entrances: {}, items: all });
+  const loose = { tricks: Object.keys(TRICKS), hookshotAnywhereOot: 'logical', hookshotAnywhereMm: 'logical', climbMostSurfacesOot: 'logical' };
+  const tricky = await computeLogic({ settings: loose as any, entrances: {}, items: all });
+  const closed = (t: any) => Object.values(t.pass).reduce((n: number, m: any) => n + (2 - ((m & 1) + ((m >> 1) & 1))), 0);
+  console.log('ways closed to an age, no tricks:', closed(plain.travel), 'every trick, glitch and anywhere setting:', closed(tricky.travel));
+  ok(closed(tricky.travel) < closed(plain.travel), 'tricks and glitches open more ways');
+  /* Some place is reached in fewer steps with them on. */
+  const shuffled = new Set<string>();
+  let shorter = '';
+  for (const goal of Object.keys(ways.places)) {
+    for (const age of ['child', 'adult'] as const) {
+      const ask = { start: areasIn(ways, 'OOT_KOKIRI_FOREST'), goal, age, logged: {}, shuffled };
+      const a = findRoute(ways, { ...ask, rules: plain.travel }), b = findRoute(ways, { ...ask, rules: tricky.travel });
+      if (b && (!a || b.length < a.length)) { shorter = `${ways.places[goal][0]} as ${age}: ${a?.length ?? 'none'} -> ${b.length} steps`; break; }
+    }
+    if (shorter) break;
+  }
+  ok(!!shorter, `a way gets shorter or opens with them: ${shorter}`);
+  /* Each way that leans on one says which, and the items with it. With none turned on, nothing does. */
+  const aids = Object.entries(tricky.travel!.aids ?? {});
+  console.log('ways that need a trick, glitch or setting:', aids.length);
+  for (const [k, v] of aids.slice(0, 6)) console.log('  ', k.replace('\n', ' -> '), JSON.stringify(v));
+  ok(aids.length > 50, 'ways with tricks say which trick');
+  ok(!Object.keys(plain.travel!.aids ?? {}).length, 'no tricks on: no way says it needs one');
+  ok(aids.some(([, v]) => v.some(a => a?.use.some(u => /glitch/.test(u)))), 'glitches are named as glitches');
+  ok(aids.some(([, v]) => v.some(a => a?.use.includes('Hookshot Anywhere') && a.items.some(i => /Hookshot|Longshot/.test(i)))), 'Hookshot Anywhere names the Hookshot');
+  let named = '';
+  for (const goal of Object.keys(ways.places)) {
+    for (const age of ['child', 'adult'] as const) {
+      const st = findRoute(ways, { start: areasIn(ways, 'OOT_KOKIRI_FOREST'), goal, age, logged: {}, shuffled, rules: tricky.travel });
+      const u = st?.find(x => x.uses?.length);
+      if (u) { named = `${ways.places[goal][0]} as ${age}: ${u.uses!.map(a => a.use.join(' or ') + (a.items.length ? ' with ' + a.items.join(', ') : '')).join('; ')}`; break; }
+    }
+    if (named) break;
+  }
+  ok(!!named, `a step names what it uses: ${named}`);
+  /* Only with what it needs: without a Hookshot, no way leans on Hookshot Anywhere. */
+  const noHook = Object.fromEntries(Object.entries(all).filter(([id]) => !/HOOKSHOT|LONGSHOT/.test(id)));
+  const unhooked = await computeLogic({ settings: loose as any, entrances: {}, items: noHook });
+  const hookUses = Object.values(unhooked.travel!.aids ?? {}).filter(v => v.some(a => a?.use.some(u => /^Hookshot Anywhere/.test(u)) && !a.any)).length;
+  ok(hookUses === 0, `no Hookshot: Hookshot Anywhere opens nothing (${hookUses})`);
+  ok(closed(unhooked.travel) > closed(tricky.travel), 'no Hookshot: fewer ways open');
+  /* And without Bombs, no bomb hover. */
+  const noBombs = Object.fromEntries(Object.entries(all).filter(([id]) => !/BOMB/.test(id)));
+  const unbombed = await computeLogic({ settings: loose as any, entrances: {}, items: noBombs });
+  const hovers = Object.values(unbombed.travel!.aids ?? {}).filter(v => v.some(a => a?.use.some(u => /Hover/i.test(u)) && a.items.some(i => /Bomb/.test(i)))).length;
+  ok(hovers === 0, `no Bombs: no step uses a bomb hover (${hovers})`);
 }
 console.log(fail ? `${fail} failed` : 'all passed');
 process.exit(fail ? 1 : 0);

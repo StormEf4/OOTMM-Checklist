@@ -122,7 +122,12 @@ take, in order, from where you are. It only goes through entrances you've logged
 so an entrance you haven't logged stays closed. Every step follows OoTMM's own rules with the items on your Items tab
 and Link's age: a road that needs the Iron Boots, or adult Link, isn't used until you have them. When the way needs
 the other age, a step says to pull the Master Sword (or put it back) at the Temple of Time, or to play the Song of
-Time where your settings allow it. Warp songs and soaring are used when OoTMM's rules say you can play them. Your age
+Time where your settings allow it. Warp songs and soaring are used when OoTMM's rules say you can play them. From
+anywhere, a step can send you back to your spawn (save and reset, or a Game Over) for the age you are: the child spawn
+as child, the adult spawn as adult, wherever your settings or your log say it leads. Tricks, glitches and settings like
+Hookshot Anywhere or Climb Most Surfaces count only when your settings turn them on for logic, and only with the items
+they need. A step that leans on one says which, and what it uses, for example "Uses Megaflips (glitch) with Bomb Bag
+and Deku Shield". When a plain way is just as short, it's picked first. Your age
 comes from the game, or set it with Child and Adult in the panel. When your items don't open any way yet, the
 directions show the way ignoring items, and say so. The sidebar then shows the next step until you get there. When there's more than one way, the directions show up to four, shortest
 first, and you can pick the one to follow.

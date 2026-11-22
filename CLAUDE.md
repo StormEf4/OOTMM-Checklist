@@ -77,7 +77,10 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
   `src/engine/entrances.ts`: areas, walking between them, every entrance, and what the settings fix), through only the
   entrances the player logged plus ones the settings don't shuffle. Each step must pass OoTMM's own rule for that way
   with the player's items and Link's age (`travel` from the logic worker, `travelRules` in `logic.ts`), with age changes
-  at the Temple of Time or by the Song of Time; with no way yet, it falls back to ignoring rules and says so. Where the player is comes
+  at the Temple of Time or by the Song of Time, and a return to the spawn for the current age from anywhere (save and
+  reset); with no way yet, it falls back to ignoring rules and says so. Tricks, glitches and "logical" settings (Hookshot
+  Anywhere...) come from the seed's settings through OoTMM's rules; a build patch in `tools/paths.mjs` marks each one in
+  the rules so `travel.aids` can say which one (and which items) a way needs, and steps show it. Where the player is comes
   from game tracking's entrance messages (whether or not entrance logging is on), or the player sets it; logging an
   entrance by hand moves it when the game isn't connected. Saved per seed as `seed.here` (with `age`), `seed.goal` and `seed.via` (the route picked)
 - `desktop/`: the Windows window (Electron)

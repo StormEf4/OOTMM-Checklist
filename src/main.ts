@@ -2809,9 +2809,23 @@ const doorsIn = (r: Step[]) => r.flatMap(x => x.kind === 'door' || x.kind === 'w
 const ageWord = (a: Age) => a === 'adult' ? 'Adult Link' : 'Child Link';
 
 /** A step in a few words, for the sidebar. */
+/** "Uses Megaflips (glitch) with Bomb Bag and Deku Shield." for a step that leans on a trick, glitch or setting. */
+function usesText(s: Step, short = false) {
+  if (!s.uses?.length) return '';
+  const and = (l: string[]) => l.length < 2 ? l.join('') : l.slice(0, -1).join(', ') + ' and ' + l[l.length - 1];
+  const one = (a: NonNullable<Step['uses']>[number]) => a.any
+    ? `one of ${a.use.map(u => `<b>${esc(u)}</b>`).join(', ').replace(/, ([^,]*)$/, ' or $1')}`
+    : and(a.use.map(u => `<b>${esc(u)}</b>`)) + (a.items.length && !short ? ` with ${esc(and(a.items))}` : '');
+  return `Uses ${s.uses.map(one).join('; ')}`;
+}
 function stepShort(s: Step) {
+  const uses = s.uses?.length ? ` (${usesText(s, true).replace(/^Uses/, 'uses').replace(/<\/?b>/g, '')})` : '';
+  return stepShortBare(s) + uses;
+}
+function stepShortBare(s: Step) {
   if (s.kind === 'walk') return `walk to ${esc(placeName(s.to))}`;
   if (s.kind === 'age') return s.how === 'sword' ? `become ${s.to} at the Temple of Time` : `play the Song of Time to become ${s.to}`;
+  if (s.kind === 'warp' && /^spawn/.test(ways()?.doors[s.door]?.[2] ?? '')) return `save and reset to go back to your ${/adult/.test(ways()!.doors[s.door][2]) ? 'adult' : 'child'} spawn`;
   if (s.kind === 'warp') return `play ${esc(doorName(s.door))}`;
   return `take ${esc(doorName(s.door))}`;
 }
@@ -2826,13 +2840,19 @@ function stepHtml(s: Step, i: number) {
   } else if (s.kind === 'warp') {
     const type = ways()?.doors[s.door]?.[2] ?? '';
     const name = doorName(s.door);
-    what = type === 'one-way-statue' ? `Play the Song of Soaring to <b>${esc(name.replace(/^SOS \((.*)\)$/, '$1'))}</b>` : `Play <b>${esc(name)}</b>`;
-    where = `<span class="s">From anywhere. It takes you to ${esc(placeName(s.to))}.</span>${tag(s.logged)}`;
+    if (/^spawn/.test(type)) {
+      what = `Go back to your <b>${/adult/.test(type) ? 'adult' : 'child'} spawn</b>`;
+      where = `<span class="s">Save and reset (or get a Game Over) from anywhere. You start again in ${esc(placeName(s.to))}.</span>${tag(s.logged)}`;
+    } else {
+      what = type === 'one-way-statue' ? `Play the Song of Soaring to <b>${esc(name.replace(/^SOS \((.*)\)$/, '$1'))}</b>` : `Play <b>${esc(name)}</b>`;
+      where = `<span class="s">From anywhere. It takes you to ${esc(placeName(s.to))}.</span>${tag(s.logged)}`;
+    }
   } else {
     what = `Take <b>${esc(doorName(s.door))}</b>`;
     where = `<span class="s">In ${esc(placeName(s.from))}. It takes you to ${esc(placeName(s.to))}.</span>${tag(s.logged)}`;
   }
-  return `<li class="step ${s.kind}"${s.kind === 'door' && entranceData().list.some(e => e.id === s.door) ? ` data-edit="entr:${esc(s.door)}"` : ''}><span class="num">${i + 1}</span><div class="what"><span class="t">${what}</span>${where}</div></li>`;
+  if (s.uses?.length) where += `<span class="uses">${usesText(s)}.</span>`;
+  return `<li class="step ${s.kind}${s.uses?.length ? ' aided' : ''}"${s.kind === 'door' && entranceData().list.some(e => e.id === s.door) ? ` data-edit="entr:${esc(s.door)}"` : ''}><span class="num">${i + 1}</span><div class="what"><span class="t">${what}</span>${where}</div></li>`;
 }
 function routeHtml(goal: string) {
   const found = routeFromHere(goal);
@@ -2852,7 +2872,7 @@ function routeHtml(goal: string) {
     : as ? `<p class="route-age">This way starts as ${ageWord(as)}. Set your age in the sidebar for directions that fit you.</p>` : '';
   return `${choose}${note}<p class="route-sum">${doors} ${doors === 1 ? 'entrance' : 'entrances'} from ${esc(placeName(seed.here!.place))} to ${esc(placeName(goal))}.</p>
     <ol class="route">${steps.map(stepHtml).join('')}<li class="step end"><span class="num">✓</span><div class="what"><span class="t">You're in <b>${esc(placeName(goal))}</b></span></div></li></ol>
-    ${strict ? `<p class="fine">Every step follows OoTMM's rules with the items you've logged${ootOn() ? ' and your age' : ''}.</p>` : ''}`;
+    ${strict ? `<p class="fine">Every step follows OoTMM's rules with the items you've logged${ootOn() ? ' and your age' : ''}${steps.some(x => x.uses?.length) ? `, and the tricks, glitches and settings like Hookshot Anywhere your settings turn on. A step that needs one says which, and what to use.` : '.'}</p>` : ''}`;
 }
 
 function renderHere() {
@@ -4170,7 +4190,7 @@ function events() {
       return;
     }
     if (d.entr) {
-      if (entranceData().list.find(x => x.id === d.entr)?.fixed) { toast("This road isn't shuffled with these settings, so it always leads to its usual place."); return; }
+      if (entranceData().list.find(x => x.id === d.entr)?.fixed) { toast("This isn't shuffled with these settings, so it always leads to its usual place."); return; }
       openPicker(d.entr); return;
     }
     if (d.pick) { pickDest(d.pick); return; }

@@ -662,6 +662,9 @@ details.box[open] { display: grid; gap: 9px; }
 .step .what { display: grid; gap: 2px; justify-items: start; }
 .step .t b { color: var(--gold); }
 .step .s { color: var(--muted); font-size: .9rem; }
+.step .uses { font-size: .9rem; color: var(--warn); }
+.step .uses b { color: var(--warn); }
+.step.aided .num { box-shadow: 0 0 0 2px var(--warn); }
 .route-sum, .route-there { margin: 0; font-weight: 600; }
 .route-pick { display: grid; gap: 6px; color: var(--muted); font-size: .92rem; }
 .route-pick .seg { flex-wrap: wrap; }

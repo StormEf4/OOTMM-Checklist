@@ -227,6 +227,39 @@ async function setShuffle(p) {
     await c.close();
   }
 
+  /* ---- Spawns: always on the Entrances tab, and directions go back to them from anywhere ---- */
+  {
+    const c = await b.newContext({ viewport: { width: 1280, height: 800 } });
+    await c.addInitScript(() => { window.__OOTMM_RAIL_OPEN__ = true; window.__OOTMM_MAIN_OPEN__ = true; });
+    await c.addInitScript(() => {
+      if (localStorage.getItem('ootmm-checklist-v1')) return;
+      const seed = { id: 'sp1', name: 'Spawn seed', settings: '', done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, notes: {}, pad: '', found: {}, have: { OOT_OCARINA: 1, OOT_SONG_ZELDA: 1 }, hints: {}, updated: 1, here: { place: 'OOT_ZORA_DOMAIN', by: 'you', age: 'child' } };
+      localStorage.setItem('ootmm-checklist-v1', JSON.stringify({ v: 1, seeds: [seed], current: 'sp1', custom: [], edits: {}, ui: {} }));
+    });
+    const p = await c.newPage();
+    p.on('pageerror', e => errs.push(String(e)));
+    await p.goto(`http://localhost:${PORT}/`);
+    await p.waitForSelector('.reg[data-region="OOT_KOKIRI_FOREST"]', { timeout: 30000 });
+    await setShuffle(p);
+    await p.click('.rail .tab[data-tab=entrances]');
+    await p.waitForTimeout(800);
+    await p.click('[data-entr-region="@spawns"]');
+    await p.waitForTimeout(800);
+    const main = await p.textContent('main');
+    ok('spawns listed when not shuffled', /Where you start/.test(main) && /Child spawn/.test(main) && /always Link's House/.test(main) && /Adult spawn/.test(main) && /always Temple of Time/.test(main));
+    await p.screenshot({ path: `${SHOTS}/spawns.png` });
+    await p.click('[data-directions]');
+    await p.fill('#placeSearch', "link's house");
+    await p.waitForTimeout(300);
+    await p.click('#placeList .pick >> nth=0');
+    await p.waitForSelector('.route .step');
+    await p.waitForFunction(() => /follows OoTMM/.test(document.querySelector('.sheet')?.textContent ?? ''), null, { timeout: 60000 }).catch(() => {});
+    const r = await p.textContent('.sheet');
+    ok('child goes back to the child spawn', /Go back to your child spawn/.test(r) && /Save and reset/.test(r) && (await p.$$('.route .step')).length === 2, r.replace(/\s+/g, ' ').slice(0, 400));
+    await p.screenshot({ path: `${SHOTS}/directions-spawn.png` });
+    await c.close();
+  }
+
   console.log('errors', errs.length, errs.slice(0, 5));
   ok('no page errors', errs.length === 0);
   await b.close(); srv.close();

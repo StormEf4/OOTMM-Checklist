@@ -59,6 +59,27 @@ export const plugins = [{
       if (!text.includes(call)) throw new Error('OoTMM changed how it optimizes worlds. Update the expose-world-shuffler plugin in tools/paths.mjs to match.');
       return { contents: text.replace(call, call.replace('allItems))', '(globalThis as any).__checklistKeepPool ? ({ get: () => Infinity, has: () => true } as any) : allItems))')), loader: 'ts' };
     });
+    /* Tricks, glitches and "logical" settings like Hookshot Anywhere become a plain "true" when OoTMM reads its rules,
+       so nothing shows which rule leaned on one. This makes each one a marked "true" that works the same, unless the
+       checklist turns it off for a moment (globalThis.__checklistAidsOff), so directions can name what a step uses. */
+    build.onLoad({ filter: /expr[\\/]builder\.ts$/ }, args => {
+      const text = readFileSync(args.path, 'utf8');
+      const trick = 'return settings.tricks.includes(trick as TrickKey) ? EXPR_TRUE : EXPR_FALSE;';
+      const setting = 'return v === value ? EXPR_TRUE : EXPR_FALSE;';
+      const cond = 'if (cond === EXPR_TRUE) {';
+      if (!text.includes(trick) || !text.includes(setting) || !text.includes(cond)) throw new Error('OoTMM changed how it reads tricks and settings in rules. Update the expr builder patch in tools/paths.mjs to match.');
+      const aid = `
+const checklistAids: Record<string, Expr> = {};
+let checklistAidId = 2_000_000_000;
+function checklistAid(aid: string): Expr {
+  return checklistAids[aid] ??= Object.freeze({ type: 'true', checklistAid: aid, id: checklistAidId++, eval: () => (globalThis as any).__checklistAidsOff?.has(aid) ? { result: false } : { result: true } }) as any;
+}
+`;
+      return { contents: text
+        .replace(trick, "return settings.tricks.includes(trick as TrickKey) ? checklistAid('trick:' + trick) : EXPR_FALSE;")
+        .replace(setting, "return v === value ? (value === 'logical' ? checklistAid('setting:' + setting) : EXPR_TRUE) : EXPR_FALSE;")
+        .replace(cond, 'if (cond === EXPR_TRUE || (cond as any).checklistAid) {') + aid, loader: 'ts' };
+    });
     build.onLoad({ filter: /solver[\\/]solve\.ts$/ }, args => {
       const text = readFileSync(args.path, 'utf8');
       if (!/class LogicPassSolver\b/.test(text) || !/private preCompleteDungeons\(/.test(text)) throw new Error('OoTMM no longer has LogicPassSolver.preCompleteDungeons. Update preCompleteEffects in src/engine/logic.ts to match.');
