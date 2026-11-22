@@ -78,6 +78,8 @@ type Seed = {
   entrances: Record<string, string>;
   /** Checks and entrances the player marked to come back to later. */
   later?: string[];
+  /** Checks and entrances the player cleared off the main list. They wait under "Cleared checks" until put back. */
+  cleared?: string[];
   /** Dungeon maps and compasses already asked about on this seed, so each asks once. */
   asked?: string[];
   /** The OoTMM game this seed follows for game tracking, by the session id in its patch file. Set by the first item it reports. */
@@ -259,7 +261,7 @@ let itemPickQuery = '';
 /* ---------- Saving ---------- */
 
 function newSeed(name: string, settings?: string): Seed {
-  return { id: uid(), name, settings: settings ?? exportSettings(DEFAULT_SETTINGS), done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, later: [], notes: {}, pad: '', doc: '', found: {}, have: {}, hints: {}, updated: Date.now() };
+  return { id: uid(), name, settings: settings ?? exportSettings(DEFAULT_SETTINGS), done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, later: [], cleared: [], notes: {}, pad: '', doc: '', found: {}, have: {}, hints: {}, updated: Date.now() };
 }
 
 function load(raw?: string | null): Saved {
@@ -274,7 +276,7 @@ function load(raw?: string | null): Saved {
         ui.skin ??= ui.theme === 'dark' ? 'termina' : ui.theme === 'light' ? 'day' : 'hero';
         ui.names ??= 'custom'; ui.nameBase ??= 'original';
         ui.savePins ??= true;
-        for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.later ??= []; s.notes ??= {}; s.pad ??= ''; s.doc ??= textToNotes(s.pad); s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
+        for (const s of v.seeds) { s.done ??= []; s.skipped ??= []; s.skippedRegions ??= []; s.rolled ??= {}; s.preCompleted ??= []; s.entrances ??= {}; s.later ??= []; s.cleared ??= []; s.notes ??= {}; s.pad ??= ''; s.doc ??= textToNotes(s.pad); s.found ??= {}; s.have ??= {}; s.hints ??= {}; }
         /* The save file used to be one for the whole app. It now belongs to each seed: give it to the seed that was open. */
         if (ui.saveFile) {
           const open = v.seeds.find(s => s.id === v.current) ?? v.seeds[0];
@@ -905,6 +907,7 @@ const ICON = {
   hints: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 21V9a5 5 0 0 1 10 0v12M4.5 21h15"/><path d="M10 11.5h4M10 15h4"/></svg>',
   bag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9h14l-1.2 11H6.2z"/><path d="M9 9V7a3 3 0 0 1 6 0v2"/></svg>',
   pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg>',
+  clear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8 12.3l2.7 2.7L16.2 9.4"/></svg>',
   later: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg>',
   tick: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>',
 };
@@ -1159,9 +1162,9 @@ const rowHtml = (c: CheckEntry) => {
   const itemLine = (found ? `<span class="found"><span>Found:</span> <b>${esc(itemLabel(found))}</b></span>` : hint ? `<span class="hinted"><span>Hint:</span> <b>${esc(itemLabel(hint))}</b></span>` : '')
     + (logic === ' outlogic' ? opensHtml(c.id) : '');
   const age = logic === ' inlogic' ? logicOut?.ages[c.id] : undefined;
-  return `<div class="row ${c.game}${isDone ? ' done' : ''}${hid ? ' ghost' : ''}${logic}${isLater(c.id) ? ' is-later' : ''}" data-id="${esc(c.id)}">
+  return `<div class="row ${c.game}${isDone ? ' done' : ''}${hid ? ' ghost' : ''}${logic}${isLater(c.id) ? ' is-later' : ''}${isCleared(c.id) ? ' is-cleared' : ''}" data-id="${esc(c.id)}">
     <button class="tick-btn" aria-pressed="${isDone}" data-edit="check:${esc(c.id)}"><span class="seal">${ICON.tick}</span><span class="nm"><span class="t">${esc(c.name)}</span>${itemLine}${noteHtml(c.id)}</span>${tag}${age ? `<span class="tag age" data-text>${age === 'child' ? 'Child' : 'Adult'}</span>` : ''}${logic === ' inlogic' ? '<span class="lgdot" title="In logic now" aria-label="In logic now"></span>' : ''}<span class="ty" data-text>${esc(TYPE_ONE[c.type] ?? c.type)}</span></button>
-    ${pinBtn('list', c.id, c.name)}${laterBtn(c.id, c.name)}
+    ${pinBtn('list', c.id, c.name)}${laterBtn(c.id, c.name)}${clearBtn(c.id, c.name)}
     <button class="bag${found ? ' has' : ''}" data-found="${esc(c.id)}" aria-label="What was here" title="Log the item you found here">${ICON.bag}</button>
     <button class="skip" aria-label="${isSkip ? 'Restore' : 'Skip'} ${esc(c.name)}" title="${isSkip ? 'Put back on the list' : 'Not on this seed: skip it'}">${isSkip ? '+' : '×'}</button>
   </div>`;
@@ -1205,6 +1208,18 @@ const laterBtn = (id: string, name: string) => { const on = isLater(id);
   return `<button class="later${on ? ' on' : ''}" data-later="${esc(id)}" aria-pressed="${on}" aria-label="${on ? 'Take off' : 'Add to'} the Check later list: ${esc(name)}" title="${on ? 'On your Check later list. Tap to take it off' : 'Check later: add to your list to come back to'}">${ICON.later}</button>`; };
 const laterRow = (n: number, cur: boolean, attr: string) =>
   `<button class="reg keep later-reg${n ? ' has' : ''}" ${attr}="${LATER}" aria-current="${cur}"><span class="n">${ICON.later}Check later</span><span class="c">${n}</span></button>`;
+/* Clearing: a checkmark on every check and entrance takes it off the main list and into a "Cleared checks" section at
+   the bottom. Pressing it again there puts it back. It changes nothing else: a cleared check keeps its tick, pin and
+   Check later mark. */
+const isCleared = (id: string) => (seed.cleared ?? []).includes(id);
+const clearBtn = (id: string, name: string) => { const on = isCleared(id);
+  return `<button class="clear-btn keep${on ? ' on' : ''}" data-clear="${esc(id)}" aria-pressed="${on}" aria-label="${on ? 'Put back on the list' : 'Clear off the list'}: ${esc(name)}" title="${on ? 'Cleared. Tap to put it back on the list' : 'Clear: move it to Cleared checks'}">${ICON.clear}</button>`; };
+function clearedSection(key: string, picked: string | null, rows: string[], count: string) {
+  if (!rows.length) return '';
+  const { key: k, shut } = fold(key, picked);
+  return `<section class="cleared-sec"><div class="section-head"><button class="caret keep" data-collapse="${esc(k)}" aria-expanded="${!shut}" aria-label="Show or hide cleared checks"></button><h2>Cleared checks</h2><span class="c">${count}</span></div>
+      ${shut ? '' : `<div class="rows">${rows.join('')}</div>`}</section>`;
+}
 const collapsed = (id: string) => flipped(id, !!((globalThis as any).__OOTMM_RAIL_OPEN__ || (globalThis as any).__OOTMM_MAIN_OPEN__));
 /* A main-window heading. After the player picks one area in the sidebar, that area's headings start open, so
    picking it shows its list straight away; they still fold with their caret. */
@@ -1230,7 +1245,9 @@ function renderChecks() {
   const chips = [...typeCounts].sort((a, b) => b[1] - a[1]).map(([t, n]) =>
     `<button class="chip" data-type="${esc(t)}" aria-pressed="${typeFilter.has(t)}">${esc(TYPE_NAMES[t] ?? t)} ${n}</button>`).join('');
 
-  const all = filtered();
+  const shownNow = filtered();
+  const clearedRows = shownNow.filter(c => isCleared(c.id));
+  const all = shownNow.filter(c => !isCleared(c.id));
   const pinIds = pinsOn('list') ? pinList('list') : [];
   const pinRows = all.filter(c => pinIds.includes(c.id)).sort((a, b) => pinIds.indexOf(a.id) - pinIds.indexOf(b.id));
   const list = all.filter(c => !pinIds.includes(c.id));
@@ -1259,6 +1276,7 @@ function renderChecks() {
       </span></div>
       ${shut ? '' : `<div class="rows">${sortIn('c:' + id, rows, c => c.id).map(rowHtml).join('')}</div>`}</section>`;
   }
+  body += clearedSection('c:cleared', region, clearedRows.map(rowHtml), `${clearedRows.length}`);
 
   const rolls = rolling().filter(unanswered);
   const banner = rolls.length ? `<div class="banner"><div><strong>This seed rolls some settings at random.</strong> Tell the checklist what came up so its list matches your seed. Opening your spoiler log fills this in.</div>
@@ -1892,13 +1910,13 @@ function entranceRow(e: EntranceEntry, dests: ReturnType<typeof destById>, cut?:
   const dest = to ? destLabel(to, dests) : '';
   const hid = !!saved.edits.entrances[e.id]?.hidden;
   const tag = hid ? '<span class="tag" data-text>Hidden</span>' : e.fixed ? '<span class="tag fixed-tag" data-text>Not shuffled</span>' : to ? '' : '<span class="ty" data-text>Add</span>';
-  return `<div class="row entr ${e.game}${to ? ' done' : ''}${hid ? ' ghost' : ''}${e.fixed ? ' fixed' : ''}${isLater(e.id) ? ' is-later' : ''}">
+  return `<div class="row entr ${e.game}${to ? ' done' : ''}${hid ? ' ghost' : ''}${e.fixed ? ' fixed' : ''}${isLater(e.id) ? ' is-later' : ''}${isCleared(e.id) ? ' is-cleared' : ''}">
     <button class="entr-btn" data-entr="${esc(e.id)}" data-edit="entr:${esc(e.id)}" aria-label="${esc(e.title)}: ${to ? `leads to ${esc(dest)}` : 'not logged yet'}">
       <span class="seal">${ICON.tick}</span>
       <span class="nm"><span class="t">${esc(shown)}</span>${e.sub ? `<span class="s">${esc(e.sub)}</span>` : ''}${boss ? `<span class="s boss-note">${esc(boss)}</span>` : ''}
         ${to ? `<span class="leads"${to.startsWith('text:') ? '' : ` data-edit="dest:${esc(to)}"`}>Leads to ${esc(dest)}</span>` : ''}${noteHtml(e.id)}</span>
       ${tag}
-    </button>${pinBtn('entrances', e.id, e.title)}${laterBtn(e.id, e.title)}</div>`;
+    </button>${pinBtn('entrances', e.id, e.title)}${laterBtn(e.id, e.title)}${clearBtn(e.id, e.title)}</div>`;
 }
 
 function renderEntrances() {
@@ -1939,12 +1957,13 @@ function renderEntrances() {
     }
     return true;
   });
+  const clearedRows = list.filter(e => isCleared(e.id));
   const pinIds = pinsOn('entrances') ? pinList('entrances') : [];
-  const pinRows = list.filter(e => pinIds.includes(e.id)).sort((a, b) => pinIds.indexOf(a.id) - pinIds.indexOf(b.id));
+  const pinRows = list.filter(e => pinIds.includes(e.id) && !isCleared(e.id)).sort((a, b) => pinIds.indexOf(a.id) - pinIds.indexOf(b.id));
   const byGroup = new Map<string, EntranceEntry[]>();
   const put = (g: string, e: EntranceEntry) => { (byGroup.get(g) ?? byGroup.set(g, []).get(g)!).push(e); };
   for (const e of list) {
-    if (pinIds.includes(e.id)) continue;
+    if (pinIds.includes(e.id) || isCleared(e.id)) continue;
     if (isRoad(e)) put(roadHome(e), roadRow(e, roadRole(e)));
     else put(entrGroup(e), e);
   }
@@ -1968,7 +1987,7 @@ function renderEntrances() {
       <h2 data-edit="area:${esc(gid)}">${esc(areaName(gid, nameOf(gid, rows)))}</h2><span class="c">${all.filter(e => seed.entrances[e.id]).length}/${all.length}</span>
       <span class="head-acts"><button class="linkish edit-only keep" data-add-entrance="${esc(gid)}">Add an entrance</button></span></div>
       ${shut ? '' : dirGroups(sortIn('e:' + gid, rows, e => e.id), dests)}</section>`;
-  }).join('');
+  }).join('') + clearedSection('e:cleared', entrRegion, clearedRows.map(e => entranceRow(isRoad(e) ? roadRow(e, roadRole(e)) : e, dests)), `${clearedRows.length}`);
   const { key: pinKey, shut: pinShut } = fold('e:pinned', entrRegion);
   const pinHtml = !pinRows.length ? '' : `<section class="pins-sec"><div class="section-head"><button class="caret keep" data-collapse="${esc(pinKey)}" aria-expanded="${!pinShut}" aria-label="Show or hide pinned entrances"></button><h2>Pinned</h2><span class="c">${pinRows.filter(e => seed.entrances[e.id]).length}/${pinRows.length}</span></div>
       ${pinShut ? '' : `<div class="rows">${pinRows.map(e => entranceRow(e, dests)).join('')}</div>`}</section>`;
@@ -2768,7 +2787,7 @@ function unpackIds(p: { b: string; x: string[] }) {
 }
 
 export function makeTransferCode(s: Seed) {
-  const body = JSON.stringify({ h: dataHash, o: s.origin ?? s.id, n: s.name, s: s.settings, d: packIds(s.done), k: packIds(s.skipped), r: s.rolled, q: s.preCompleted ?? [], g: s.skippedRegions, c: saved.custom, e: s.entrances, l: s.later ?? [], t: s.notes, p: s.pad, w: s.doc ?? '', f: s.found, v: s.have, i: s.hints, x: saved.edits });
+  const body = JSON.stringify({ h: dataHash, o: s.origin ?? s.id, n: s.name, s: s.settings, d: packIds(s.done), k: packIds(s.skipped), r: s.rolled, q: s.preCompleted ?? [], g: s.skippedRegions, c: saved.custom, e: s.entrances, l: s.later ?? [], a: s.cleared ?? [], t: s.notes, p: s.pad, w: s.doc ?? '', f: s.found, v: s.have, i: s.hints, x: saved.edits });
   return 'OOTMM1.' + uint8ArrayToBase64(deflateRaw(new TextEncoder().encode(body), { level: 9 }), { urlSafe: true });
 }
 export function readTransferCode(code: string): Seed {
@@ -2778,7 +2797,7 @@ export function readTransferCode(code: string): Seed {
   if (body.h !== dataHash) throw new Error('This code came from a different build of the checklist. Use the same version on both devices.');
   for (const c of (body.c ?? []) as CustomCheck[]) if (!saved.custom.some(x => x.id === c.id)) saved.custom.push(c);
   if (body.x) saved.edits = mergeEdits(saved.edits, body.x);
-  return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, preCompleted: body.q ?? [], entrances: body.e ?? {}, later: body.l ?? [], notes: body.t ?? {}, pad: body.p ?? '', doc: cleanNotes(body.w ?? textToNotes(body.p ?? '')), found: body.f ?? {}, have: body.v ?? {}, hints: body.i ?? {}, updated: Date.now() };
+  return { id: uid(), origin: body.o, name: body.n, settings: body.s, done: unpackIds(body.d), skipped: unpackIds(body.k), skippedRegions: body.g ?? [], rolled: body.r ?? {}, preCompleted: body.q ?? [], entrances: body.e ?? {}, later: body.l ?? [], cleared: body.a ?? [], notes: body.t ?? {}, pad: body.p ?? '', doc: cleanNotes(body.w ?? textToNotes(body.p ?? '')), found: body.f ?? {}, have: body.v ?? {}, hints: body.i ?? {}, updated: Date.now() };
 }
 
 /* ---------- Seeds page ---------- */
@@ -3865,6 +3884,14 @@ function events() {
       const id = d.later, list = seed.later ?? [];
       seed.later = list.includes(id) ? list.filter(x => x !== id) : [...list, id];
       if (seed.later.includes(id)) toast('Added to Check later. Find it at the top of the sidebar.', true);
+      save(); renderRail(); renderPane();
+      return;
+    }
+    if (d.clear !== undefined) {
+      snap();
+      const id = d.clear, list = seed.cleared ?? [];
+      seed.cleared = list.includes(id) ? list.filter(x => x !== id) : [...list, id];
+      toast(seed.cleared.includes(id) ? 'Cleared. Find it under Cleared checks at the bottom of the list.' : 'Put back on the list.', true);
       save(); renderRail(); renderPane();
       return;
     }
