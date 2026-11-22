@@ -90,6 +90,16 @@ async function setShuffle(p) {
     ok('nothing logged (logging is off)', Object.keys(s.entrances).length === 0);
     ok('marked in the sidebar list', await p.isVisible('.reg.is-here[data-region="OOT_KOKIRI_FOREST"] .here-mark'));
 
+    /* The game says the age too. */
+    ok('age from the game', await p.getAttribute('[data-here-age="child"]', 'aria-pressed') === 'true');
+    await feed([{ original: 'OOT_KOKIRI_FOREST_FROM_LINK', entrance: 'OOT_KOKIRI_FOREST_FROM_LINK', age: 'ADULT' }]);
+    await p.waitForTimeout(300);
+    ok('adult from the game', await p.getAttribute('[data-here-age="adult"]', 'aria-pressed') === 'true');
+    await p.click('[data-here-age="child"]');
+    await p.waitForTimeout(400);
+    s = await state();
+    ok('age set by hand', s.here?.age === 'child', JSON.stringify(s.here));
+
     /* Through Mido's door, which the game says led into Saria's House. */
     await feed([{ original: 'OOT_HOUSE_MIDO', entrance: 'OOT_HOUSE_SARIA' }]);
     await p.waitForTimeout(400);
@@ -153,6 +163,7 @@ async function setShuffle(p) {
     const long = await p.$$eval('.route .step:not(.end) .t', x => x.map(e => e.textContent.trim()));
     ok('Kokiri Forest to the Fire Temple', long.length >= 3 && long.some(x => /Lost Woods/.test(x)) && /Fire Temple/.test(long[long.length - 1]), long.join(' | '));
     ok('marks roads that are not shuffled', /Not shuffled/.test(await p.textContent('.route')));
+    ok('no items logged: says the way ignores items', await p.isVisible('.route-warn'));
     /* More than one way: pick another, and the sidebar follows it. */
     ok('offers other ways', (await p.$$('.route-pick [data-route]')).length > 1);
     await p.click('.route-pick [data-route="1"]');
@@ -186,7 +197,7 @@ async function setShuffle(p) {
     /* An older save, with nothing about where you are, and one with a broken value: both load. */
     await c.addInitScript(() => {
       if (localStorage.getItem('ootmm-checklist-v1')) return;
-      const seed = { id: 'old1', name: 'Old seed', settings: '', done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, notes: {}, pad: '', found: {}, have: {}, hints: {}, updated: 1, here: 5, goal: { x: 1 } };
+      const seed = { id: 'old1', name: 'Old seed', settings: '', done: [], skipped: [], skippedRegions: [], rolled: {}, entrances: {}, notes: {}, pad: '', found: {}, have: { OOT_OCARINA: 1, OOT_SONG_ZELDA: 1 }, hints: {}, updated: 1, here: 5, goal: { x: 1 } };
       localStorage.setItem('ootmm-checklist-v1', JSON.stringify({ v: 1, seeds: [seed], current: 'old1', custom: [], edits: {}, ui: {} }));
     });
     const p = await c.newPage();
@@ -208,6 +219,8 @@ async function setShuffle(p) {
     await p.click('#placeList .pick >> nth=0');
     await p.waitForSelector('.route .step');
     ok('route on the phone', (await p.$$('.route .step')).length >= 2);
+    await p.waitForFunction(() => /follows OoTMM/.test(document.querySelector('.sheet')?.textContent ?? ''), null, { timeout: 60000 }).catch(() => {});
+    ok('with the Ocarina and Lullaby it follows the rules', !(await p.isVisible('.route-warn')) && /follows OoTMM/.test(await p.textContent('.sheet')), await p.textContent('.sheet'));
     await p.screenshot({ path: `${SHOTS}/directions-phone.png` });
     await p.click('.sheet .btn[data-sheet-close]');
     await p.screenshot({ path: `${SHOTS}/here-phone.png` });

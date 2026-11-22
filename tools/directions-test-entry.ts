@@ -1,5 +1,6 @@
 /* Directions: routes go only through entrances the player logged (or ones the settings leave alone). */
 import { compute, enableFastMode } from '../src/engine/engine';
+import { computeLogic } from '../src/engine/logic';
 import { findRoute, findRoutes, pickRoute, searchPlaces, areasIn, leadsTo } from '../src/directions';
 
 enableFastMode();
@@ -68,6 +69,44 @@ const show = (ways: any, steps: any[] | null) => steps ? steps.map((s, i) => `  
   ok(!!a && !a.some(x => x.kind === 'warp'), 'no song: walks');
   ok(!!b && b.length === 1 && b[0].kind === 'warp', 'with Minuet: one warp');
   void kf;
+}
+/* With OoTMM's rules: items and age. */
+{
+  const r = await compute({});
+  const ways = r.entrances.ways!;
+  const find = (t: string) => searchPlaces(ways, t)[0];
+  const kf = find('Kokiri Forest'), fire = find('Fire Temple'), ct = find('Clock Town'), dmc = find('Death Mountain Crater');
+  const none = await computeLogic({ settings: {}, entrances: {}, items: {} });
+  const shuffled = new Set<string>();
+  const ask = (rules: any, goal: string, age: any = 'child', start = kf) => findRoute(ways, { start: areasIn(ways, start), goal, age, logged: {}, shuffled, rules });
+  ok(!!none.travel && Object.keys(none.travel.pass).length > 100, `rules came back: ${Object.keys(none.travel?.pass ?? {}).length} limited ways`);
+  ok(ask(none.travel, fire) === null, 'no items: no way to the Fire Temple');
+  /* Every item there is. */
+  const all: Record<string, number> = {};
+  for (const i of none.catalog) all[i.id] = i.max;
+  const full = await computeLogic({ settings: {}, entrances: {}, items: all });
+  const s1 = ask(full.travel, fire);
+  console.log(show(ways, s1));
+  ok(!!s1 && s1.some(x => x.kind === 'age' && x.to === 'adult'), 'as child with everything: becomes adult on the way to the Fire Temple');
+  const s2 = ask(full.travel, fire, 'adult');
+  console.log(show(ways, s2));
+  ok(!!s2 && !s2.some(x => x.kind === 'age'), 'as adult: no age change');
+  const s3 = ask(full.travel, ct);
+  ok(!!s3, 'to Clock Town with everything');
+  const s4 = ask(full.travel, dmc, null);
+  ok(!!s4, 'age unknown still finds a way');
+  /* A child-only road is never taken as adult, and the reverse. */
+  let bad = 0;
+  for (const goal of Object.keys(ways.places).slice(0, 150)) for (const age of ['child', 'adult']) {
+    const st = ask(full.travel, goal, age);
+    if (!st) continue;
+    let g = age === 'adult' ? 2 : 1;
+    for (const x of st) {
+      if (x.kind === 'age') g = x.to === 'adult' ? 2 : 1;
+      if (x.kind === 'door') { const [from, to] = ways.doors[x.door]; const m = full.travel!.pass[from + '\n' + to]; if (m !== undefined && !(m & g)) bad++; }
+    }
+  }
+  ok(bad === 0, 'no door taken by an age its rule shuts out');
 }
 console.log(fail ? `${fail} failed` : 'all passed');
 process.exit(fail ? 1 : 0);

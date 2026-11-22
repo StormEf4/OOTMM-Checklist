@@ -29,7 +29,7 @@ import { startGameFeed, type GameEntrance, type GameItem, type GameLink } from '
 import { arrivedAt, whichDoor, type FeedEntranceList, type Here } from './entrance-feed';
 import { grottoFromMemory, grottoGame, warpFromMemory, type GrottoSeen, type NotesSeen } from './memory-doors';
 import { readSave, type SaveSlot } from './savefile';
-import { areasIn, findRoutes, pickRoute, searchPlaces, warpSong, type Step } from './directions';
+import { findRoutes, pickRoute, searchPlaces, startAge, startAreas, warpSong, type Age, type Step } from './directions';
 
 declare const __TARGET__: 'web' | 'desktop' | 'artifact';
 declare const __SAVE_LAYOUT_OK__: boolean;
@@ -91,7 +91,7 @@ type Seed = {
   saveFile?: string;
   /** Where the player is now, for the sidebar's "Where you are now": a place (a region's id, or 'a:' and an OoTMM area
       for a room), the exact area when the game said, the entrance they came in by when known, and who said. */
-  here?: { place: string; area?: string; door?: string; by: 'game' | 'you' };
+  here?: { place: string; area?: string; door?: string; by: 'game' | 'you'; age?: 'child' | 'adult' };
   /** The place the player asked directions to. The sidebar shows the next step until they get there. */
   goal?: string;
   /** The entrances of the way the player picked to the goal, when there was more than one. */
@@ -703,6 +703,8 @@ function scheduleLogic() {
       renderLogicStatus();
       renderRail();
       renderPane();
+      /* Open directions follow the new rules. */
+      if (document.querySelector('#placeArea .route, #placeArea .route-none, #placeArea .route-there')) showRoute();
       /* Every change to the items reruns logic, so this is where a newly found map or compass asks its question. */
       noteDungeonItems();
       /* Then try each missing item on its own. It takes longer, so it waits until the player pauses. */
@@ -2650,7 +2652,7 @@ function onGameEntrance(m: GameEntrance) {
   if (m.session && seed.game && seed.game !== m.session) return;
   const answer = whichDoor(m.original, m.entrance, before, last, list, id => !!seed.entrances[id]);
   /* Where you are now: the place the game says, and the door when it's sure which (an unshuffled door is the one it named). */
-  hereFromGame(m.entrance, answer && 'door' in answer ? answer.door : m.original && !SHARED_NAME.test(m.original) && ways()?.doors[m.original] ? m.original : '');
+  hereFromGame(m.entrance, answer && 'door' in answer ? answer.door : m.original && !SHARED_NAME.test(m.original) && ways()?.doors[m.original] ? m.original : '', m.age);
   if (!gameEntrancesOn()) return;
   if (m.session && !seed.game) seed.game = m.session;
   /* Leaving a place makes its waiting questions ready, after this door is logged. */
@@ -2743,18 +2745,35 @@ function hasWarpSong(door: string) {
   const have = owned();
   return ['OOT_', 'MM_', 'SHARED_'].some(g => itemCount(g + song, have) > 0);
 }
-function routeFromHere(goal: string): Step[][] | null | undefined {
+/** OoT is in this seed, so Link's age matters to the way. */
+const ootOn = () => S?.games !== 'mm';
+/** The player's age now: from the game, or as they set it. */
+const hereAge = (): Age | null => ootOn() ? seed.here?.age ?? null : null;
+type RouteFind = { routes: Step[][] | null; strict: boolean };
+const routeCache: { key: string; logic: unknown; ways: unknown; out: RouteFind | undefined } = { key: '', logic: null, ways: null, out: undefined };
+/**
+ * The ways from where the player is to the goal. strict: they follow OoTMM's rules with the player's items and age.
+ * When nothing does yet (or logic isn't ready), the ways ignoring items are given instead, marked as such.
+ */
+function routeFromHere(goal: string): RouteFind | undefined {
   const w = ways(), h = seed.here;
   if (!w || !h || !w.places[goal]) return undefined;
-  const start = h.area && w.areas[h.area] ? [h.area] : areasIn(w, h.place);
+  const start = h.area && w.areas[h.area] ? [h.area] : startAreas(w, h.place);
   if (!start.length) return undefined;
-  return findRoutes(w, { start, goal, logged: seed.entrances, shuffled: shuffledSet(), canWarp: hasWarpSong });
+  const rules = logicOut?.travel ?? null;
+  const key = JSON.stringify([goal, h, hereAge(), seed.entrances, seed.have, seed.found]);
+  if (routeCache.key === key && routeCache.logic === logicOut && routeCache.ways === w) return routeCache.out;
+  const ask = { start, goal, age: hereAge(), logged: seed.entrances, shuffled: shuffledSet(), canWarp: hasWarpSong };
+  const strict = rules ? findRoutes(w, { ...ask, rules }) : null;
+  const out: RouteFind = strict ? { routes: strict, strict: true } : { routes: findRoutes(w, ask), strict: false };
+  Object.assign(routeCache, { key, logic: logicOut, ways: w, out });
+  return out;
 }
-/** Sets where the player is. door is the entrance they came in by, when known. */
-function setHere(place: string, by: 'game' | 'you', area?: string, door?: string) {
+/** Sets where the player is. door is the entrance they came in by, when known; age, when the game said. */
+function setHere(place: string, by: 'game' | 'you', area?: string, door?: string, age?: Age) {
   if (!ways()?.places[place]) return;
   const was = seed.here;
-  seed.here = { place, by, ...(area ? { area } : {}), ...(door ? { door } : {}) };
+  seed.here = { place, by, ...(area ? { area } : {}), ...(door ? { door } : {}), ...(age ?? was?.age ? { age: age ?? was!.age } : {}) };
   if (seed.goal && seed.goal === place) {
     toast(`You made it to ${placeName(place)}.`);
     delete seed.goal; delete seed.via;
@@ -2763,12 +2782,12 @@ function setHere(place: string, by: 'game' | 'you', area?: string, door?: string
   if (was?.place !== place) renderRail(); else renderHere();
   if (tab === 'entrances' && (was?.place !== place || was?.door !== door)) renderEntrances();
 }
-/* The game said the player arrived through this entrance. */
-function hereFromGame(dest: string, door: string) {
+/* The game said the player arrived through this entrance, as this age. */
+function hereFromGame(dest: string, door: string, age?: string) {
   const w = ways();
   const area = w?.doors[dest]?.[1] ?? feedList().sides[dest]?.[1];
   if (!w || !area || !w.areas[area]) return;
-  setHere(w.areas[area][0], 'game', area, door || undefined);
+  setHere(w.areas[area][0], 'game', area, door || undefined, /adult/i.test(age ?? '') ? 'adult' : /child/i.test(age ?? '') ? 'child' : undefined);
 }
 /* A door the app had to ask about was answered: if it's the one the player just came through, show it. */
 function hereDoorFound(door: string, dest: string) {
@@ -2786,12 +2805,25 @@ function hereFromLog(src: string, dst: string) {
   if (!w || !area || !w.areas[area]) return;
   setHere(w.areas[area][0], 'you', area, src);
 }
+const doorsIn = (r: Step[]) => r.flatMap(x => x.kind === 'door' || x.kind === 'warp' ? [x.door] : []);
+const ageWord = (a: Age) => a === 'adult' ? 'Adult Link' : 'Child Link';
 
+/** A step in a few words, for the sidebar. */
+function stepShort(s: Step) {
+  if (s.kind === 'walk') return `walk to ${esc(placeName(s.to))}`;
+  if (s.kind === 'age') return s.how === 'sword' ? `become ${s.to} at the Temple of Time` : `play the Song of Time to become ${s.to}`;
+  if (s.kind === 'warp') return `play ${esc(doorName(s.door))}`;
+  return `take ${esc(doorName(s.door))}`;
+}
 function stepHtml(s: Step, i: number) {
   const tag = (logged: boolean) => `<span class="tag${logged ? '' : ' fixed-tag'}">${logged ? 'You logged this' : 'Not shuffled'}</span>`;
   let what: string, where = '';
   if (s.kind === 'walk') what = `Walk to <b>${esc(placeName(s.to))}</b>`;
-  else if (s.kind === 'warp') {
+  else if (s.kind === 'age') {
+    what = s.how === 'sword' ? (s.to === 'adult' ? 'Pull the <b>Master Sword</b> to become Adult Link' : 'Put the <b>Master Sword</b> back to become Child Link')
+      : `Play the <b>Song of Time</b> to become ${ageWord(s.to)}`;
+    where = `<span class="s">${s.how === 'sword' ? `In ${esc(placeName(s.at))}.` : 'Where you stand.'}</span>`;
+  } else if (s.kind === 'warp') {
     const type = ways()?.doors[s.door]?.[2] ?? '';
     const name = doorName(s.door);
     what = type === 'one-way-statue' ? `Play the Song of Soaring to <b>${esc(name.replace(/^SOS \((.*)\)$/, '$1'))}</b>` : `Play <b>${esc(name)}</b>`;
@@ -2803,19 +2835,24 @@ function stepHtml(s: Step, i: number) {
   return `<li class="step ${s.kind}"${s.kind === 'door' && entranceData().list.some(e => e.id === s.door) ? ` data-edit="entr:${esc(s.door)}"` : ''}><span class="num">${i + 1}</span><div class="what"><span class="t">${what}</span>${where}</div></li>`;
 }
 function routeHtml(goal: string) {
-  const routes = routeFromHere(goal);
-  if (routes === undefined) return '<p class="fine">Set where you are first.</p>';
+  const found = routeFromHere(goal);
+  if (found === undefined) return '<p class="fine">Set where you are first.</p>';
+  const { routes, strict } = found;
   const pick = routes ? pickRoute(routes, seed.via) : 0;
   const steps = routes?.[pick] ?? null;
   if (steps === null) return `<div class="empty route-none"><h3>No way there yet</h3>None of the entrances you've logged lead to ${esc(placeName(goal))} from here. Log more entrances as you find them and try again. Directions only use entrances you've logged and ones that aren't shuffled.</div>`;
   if (!steps.length) return `<p class="route-there">You're already in ${esc(placeName(goal))}.</p>`;
-  const count = (r: Step[]) => r.filter(x => x.kind !== 'walk').length;
+  const count = (r: Step[]) => doorsIn(r).length;
   const doors = count(steps);
   const choose = routes!.length > 1 ? `<div class="route-pick"><span>${routes!.length} ways there. Pick one:</span><div class="seg" role="group" aria-label="Pick a way">${routes!.map((r, i) =>
     `<button class="keep" data-act="route:${i}" data-route="${i}" aria-pressed="${i === pick}">${i === 0 ? 'Shortest' : `Way ${i + 1}`}: ${count(r)} ${count(r) === 1 ? 'entrance' : 'entrances'}</button>`).join('')}</div></div>` : '';
-  return `${choose}<p class="route-sum">${doors} ${doors === 1 ? 'entrance' : 'entrances'} from ${esc(placeName(seed.here!.place))} to ${esc(placeName(goal))}.</p>
+  const as = startAge(steps);
+  const note = !strict
+    ? `<p class="route-warn">${logicOut ? `Your items don't open a way there yet. This way ignores items and age, so some steps need something you haven't logged on the Items tab.` : 'Still checking your items, so this way ignores them for now.'}</p>`
+    : as ? `<p class="route-age">This way starts as ${ageWord(as)}. Set your age in the sidebar for directions that fit you.</p>` : '';
+  return `${choose}${note}<p class="route-sum">${doors} ${doors === 1 ? 'entrance' : 'entrances'} from ${esc(placeName(seed.here!.place))} to ${esc(placeName(goal))}.</p>
     <ol class="route">${steps.map(stepHtml).join('')}<li class="step end"><span class="num">✓</span><div class="what"><span class="t">You're in <b>${esc(placeName(goal))}</b></span></div></li></ol>
-    <p class="fine">Directions don't check the items each step needs.</p>`;
+    ${strict ? `<p class="fine">Every step follows OoTMM's rules with the items you've logged${ootOn() ? ' and your age' : ''}.</p>` : ''}`;
 }
 
 function renderHere() {
@@ -2828,20 +2865,22 @@ function renderHere() {
   const goal = seed.goal && w.places[seed.goal] ? seed.goal : '';
   let next = '';
   if (h && goal) {
-    const routes = routeFromHere(goal);
-    const steps = routes ? routes[pickRoute(routes, seed.via)] : routes;
+    const found = routeFromHere(goal);
+    const steps = found?.routes ? found.routes[pickRoute(found.routes, seed.via)] : null;
     const first = steps?.[0];
     next = !steps ? `<span class="here-next none">No logged way there from here yet.</span>`
-      : !first ? '' : `<span class="here-next">Next: ${first.kind === 'walk' ? `walk to ${esc(placeName(first.to))}` : first.kind === 'warp' ? `play ${esc(doorName(first.door))}` : `take ${esc(doorName(first.door))}`}</span>`;
+      : !first ? '' : `<span class="here-next${found!.strict ? '' : ' loose'}">Next: ${stepShort(first)}${found!.strict ? '' : ' (needs items you haven\'t logged)'}</span>`;
   }
-  const region = hereRegion();
+  const region = hereRegion(), age = hereAge();
+  const ageSeg = h && ootOn() ? `<div class="seg here-age" role="group" aria-label="Your age">${AGE_LIST.map(a => `<button class="keep" data-here-age="${a}" aria-pressed="${age === a}">${a === 'child' ? 'Child' : 'Adult'}</button>`).join('')}</div>` : '';
   box.innerHTML = `<div class="here-head"><span class="here-dot${h?.by === 'game' ? ' live' : ''}" aria-hidden="true"></span><span class="here-label">Where you are now</span>${h ? `<span class="here-by">${h.by === 'game' ? 'From the game' : 'Set by you'}</span>` : ''}</div>
     ${h ? `<button class="here-place keep" data-here-show title="Show it on the Entrances tab"${region ? ` data-edit="area:${esc(region)}"` : ''}>${esc(placeName(h.place, true))}</button>
-      ${h.door ? `<div class="here-door">Came in by ${esc(doorName(h.door))}</div>` : ''}`
+      ${h.door ? `<div class="here-door">Came in by ${esc(doorName(h.door))}</div>` : ''}${ageSeg}`
       : `<p class="here-none">${gameLink === 'game' ? 'Go through any door in the game and it shows here.' : 'Not set yet. Pick where you are, or log an entrance.'}</p>`}
     ${goal ? `<div class="here-goal"><span>Heading to <b>${esc(placeName(goal))}</b></span>${next}<button class="linkish keep" data-goal-stop>Stop</button></div>` : ''}
     <div class="here-acts"><button class="btn keep" data-directions>${goal ? 'See directions' : 'Directions'}</button><button class="btn alt keep" data-here-set>${h ? 'Change' : 'Set where you are'}</button></div>`;
 }
+const AGE_LIST: Age[] = ['child', 'adult'];
 
 /* Shows the player's place on the Entrances tab: opens its area and scrolls to the entrance they came in by. */
 function showHere() {
@@ -2891,10 +2930,10 @@ function showRoute() {
   if (!box || !goal) return;
   box.innerHTML = routeAreaHtml(goal);
   const actions = layers[layers.length - 1]?.actions;
-  const routes = routeFromHere(goal);
+  const routes = routeFromHere(goal)?.routes;
   if (actions && routes) routes.forEach((r, i) => {
     actions['route:' + i] = () => {
-      seed.via = r.flatMap(x => x.kind === 'walk' ? [] : [x.door]);
+      seed.via = doorsIn(r);
       save(); renderHere(); showRoute();
     };
   });
@@ -4121,6 +4160,7 @@ function events() {
     if ('hereShow' in d) { showHere(); return; }
     if ('hereSet' in d) { openSetHere(); return; }
     if ('directions' in d) { openDirections(); return; }
+    if (d.hereAge && seed.here) { seed.here.age = d.hereAge as Age; save(); renderHere(); return; }
     if ('goalStop' in d) { delete seed.goal; delete seed.via; save(); renderHere(); return; }
     if (d.tab) { tab = d.tab as typeof tab; phoneView = 'rail'; renderRail(); renderTabs(); renderPane(); return; }
     if ('entrRegion' in d) {

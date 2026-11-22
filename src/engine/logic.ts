@@ -38,12 +38,48 @@ export type LogicOutput = {
   giItems: Record<string, string>;
   /** OoT checks in logic for only one age. Checks both ages can get aren't listed. */
   ages: Record<string, 'child' | 'adult'>;
+  /** For directions: which ways the player's items and age allow (see Travel). */
+  travel?: Travel;
   /** Only when next was asked for. Best first. */
   next?: NextItem[];
   /** Rolled settings the player hasn't set, so logic only counts checks open on every outcome. */
   unsettled?: string[];
   ms: number;
 };
+
+/**
+ * For directions: OoTMM's own rule for every way out of every area, asked with the items the player logged, as an age
+ * mask (1 child, 2 adult). Only ways that aren't open to both ages are listed. Rules that need something the player
+ * hasn't reached in logic yet (an event, a time of day) count as closed. A warp song or soaring needs its system area
+ * reached, so it's listed under that area ('OOT SONG_TP_FOREST'). Age changes: at the Temple of Time once OoTMM's
+ * TIME_TRAVEL event is reached, or anywhere with the Song of Time when TIME_TRAVEL_AT_WILL is (and the area allows it).
+ */
+export type Travel = { pass: Record<string, number>; timeTravel: string[]; atWill: boolean; fixedAge: string[] };
+
+function travelRules(pf: any, ws: any, world: any): Travel {
+  const pass: Record<string, number> = {};
+  const system = (a: string) => /^[A-Z_ ]+$/.test(a.replace(/^(OOT|MM) /, ''));
+  /* An area logic hasn't reached still has its rules asked, with another area's time of day. */
+  const stand = [0, 1].map(age => ws.ages[age].areas.values().next().value);
+  for (const [from, area] of Object.entries(world.areas as Record<string, any>)) {
+    for (const [to, expr] of Object.entries(area.exits ?? {})) {
+      let mask = 0;
+      for (const age of [0, 1]) {
+        const as = ws.ages[age];
+        const reached = as.areas.has(from);
+        if (!reached && (system(from) || !stand[age])) continue;
+        if (!reached) as.areas.set(from, stand[age]);
+        try { if (pf.evalExpr(0, expr, age, from).result.result) mask |= 1 << age; } catch { /* closed */ }
+        finally { if (!reached) as.areas.delete(from); }
+      }
+      if (mask !== 3) pass[from + '\n' + to] = mask;
+    }
+  }
+  const has = (e: string) => [...ws.events].some((x: string) => x === e || x.endsWith('_' + e));
+  const timeTravel = has('TIME_TRAVEL') ? Object.entries(world.areas as Record<string, any>).filter(([, a]) => Object.keys(a.events ?? {}).some(k => /(^|_)TIME_TRAVEL$/.test(k))).map(([n]) => n) : [];
+  const fixedAge = Object.entries(world.areas as Record<string, any>).filter(([, a]) => a.game === 'oot' && !a.ageChange).map(([n]) => n);
+  return { pass, timeTravel, atWill: has('TIME_TRAVEL_AT_WILL'), fixedAge };
+}
 
 const monitor = new Monitor({ onLog: () => {}, onWarn: () => {}, onProgress: () => {} });
 
@@ -328,6 +364,7 @@ async function computeOne(input: LogicInput): Promise<LogicOutput> {
     const { pf, result } = run(assumed, true);
     const reach = [...result.locations].map(l => l.replace(/@\d+$/, ''));
     const ws = pf.state.ws[0];
+    const travel = travelRules(pf, ws, world);
 
     /* Which age can get each OoT check, asked of the same rules on the finished run. Tags only start once each age can get something. */
     const ages: Record<string, 'child' | 'adult'> = {};
@@ -375,6 +412,7 @@ async function computeOne(input: LogicInput): Promise<LogicOutput> {
       pricesShuffled: b.pricesShuffled,
       giItems: b.giItems,
       ages,
+      travel,
       next,
       ms: Math.round(performance.now() - t0),
     };

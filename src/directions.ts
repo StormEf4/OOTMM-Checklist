@@ -5,9 +5,12 @@
  * zone, and every entrance. An entrance the settings shuffle is only used once the player has logged where it leads,
  * and then it goes where they logged it. An entrance the settings leave alone goes where it always does (or where the
  * settings themselves send it: the link between the games, plando). Nothing here ever works out or uses a seed's real
- * connections, and the items and rules needed along the way aren't checked: it's a route, not logic.
+ * connections. With the logic worker's rules (Travel), each way is only taken by an age OoTMM's own rules let through
+ * with the items the player logged, and age changes go through the Temple of Time or the Song of Time.
  */
 import type { Ways } from './engine/entrances';
+
+export type Age = 'child' | 'adult';
 
 export type Step =
   /** Go through an entrance. door is OoTMM's id for it; logged says the player logged where it leads. */
@@ -15,18 +18,27 @@ export type Step =
   /** Play a warp song, or soar to an owl statue: works from anywhere. */
   | { kind: 'warp'; door: string; to: string; logged: boolean }
   /** Walk on to another place, with no loading zone in between. */
-  | { kind: 'walk'; from: string; to: string };
+  | { kind: 'walk'; from: string; to: string }
+  /** Become the other age: at the Temple of Time (the Master Sword), or anywhere with the Song of Time. */
+  | { kind: 'age'; to: Age; how: 'sword' | 'song'; at: string };
+
+/** OoTMM's rules for the ways between areas, asked with the player's items (from the logic worker; see logic.ts). */
+export type Travel = { pass: Record<string, number>; timeTravel: string[]; atWill: boolean; fixedAge: string[] };
 
 export type RouteAsk = {
   /** Areas the player could be standing in (one when the game said, a whole place's when they picked it). */
   start: string[];
+  /** The age the player is now, when known. Unknown starts as either. */
+  age?: Age | null;
   /** The place to get to. */
   goal: string;
   /** The player's log: entrance id to the entrance it leads to (their own words, "text:...", lead nowhere known). */
   logged: Record<string, string>;
   /** Entrances these settings shuffle. Each stays closed until it's logged. */
   shuffled: Set<string>;
-  /** Whether a warp song or soaring (by entrance id) can be used: the player has the song. */
+  /** OoTMM's rules with the player's items. Without them every way is open and age doesn't matter. */
+  rules?: Travel | null;
+  /** Without rules: whether a warp song or soaring (by entrance id) can be used. */
   canWarp?: (door: string) => boolean;
   /** Entrances to leave out, to find another way. */
   ban?: Set<string>;
@@ -46,73 +58,107 @@ export function leadsTo(ways: Ways, id: string, ask: Pick<RouteAsk, 'logged' | '
 }
 
 const placeOf = (ways: Ways, area: string) => ways.areas[area]?.[0] ?? '';
+const AGES: Age[] = ['child', 'adult'];
 
 /**
- * The fewest entrances from the start to the goal, then the fewest warps. Walking within a place is free. Returns the
+ * The fewest entrances from the start to the goal, then the fewest warps and age changes. Walking within a place is
+ * free. With rules, each way is only taken by an age OoTMM's logic lets through with the player's items. Returns the
  * steps, [] when the player is already there, or null when there's no way yet.
  */
 export function findRoute(ways: Ways, ask: RouteAsk): Step[] | null {
   if (ask.start.some(a => placeOf(ways, a) === ask.goal)) return [];
-  type Edge = { to: string; door?: string; warp?: boolean; logged?: boolean };
-  /* Each area's ways out, worked out once per route. */
+  if (!ask.rules || ask.age) return searchRoute(ways, ask);
+  /* Age unknown: the way for each age. Only when one age has no way, or a longer one, does the age need saying. */
+  const [child, adult] = AGES.map(age => searchRoute(ways, { ...ask, age }));
+  if (!child || !adult) {
+    const one = child ?? adult;
+    if (one) (one as Step[] & { startAge?: Age }).startAge = child ? 'child' : 'adult';
+    return one;
+  }
+  const better = length(adult) < length(child) ? adult : child;
+  if (length(adult) !== length(child)) (better as Step[] & { startAge?: Age }).startAge = better === adult ? 'adult' : 'child';
+  return better;
+}
+
+function searchRoute(ways: Ways, ask: RouteAsk): Step[] | null {
+  const rules = ask.rules ?? null;
+  /* Bit 1 child, 2 adult. A way not listed is open to both. */
+  const open = (from: string, to: string) => rules ? rules.pass[from + '\n' + to] ?? 3 : 3;
+  type Edge = { to: string; mask: number; door?: string; warp?: boolean; logged?: boolean; age?: 'sword' | 'song' };
   const outOf = new Map<string, Edge[]>();
+  const add = (a: string, e: Edge) => { if (e.mask) (outOf.get(a) ?? outOf.set(a, []).get(a)!).push(e); };
   const warps: Edge[] = [];
   for (const [id, [from]] of Object.entries(ways.doors)) {
     if (ask.ban?.has(id)) continue;
     const t = leadsTo(ways, id, ask);
     if (!t) continue;
-    if (from.startsWith('*')) { if (ask.canWarp?.(id)) warps.push({ to: t.area, door: id, warp: true, logged: t.logged }); continue; }
-    (outOf.get(from) ?? outOf.set(from, []).get(from)!).push({ to: t.area, door: id, logged: t.logged });
+    if (from.startsWith('*')) {
+      const mask = rules ? open(from.slice(1), t.area) : ask.canWarp?.(id) ? 3 : 0;
+      if (mask) warps.push({ to: t.area, mask, door: id, warp: true, logged: t.logged });
+      continue;
+    }
+    add(from, { to: t.area, mask: open(from, t.area), door: id, logged: t.logged });
   }
-  for (const [a, list] of Object.entries(ways.walk)) {
-    const edges = outOf.get(a) ?? outOf.set(a, []).get(a)!;
-    for (const b of list) edges.push({ to: b });
-  }
-  /* Cost: an entrance 2, a warp 3 (a song is slower than a door, but beats a long way round), walking 0. Costs are
-     small whole numbers, so a bucket queue does it. */
+  for (const [a, list] of Object.entries(ways.walk)) for (const b of list) add(a, { to: b, mask: open(a, b) });
+  const fixed = new Set(rules?.fixedAge ?? []);
+  const sword = new Set(rules?.timeTravel ?? []);
+  /* Cost: an entrance 2, a warp 3 (a song is slower than a door, but beats a long way round), changing age 3 with the
+     sword, 4 with the song, walking 0. Costs are small whole numbers, so a bucket queue does it. A node is an area and
+     an age (only one age without rules). */
+  const node = (a: string, age: number) => a + '|' + age;
   const cost = new Map<string, number>();
-  const prev = new Map<string, { from: string; edge: Edge }>();
+  const prev = new Map<string, { from: string; edge: Edge; age: number }>();
   const buckets: string[][] = [[]];
-  for (const a of ask.start) if (ways.areas[a]) { cost.set(a, 0); buckets[0].push(a); }
+  const ages = !rules ? [0] : ask.age ? [AGES.indexOf(ask.age)] : [0, 1];
+  for (const a of ask.start) if (ways.areas[a]) for (const g of ages) { cost.set(node(a, g), 0); buckets[0].push(node(a, g)); }
   let end = '';
   for (let c = 0; c < buckets.length && !end; c++) {
     const q = buckets[c];
     if (!q) continue;
     for (let i = 0; i < q.length; i++) {
-      const a = q[i];
-      if (cost.get(a) !== c) continue;
-      if (placeOf(ways, a) === ask.goal) { end = a; break; }
-      const relax = (e: Edge, w: number) => {
-        const n = c + w;
-        if (n >= (cost.get(e.to) ?? Infinity)) return;
-        cost.set(e.to, n);
-        prev.set(e.to, { from: a, edge: e });
-        (buckets[n] ??= []).push(e.to);
+      const n = q[i];
+      if (cost.get(n) !== c) continue;
+      const bar = n.lastIndexOf('|'), a = n.slice(0, bar), g = Number(n.slice(bar + 1));
+      if (placeOf(ways, a) === ask.goal) { end = n; break; }
+      const relax = (e: Edge, w: number, to = g) => {
+        if (rules && !(e.mask & (1 << g))) return;
+        const m = node(e.to, to), k = c + w;
+        if (k >= (cost.get(m) ?? Infinity)) return;
+        cost.set(m, k);
+        prev.set(m, { from: n, edge: e, age: g });
+        (buckets[k] ??= []).push(m);
       };
       for (const e of outOf.get(a) ?? []) relax(e, e.door ? 2 : 0);
       for (const e of warps) relax(e, 3);
+      if (rules && sword.has(a)) relax({ to: a, mask: 3, age: 'sword' }, 3, 1 - g);
+      else if (rules?.atWill && ways.areas[a] && !fixed.has(a) && a.startsWith('OOT ')) relax({ to: a, mask: 3, age: 'song' }, 4, 1 - g);
     }
   }
   if (!end) return null;
-  const path: { from: string; edge: Edge }[] = [];
-  for (let a = end; prev.has(a); a = prev.get(a)!.from) path.unshift(prev.get(a)!);
-  /* Only the entrances make steps. Between them, a walk into another place gets a step of its own. */
+  const path: { from: string; edge: Edge; age: number }[] = [];
+  for (let n = end; prev.has(n); n = prev.get(n)!.from) path.unshift(prev.get(n)!);
+  const areaOf = (n: string) => n.slice(0, n.lastIndexOf('|'));
+  /* Only entrances and age changes make steps. Between them, a walk into another place gets a step of its own. */
   const steps: Step[] = [];
-  let at = placeOf(ways, path[0]?.from ?? ask.start[0]);
-  for (const { from, edge } of path) {
-    if (!edge.door) continue;
-    const here = placeOf(ways, from);
+  let at = placeOf(ways, areaOf(path[0]?.from ?? node(ask.start[0], 0)));
+  for (const { from, edge, age } of path) {
+    if (!edge.door && !edge.age) continue;
+    const here = placeOf(ways, areaOf(from));
     if (!edge.warp && here !== at) steps.push({ kind: 'walk', from: at, to: here });
+    if (edge.age) { steps.push({ kind: 'age', to: AGES[1 - age], how: edge.age, at: here }); at = here; continue; }
     const to = placeOf(ways, edge.to);
-    steps.push(edge.warp ? { kind: 'warp', door: edge.door, to, logged: !!edge.logged } : { kind: 'door', door: edge.door, from: here, to, logged: !!edge.logged });
+    steps.push(edge.warp ? { kind: 'warp', door: edge.door!, to, logged: !!edge.logged } : { kind: 'door', door: edge.door!, from: here, to, logged: !!edge.logged });
     at = to;
   }
   if (at !== ask.goal) steps.push({ kind: 'walk', from: at, to: ask.goal });
   return steps;
 }
 
-const doorsOf = (steps: Step[]) => steps.flatMap(s => s.kind === 'walk' ? [] : [s.door]);
-const length = (steps: Step[]) => doorsOf(steps).length * 2 + steps.filter(s => s.kind === 'warp').length;
+/** The age a way starts as, when the player's age wasn't known and it matters. */
+export const startAge = (steps: Step[]): Age | undefined => (steps as Step[] & { startAge?: Age }).startAge;
+
+function doorsOf(steps: Step[]) { return steps.flatMap(s => s.kind === 'door' || s.kind === 'warp' ? [s.door] : []); }
+function length(steps: Step[]) { return doorsOf(steps).length * 2 + steps.filter(s => s.kind === 'warp' || s.kind === 'age').length; }
 
 /**
  * The best way, then up to max - 1 other ways, each leaving out one entrance of the best way (and of the ways found
@@ -169,6 +215,21 @@ export function warpSong(ways: Ways, door: string): string | null {
   if (!from.startsWith('*')) return null;
   const m = from.match(/SONG_TP_[A-Z]+|SOARING/);
   return m ? (m[0] === 'SOARING' ? 'SONG_SOARING' : m[0]) : null;
+}
+
+/**
+ * Where to start in a place the player picked (the game didn't say the exact spot): its main area, the one named like
+ * the place ("OOT Lake Hylia" for Lake Hylia), so the rules inside the place still count. Else the spots entrances
+ * arrive at, else anywhere in it.
+ */
+export function startAreas(ways: Ways, place: string): string[] {
+  const all = areasIn(ways, place);
+  const name = ways.places[place]?.[0]?.toLowerCase();
+  const main = all.filter(a => a.replace(/^(OOT|MM) /, '').toLowerCase() === name);
+  if (main.length) return main;
+  const arrive = new Set(Object.values(ways.doors).map(d => d[1]));
+  const door = all.filter(a => arrive.has(a));
+  return door.length ? door : all;
 }
 
 /** Every area in a place, to start from when the player picked the place rather than the game saying. */

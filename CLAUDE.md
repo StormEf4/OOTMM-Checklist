@@ -75,9 +75,11 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
   `node tools/memory-doors-test.mjs` check it
 - `src/directions.ts`: "Where you are now" (the sidebar panel) and directions. Routes run on OoTMM's normal map (`ways` in
   `src/engine/entrances.ts`: areas, walking between them, every entrance, and what the settings fix), through only the
-  entrances the player logged plus ones the settings don't shuffle. Item rules aren't checked. Where the player is comes
+  entrances the player logged plus ones the settings don't shuffle. Each step must pass OoTMM's own rule for that way
+  with the player's items and Link's age (`travel` from the logic worker, `travelRules` in `logic.ts`), with age changes
+  at the Temple of Time or by the Song of Time; with no way yet, it falls back to ignoring rules and says so. Where the player is comes
   from game tracking's entrance messages (whether or not entrance logging is on), or the player sets it; logging an
-  entrance by hand moves it when the game isn't connected. Saved per seed as `seed.here` and `seed.goal`
+  entrance by hand moves it when the game isn't connected. Saved per seed as `seed.here` (with `age`), `seed.goal` and `seed.via` (the route picked)
 - `desktop/`: the Windows window (Electron)
 - `tools/`: build, tests and packaging
 - `dist/web/`: the built phone site, and `dist/desktop/`: the built Windows app files. Both are committed
