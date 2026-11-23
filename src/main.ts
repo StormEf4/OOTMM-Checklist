@@ -2761,9 +2761,12 @@ function routeFromHere(goal: string): RouteFind | undefined {
   const start = h.area && w.areas[h.area] ? [h.area] : startAreas(w, h.place);
   if (!start.length) return undefined;
   const rules = logicOut?.travel ?? null;
-  const key = JSON.stringify([goal, h, hereAge(), seed.entrances, seed.have, seed.found]);
+  const key = JSON.stringify([goal, h, hereAge(), seed.entrances, seed.have, seed.found, doneSet.size, seed.done[seed.done.length - 1]]);
   if (routeCache.key === key && routeCache.logic === logicOut && routeCache.ways === w) return routeCache.out;
-  const ask = { start, goal, age: hereAge(), logged: seed.entrances, shuffled: shuffledSet(), canWarp: hasWarpSong };
+  /* A spot where the player checked something, they've reached: ways into it count as open (owner, Nov 22 2026). */
+  const been = new Set<string>();
+  for (const id of doneSet) { const at = w.spots?.[id]; if (at) for (const a of Array.isArray(at) ? at : [at]) if (w.areas[a]) been.add(w.areas[a][0]); }
+  const ask = { start, goal, age: hereAge(), logged: seed.entrances, shuffled: shuffledSet(), canWarp: hasWarpSong, been };
   const strict = rules ? findRoutes(w, { ...ask, rules }) : null;
   const out: RouteFind = strict ? { routes: strict, strict: true } : { routes: findRoutes(w, ask), strict: false };
   Object.assign(routeCache, { key, logic: logicOut, ways: w, out });
@@ -2872,7 +2875,7 @@ function routeHtml(goal: string) {
     : as ? `<p class="route-age">This way starts as ${ageWord(as)}. Set your age in the sidebar for directions that fit you.</p>` : '';
   return `${choose}${note}<p class="route-sum">${doors} ${doors === 1 ? 'entrance' : 'entrances'} from ${esc(placeName(seed.here!.place))} to ${esc(placeName(goal))}.</p>
     <ol class="route">${steps.map(stepHtml).join('')}<li class="step end"><span class="num">✓</span><div class="what"><span class="t">You're in <b>${esc(placeName(goal))}</b></span></div></li></ol>
-    ${strict ? `<p class="fine">Every step follows OoTMM's rules with the items you've logged${ootOn() ? ' and your age' : ''}${steps.some(x => x.uses?.length) ? `, and any trick or glitch OoTMM knows (whatever your logic settings say), plus Hookshot Anywhere or Climb Most Surfaces when your game has them on. A step that needs one says which, and what to use.` : '.'}</p>` : ''}`;
+    ${strict ? `<p class="fine">Every step follows OoTMM's rules with the items you've logged${ootOn() ? ' and your age' : ''}${steps.some(x => x.uses?.length) ? `, and any trick or glitch OoTMM knows (whatever your logic settings say), plus Hookshot Anywhere or Climb Most Surfaces when your game has them on. A step that needs one says which, and what to use.` : '.'} Any place where you've checked something counts as one you can reach.</p>` : ''}`;
 }
 
 function renderHere() {

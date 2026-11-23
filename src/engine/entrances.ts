@@ -75,6 +75,8 @@ export type Ways = {
   doors: Record<string, [string, string, string, string]>;
   /** Entrances the settings send elsewhere without shuffling them (the link between the games, plando). */
   set: Record<string, string>;
+  /** Where each check sits: the area OoTMM lists it in (several when more than one area can get it). */
+  spots?: Record<string, string | string[]>;
 };
 
 const EMPTY: EntranceData = { list: [], dests: [], sets: [], rev: {} };
@@ -348,7 +350,15 @@ function worldWays(world: any, overrides: Record<string, string>, ownRegion: (a:
   }
   const set: Ways['set'] = {};
   for (const [src, dst] of Object.entries(overrides)) if (doors[src] && (ENTRANCES as any)[dst]) set[src] = dst;
-  return { areas, places, walk, doors, set };
+  const spots: NonNullable<Ways['spots']> = {};
+  for (const [a, area] of Object.entries(world.areas as Record<string, any>)) {
+    if (system(a) || !areas[a]) continue;
+    for (const loc of Object.keys(area.locations ?? {})) {
+      const had = spots[loc];
+      spots[loc] = had === undefined ? a : Array.isArray(had) ? [...had, a] : [had, a];
+    }
+  }
+  return { areas, places, walk, doors, set, spots };
 }
 
 /* OoTMM keeps one map and compass for a dungeon whose halves are separate dungeons in its world, such as Stone Tower

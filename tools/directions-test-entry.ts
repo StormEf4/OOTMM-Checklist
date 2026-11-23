@@ -88,6 +88,27 @@ const show = (ways: any, steps: any[] | null) => steps ? steps.map((s, i) => `  
   ok(!e1?.some(x => (x as any).door === 'OOT_SPAWN_CHILD'), 'unlogged shuffled spawn is never used');
 }
 
+/* A spot with a checked location counts as reached: ways into it are open, whatever they need. */
+{
+  const r = await compute({});
+  const ways = r.entrances.ways!;
+  const none = await computeLogic({ settings: {}, entrances: {}, items: {} });
+  const find = (t: string) => searchPlaces(ways, t)[0];
+  const fire = find('Fire Temple');
+  const spots = Object.keys(ways.spots ?? {}).length;
+  ok(spots > 500, `checks placed on the map: ${spots}`);
+  const ask = { start: areasIn(ways, find('Kokiri Forest')), goal: fire, age: 'child' as const, logged: {}, shuffled: new Set<string>(), rules: none.travel };
+  ok(findRoute(ways, ask) === null, 'no items: no way to the Fire Temple');
+  /* The player checked things all along the way (every check outside dungeons in the regions on the way). */
+  const been = new Set<string>();
+  for (const at of Object.values(ways.spots!)) for (const a of [at].flat()) if (/^OOT (Lost Woods|Hyrule Field|Kakariko|Death Mountain|Goron City|Fire Temple|Kokiri)/.test(a)) been.add(ways.areas[a][0]);
+  const s = findRoute(ways, { ...ask, been });
+  console.log(show(ways, s));
+  ok(!!s, 'with checks done along the way: a way to the Fire Temple');
+  const mido = Object.entries(ways.spots!).find(([k]) => /Mido/.test(k));
+  ok(!!mido, `a check's spot: ${mido?.[0]} -> ${mido?.[1]}`);
+}
+
 /* Warp songs only with the song. */
 {
   const r = await compute({});

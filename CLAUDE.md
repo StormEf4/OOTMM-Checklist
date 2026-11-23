@@ -82,7 +82,8 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
   OoTMM's rules, whatever the seed's trick settings (owner, Nov 22 2026: they play without logic), and Hookshot Anywhere /
   Climb Most Surfaces when the game has them on; reachable checks still follow the seed's settings. A build patch in
   `tools/paths.mjs` marks each one in the rules (`__checklistAllAids` turns all on for the travel run) so `travel.aids`
-  can say which one (and which items) a way needs, and steps show it. OoTMM v33 has no bomb hover in its logic. Where the player is comes
+  can say which one (and which items) a way needs, and steps show it. OoTMM v33 has no bomb hover in its logic. A place where
+  the player checked something counts as reached (`ways.spots` places each check; owner, Nov 22 2026): ways into it are open. Where the player is comes
   from game tracking's entrance messages (whether or not entrance logging is on), or the player sets it; logging an
   entrance by hand moves it when the game isn't connected. Saved per seed as `seed.here` (with `age`), `seed.goal` and `seed.via` (the route picked)
 - `desktop/`: the Windows window (Electron)

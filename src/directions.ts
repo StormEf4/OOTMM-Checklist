@@ -53,6 +53,9 @@ export type RouteAsk = {
   canWarp?: (door: string) => boolean;
   /** Entrances to leave out, to find another way. */
   ban?: Set<string>;
+  /** Places the player has been to (they checked something there): any way into one, or around in it, is open,
+      whatever it needs. */
+  been?: Set<string>;
 };
 
 /** Where an entrance takes the player on this seed, as far as the player's log and the settings say, or null. */
@@ -94,8 +97,9 @@ export function findRoute(ways: Ways, ask: RouteAsk): Step[] | null {
 function searchRoute(ways: Ways, ask: RouteAsk): Step[] | null {
   const rules = ask.rules ?? null;
   /* Bit 1 child, 2 adult. A way not listed is open to both. */
-  const open = (from: string, to: string) => rules ? rules.pass[from + '\n' + to] ?? 3 : 3;
-  const aidOf = (from: string, to: string) => rules?.aids?.[from + '\n' + to];
+  const been = (to: string) => !!ask.been?.has(placeOf(ways, to));
+  const open = (from: string, to: string) => !rules || been(to) ? 3 : rules.pass[from + '\n' + to] ?? 3;
+  const aidOf = (from: string, to: string) => been(to) ? undefined : rules?.aids?.[from + '\n' + to];
   type Edge = { to: string; mask: number; door?: string; warp?: boolean; logged?: boolean; age?: 'sword' | 'song'; aid?: [Aid | null, Aid | null] };
   const outOf = new Map<string, Edge[]>();
   const add = (a: string, e: Edge) => { if (e.mask) (outOf.get(a) ?? outOf.set(a, []).get(a)!).push(e); };
@@ -112,8 +116,8 @@ function searchRoute(ways: Ways, ask: RouteAsk): Step[] | null {
       continue;
     }
     if (from.startsWith('*')) {
-      const mask = rules ? open(from.slice(1), t.area) : ask.canWarp?.(id) ? 3 : 0;
-      if (mask) warps.push({ to: t.area, mask, door: id, warp: true, logged: t.logged, aid: aidOf(from.slice(1), t.area) });
+      const mask = rules ? rules.pass[from.slice(1) + '\n' + t.area] ?? 3 : ask.canWarp?.(id) ? 3 : 0;
+      if (mask) warps.push({ to: t.area, mask, door: id, warp: true, logged: t.logged, aid: rules?.aids?.[from.slice(1) + '\n' + t.area] });
       continue;
     }
     add(from, { to: t.area, mask: open(from, t.area), door: id, logged: t.logged, aid: aidOf(from, t.area) });
