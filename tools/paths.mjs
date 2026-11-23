@@ -59,26 +59,37 @@ export const plugins = [{
       if (!text.includes(call)) throw new Error('OoTMM changed how it optimizes worlds. Update the expose-world-shuffler plugin in tools/paths.mjs to match.');
       return { contents: text.replace(call, call.replace('allItems))', '(globalThis as any).__checklistKeepPool ? ({ get: () => Infinity, has: () => true } as any) : allItems))')), loader: 'ts' };
     });
-    /* Tricks, glitches and "logical" settings like Hookshot Anywhere become a plain "true" when OoTMM reads its rules,
-       so nothing shows which rule leaned on one. This makes each one a marked "true" that works the same, unless the
-       checklist turns it off for a moment (globalThis.__checklistAidsOff), so directions can name what a step uses. */
+    /* Tricks, glitches and "logical" settings like Hookshot Anywhere become a plain "true" or "false" when OoTMM reads
+       its rules, so nothing shows which rule leaned on one. This makes each one a marked node instead. It works exactly
+       as before (on when the seed's logic settings turn it on), except:
+       - globalThis.__checklistAllAids: directions ask with every trick and glitch on, whatever the seed's logic
+         settings say (owner, Nov 22 2026), and Hookshot Anywhere / Climb Most Surfaces whenever the game has them on;
+       - globalThis.__checklistAidsOff: turns single ones off for a moment, so directions can name what a step uses. */
     build.onLoad({ filter: /expr[\\/]builder\.ts$/ }, args => {
       const text = readFileSync(args.path, 'utf8');
       const trick = 'return settings.tricks.includes(trick as TrickKey) ? EXPR_TRUE : EXPR_FALSE;';
       const setting = 'return v === value ? EXPR_TRUE : EXPR_FALSE;';
       const cond = 'if (cond === EXPR_TRUE) {';
-      if (!text.includes(trick) || !text.includes(setting) || !text.includes(cond)) throw new Error('OoTMM changed how it reads tricks and settings in rules. Update the expr builder patch in tools/paths.mjs to match.');
+      const condFalse = 'if (cond === EXPR_FALSE) {';
+      if (!text.includes(trick) || !text.includes(setting) || !text.includes(cond) || !text.includes(condFalse)) throw new Error('OoTMM changed how it reads tricks and settings in rules. Update the expr builder patch in tools/paths.mjs to match.');
       const aid = `
 const checklistAids: Record<string, Expr> = {};
 let checklistAidId = 2_000_000_000;
-function checklistAid(aid: string): Expr {
-  return checklistAids[aid] ??= Object.freeze({ type: 'true', checklistAid: aid, id: checklistAidId++, eval: () => (globalThis as any).__checklistAidsOff?.has(aid) ? { result: false } : { result: true } }) as any;
+/** on: the seed's logic counts it. game: it works in the game (every trick and glitch; a setting unless it's off). */
+function checklistAid(aid: string, on: boolean, game: boolean): Expr {
+  const R_TRUE = { result: true }, R_FALSE = { result: false };
+  return checklistAids[aid + ':' + on + ':' + game] ??= Object.freeze({ type: 'true', checklistAid: aid, checklistOn: on, id: checklistAidId++, eval: () => {
+    const g = globalThis as any;
+    if (g.__checklistAidsOff?.has(aid)) return R_FALSE;
+    return (g.__checklistAllAids ? game : on) ? R_TRUE : R_FALSE;
+  } }) as any;
 }
 `;
       return { contents: text
-        .replace(trick, "return settings.tricks.includes(trick as TrickKey) ? checklistAid('trick:' + trick) : EXPR_FALSE;")
-        .replace(setting, "return v === value ? (value === 'logical' ? checklistAid('setting:' + setting) : EXPR_TRUE) : EXPR_FALSE;")
-        .replace(cond, 'if (cond === EXPR_TRUE || (cond as any).checklistAid) {') + aid, loader: 'ts' };
+        .replace(trick, "return checklistAid('trick:' + trick, settings.tricks.includes(trick as TrickKey), true);")
+        .replace(setting, "return value === 'logical' ? checklistAid('setting:' + setting, v === value, v !== 'off') : v === value ? EXPR_TRUE : EXPR_FALSE;")
+        .replace(cond, 'if (cond === EXPR_TRUE || (cond as any).checklistOn === true) {')
+        .replace(condFalse, 'if (cond === EXPR_FALSE || (cond as any).checklistOn === false) {') + aid, loader: 'ts' };
     });
     build.onLoad({ filter: /solver[\\/]solve\.ts$/ }, args => {
       const text = readFileSync(args.path, 'utf8');

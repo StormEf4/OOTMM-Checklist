@@ -429,7 +429,16 @@ async function computeOne(input: LogicInput): Promise<LogicOutput> {
     const { pf, result } = run(assumed, true);
     const reach = [...result.locations].map(l => l.replace(/@\d+$/, ''));
     const ws = pf.state.ws[0];
-    const travel = travelRules(pf, ws, world);
+    /* Directions count every trick and glitch the game allows (bomb hovers and all), whatever the seed's logic settings
+       say (owner, Nov 22 2026), each only with the items its rule needs. That's its own run of the pathfinder, so
+       reachable checks stay on the seed's logic settings. */
+    let travel: Travel;
+    const g = globalThis as any;
+    g.__checklistAllAids = true;
+    try {
+      const loose = run(assumed, false).pf;
+      travel = travelRules(loose, loose.state.ws[0], world);
+    } finally { g.__checklistAllAids = false; }
 
     /* Which age can get each OoT check, asked of the same rules on the finished run. Tags only start once each age can get something. */
     const ages: Record<string, 'child' | 'adult'> = {};

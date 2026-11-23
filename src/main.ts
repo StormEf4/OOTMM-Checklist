@@ -2872,7 +2872,7 @@ function routeHtml(goal: string) {
     : as ? `<p class="route-age">This way starts as ${ageWord(as)}. Set your age in the sidebar for directions that fit you.</p>` : '';
   return `${choose}${note}<p class="route-sum">${doors} ${doors === 1 ? 'entrance' : 'entrances'} from ${esc(placeName(seed.here!.place))} to ${esc(placeName(goal))}.</p>
     <ol class="route">${steps.map(stepHtml).join('')}<li class="step end"><span class="num">✓</span><div class="what"><span class="t">You're in <b>${esc(placeName(goal))}</b></span></div></li></ol>
-    ${strict ? `<p class="fine">Every step follows OoTMM's rules with the items you've logged${ootOn() ? ' and your age' : ''}${steps.some(x => x.uses?.length) ? `, and the tricks, glitches and settings like Hookshot Anywhere your settings turn on. A step that needs one says which, and what to use.` : '.'}</p>` : ''}`;
+    ${strict ? `<p class="fine">Every step follows OoTMM's rules with the items you've logged${ootOn() ? ' and your age' : ''}${steps.some(x => x.uses?.length) ? `, and any trick or glitch OoTMM knows (whatever your logic settings say), plus Hookshot Anywhere or Climb Most Surfaces when your game has them on. A step that needs one says which, and what to use.` : '.'}</p>` : ''}`;
 }
 
 function renderHere() {

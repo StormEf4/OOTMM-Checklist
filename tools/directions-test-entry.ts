@@ -138,7 +138,8 @@ const show = (ways: any, steps: any[] | null) => steps ? steps.map((s, i) => `  
   }
   ok(bad === 0, 'no door taken by an age its rule shuts out');
 }
-/* Tricks, glitches and "anywhere" settings: OoTMM's rules read them from the seed's settings, so directions do too. */
+/* Tricks and glitches: directions count every one the game allows, whatever the seed's logic settings say, each only
+   with its items. Reachable checks stay on the seed's own logic settings. */
 {
   const { TRICKS } = await import('@ootmm/core') as any;
   const r = await compute({});
@@ -147,52 +148,45 @@ const show = (ways: any, steps: any[] | null) => steps ? steps.map((s, i) => `  
   const all: Record<string, number> = {};
   for (const i of base.catalog) all[i.id] = i.max;
   const plain = await computeLogic({ settings: { tricks: [] }, entrances: {}, items: all });
-  const loose = { tricks: Object.keys(TRICKS), hookshotAnywhereOot: 'logical', hookshotAnywhereMm: 'logical', climbMostSurfacesOot: 'logical' };
+  const loose = { tricks: Object.keys(TRICKS) };
   const tricky = await computeLogic({ settings: loose as any, entrances: {}, items: all });
   const closed = (t: any) => Object.values(t.pass).reduce((n: number, m: any) => n + (2 - ((m & 1) + ((m >> 1) & 1))), 0);
-  console.log('ways closed to an age, no tricks:', closed(plain.travel), 'every trick, glitch and anywhere setting:', closed(tricky.travel));
-  ok(closed(tricky.travel) < closed(plain.travel), 'tricks and glitches open more ways');
-  /* Some place is reached in fewer steps with them on. */
-  const shuffled = new Set<string>();
-  let shorter = '';
-  for (const goal of Object.keys(ways.places)) {
-    for (const age of ['child', 'adult'] as const) {
-      const ask = { start: areasIn(ways, 'OOT_KOKIRI_FOREST'), goal, age, logged: {}, shuffled };
-      const a = findRoute(ways, { ...ask, rules: plain.travel }), b = findRoute(ways, { ...ask, rules: tricky.travel });
-      if (b && (!a || b.length < a.length)) { shorter = `${ways.places[goal][0]} as ${age}: ${a?.length ?? 'none'} -> ${b.length} steps`; break; }
-    }
-    if (shorter) break;
-  }
-  ok(!!shorter, `a way gets shorter or opens with them: ${shorter}`);
-  /* Each way that leans on one says which, and the items with it. With none turned on, nothing does. */
-  const aids = Object.entries(tricky.travel!.aids ?? {});
-  console.log('ways that need a trick, glitch or setting:', aids.length);
+  console.log('ways closed to an age, no tricks in logic:', closed(plain.travel), 'every trick in logic:', closed(tricky.travel));
+  ok(closed(plain.travel) === closed(tricky.travel), 'directions are the same whatever tricks the logic settings turn on');
+  const few = Object.fromEntries(Object.entries(all).filter(([id]) => /OCARINA|BOMB_BAG|SHIELD|STICK|NUTS|SLINGSHOT/.test(id)));
+  const [fewPlain, fewTricky] = await Promise.all([computeLogic({ settings: { tricks: [] }, entrances: {}, items: few }), computeLogic({ settings: loose as any, entrances: {}, items: few })]);
+  ok(fewPlain.reach.length < fewTricky.reach.length, `reachable checks still follow the logic settings (${fewPlain.reach.length} without tricks, ${fewTricky.reach.length} with every trick)`);
+  ok(closed(fewPlain.travel) === closed(fewTricky.travel), 'and directions with few items are the same either way');
+  const aids = Object.entries(plain.travel!.aids ?? {});
+  console.log('ways that need a trick or glitch, with no tricks in the logic settings:', aids.length);
   for (const [k, v] of aids.slice(0, 6)) console.log('  ', k.replace('\n', ' -> '), JSON.stringify(v));
-  ok(aids.length > 50, 'ways with tricks say which trick');
-  ok(!Object.keys(plain.travel!.aids ?? {}).length, 'no tricks on: no way says it needs one');
+  ok(aids.length > 50, 'tricks and glitches open ways with none in the logic settings');
   ok(aids.some(([, v]) => v.some(a => a?.use.some(u => /glitch/.test(u)))), 'glitches are named as glitches');
-  ok(aids.some(([, v]) => v.some(a => a?.use.includes('Hookshot Anywhere') && a.items.some(i => /Hookshot|Longshot/.test(i)))), 'Hookshot Anywhere names the Hookshot');
+  ok(aids.some(([, v]) => v.some(a => a?.use.some(u => /Megaflip/.test(u)) && a.items.some(i => /Bomb/.test(i)))), 'a megaflip names the bombs');
+  ok(!aids.some(([, v]) => v.some(a => a?.use.some(u => /^Hookshot Anywhere/.test(u)))), 'Hookshot Anywhere off in the game: never used');
+  const hooked = await computeLogic({ settings: { tricks: [], hookshotAnywhereOot: 'enabled' } as any, entrances: {}, items: all });
+  ok(Object.values(hooked.travel!.aids ?? {}).some(v => v.some(a => a?.use.includes('Hookshot Anywhere') && a.items.some(i => /Hookshot|Longshot/.test(i)))), 'Hookshot Anywhere on in the game (not in logic): used, naming the Hookshot');
+  /* Some place is reached in fewer steps than plain walking. */
+  const shuffled = new Set<string>();
   let named = '';
   for (const goal of Object.keys(ways.places)) {
     for (const age of ['child', 'adult'] as const) {
-      const st = findRoute(ways, { start: areasIn(ways, 'OOT_KOKIRI_FOREST'), goal, age, logged: {}, shuffled, rules: tricky.travel });
+      const st = findRoute(ways, { start: areasIn(ways, 'OOT_KOKIRI_FOREST'), goal, age, logged: {}, shuffled, rules: plain.travel });
       const u = st?.find(x => x.uses?.length);
-      if (u) { named = `${ways.places[goal][0]} as ${age}: ${u.uses!.map(a => a.use.join(' or ') + (a.items.length ? ' with ' + a.items.join(', ') : '')).join('; ')}`; break; }
+      if (u) { named = `${ways.places[goal][0]} as ${age}: ${u.uses!.map(a => (a.any ? 'one of ' : '') + a.use.join(', ') + (a.items.length ? ' with ' + a.items.join(', ') : '')).join('; ')}`; break; }
     }
     if (named) break;
   }
   ok(!!named, `a step names what it uses: ${named}`);
-  /* Only with what it needs: without a Hookshot, no way leans on Hookshot Anywhere. */
-  const noHook = Object.fromEntries(Object.entries(all).filter(([id]) => !/HOOKSHOT|LONGSHOT/.test(id)));
-  const unhooked = await computeLogic({ settings: loose as any, entrances: {}, items: noHook });
-  const hookUses = Object.values(unhooked.travel!.aids ?? {}).filter(v => v.some(a => a?.use.some(u => /^Hookshot Anywhere/.test(u)) && !a.any)).length;
-  ok(hookUses === 0, `no Hookshot: Hookshot Anywhere opens nothing (${hookUses})`);
-  ok(closed(unhooked.travel) > closed(tricky.travel), 'no Hookshot: fewer ways open');
-  /* And without Bombs, no bomb hover. */
+  /* Only with what it needs: without Bombs, no bomb hover. */
   const noBombs = Object.fromEntries(Object.entries(all).filter(([id]) => !/BOMB/.test(id)));
-  const unbombed = await computeLogic({ settings: loose as any, entrances: {}, items: noBombs });
-  const hovers = Object.values(unbombed.travel!.aids ?? {}).filter(v => v.some(a => a?.use.some(u => /Hover/i.test(u)) && a.items.some(i => /Bomb/.test(i)))).length;
-  ok(hovers === 0, `no Bombs: no step uses a bomb hover (${hovers})`);
+  const unbombed = await computeLogic({ settings: {}, entrances: {}, items: noBombs });
+  const flips = Object.values(unbombed.travel!.aids ?? {}).filter(v => v.some(a => a?.use.some(u => /Megaflip/.test(u)) && !a.any)).length;
+  ok(flips === 0, `no Bombs: no step uses a megaflip (${flips})`);
+  ok(closed(unbombed.travel) > closed(plain.travel), 'no Bombs: fewer ways open');
+  /* With no items at all, no glitch that needs one. */
+  const bare = Object.values(base.travel!.aids ?? {}).flatMap(v => v.filter(Boolean)) as any[];
+  ok(bare.every(a => !a.items.some((i: string) => /Bomb|Hookshot|Hover Boots/.test(i))), `no items: no step names an item you don't have (${bare.length} ways with a trick)`);
 }
 console.log(fail ? `${fail} failed` : 'all passed');
 process.exit(fail ? 1 : 0);
