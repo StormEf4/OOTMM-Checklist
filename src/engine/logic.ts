@@ -7,7 +7,7 @@
  */
 import type { Settings } from '@ootmm/core';
 
-import { Monitor, SETTINGS, options } from '@ootmm/core';
+import { Monitor, SETTINGS, TRICKS, options } from '@ootmm/core';
 import { ENTRANCES, MACROS, RAW_GI, WORLD } from '@ootmm/data';
 import { gi } from '@ootmm/gi';
 import { ChecklistLogicPassSolver, ChecklistWorldShuffler, ItemGroups, ItemHelpers, Items, Pathfinder, cloneWorld, logicPassPrice, makePlayerItem, worldState } from '@ootmm/logic';
@@ -38,12 +38,113 @@ export type LogicOutput = {
   giItems: Record<string, string>;
   /** OoT checks in logic for only one age. Checks both ages can get aren't listed. */
   ages: Record<string, 'child' | 'adult'>;
+  /** For directions: which ways the player's items and age allow (see Travel). */
+  travel?: Travel;
   /** Only when next was asked for. Best first. */
   next?: NextItem[];
   /** Rolled settings the player hasn't set, so logic only counts checks open on every outcome. */
   unsettled?: string[];
   ms: number;
 };
+
+/**
+ * For directions: OoTMM's own rule for every way out of every area, asked with the items the player logged, as an age
+ * mask (1 child, 2 adult). Only ways that aren't open to both ages are listed. Rules that need something the player
+ * hasn't reached in logic yet (an event, a time of day) count as closed. A warp song or soaring needs its system area
+ * reached, so it's listed under that area ('OOT SONG_TP_FOREST'). Age changes: at the Temple of Time once OoTMM's
+ * TIME_TRAVEL event is reached, or anywhere with the Song of Time when TIME_TRAVEL_AT_WILL is (and the area allows it).
+ */
+export type Travel = {
+  pass: Record<string, number>; timeTravel: string[]; atWill: boolean; fixedAge: string[];
+  /** Ways that only open thanks to a trick, a glitch or a "logical" setting like Hookshot Anywhere, by age (child, adult). */
+  aids?: Record<string, [Aid | null, Aid | null]>;
+};
+/** What a way leans on: the tricks or settings (any one of them when "any"), and the items the rule asks for with them. */
+export type Aid = { use: string[]; items: string[]; any?: boolean };
+
+/** A trick's or setting's name, as OoTMM's settings show it. */
+function aidName(aid: string): string {
+  const [kind, key] = aid.split(':');
+  const plain = (n: string) => n.replace(/ \((OoT|MM)\)/i, '');
+  if (kind === 'trick') { const t = (TRICKS as any)[key]; return t ? plain(t.name) + (t.glitch ? ' (glitch)' : ' (trick)') : key; }
+  return plain((SETTINGS as readonly any[]).find(s => s.key === key)?.name ?? key);
+}
+
+/* The marked "true"s a rule holds (see the expr builder patch in tools/paths.mjs). */
+const aidsMemo = new Map<number, string[]>();
+function aidsIn(e: any): string[] {
+  if (e.checklistAid) return [e.checklistAid];
+  if (!e.exprs) return [];
+  let r = aidsMemo.get(e.id);
+  if (!r) aidsMemo.set(e.id, r = [...new Set<string>(e.exprs.flatMap(aidsIn))]);
+  return r;
+}
+
+/** Which tricks or settings a way that passes needs, and the items its rule uses with them. */
+function aidOf(pf: any, expr: any, age: number, from: string): Aid | null {
+  const list = aidsIn(expr);
+  if (!list.length) return null;
+  const g = globalThis as any;
+  const passes = (e: any) => { try { return !!pf.evalExpr(0, e, age, from).result.result; } catch { return false; } };
+  let use: string[], any = false;
+  try {
+    use = list.filter(a => { g.__checklistAidsOff = new Set([a]); return !passes(expr); });
+    if (!use.length) {
+      g.__checklistAidsOff = new Set(list);
+      if (passes(expr)) return null;
+      /* Any one of several does: the ones that work on their own. */
+      use = list.filter(a => { g.__checklistAidsOff = new Set(list.filter(x => x !== a)); return passes(expr); });
+      if (!use.length) use = list;
+      any = use.length > 1;
+    }
+  } finally { g.__checklistAidsOff = undefined; }
+  /* The items on the branch of the rule that passes with the (first) trick, and no other. */
+  const items = new Set<string>();
+  g.__checklistAidsOff = new Set(list.filter(a => any ? a !== use[0] : !use.includes(a)));
+  const pick = (e: any) => {
+    if (e.item && (e.type === 'item' || e.type === 'renewable' || e.type === 'license')) { items.add(e.item.id); return; }
+    if (e.type === 'and') { for (const x of e.exprs) pick(x); return; }
+    if (e.type === 'or') {
+      const ok = e.exprs.filter(passes);
+      const pref = ok.find((x: any) => aidsIn(x).some(a => use.includes(a))) ?? ok[0];
+      if (pref) pick(pref);
+    }
+  };
+  /* With any of several, the items depend on which one the player does, so none are listed. */
+  if (!any) try { pick(expr); } finally { g.__checklistAidsOff = undefined; }
+  g.__checklistAidsOff = undefined;
+  return { use: use.map(aidName), items: [...items].map(id => itemName(id).replace(/ \((OoT|MM)\)$/i, '')).slice(0, 4), ...(any ? { any } : {}) };
+}
+
+function travelRules(pf: any, ws: any, world: any): Travel {
+  const pass: Record<string, number> = {};
+  const aids: Record<string, [Aid | null, Aid | null]> = {};
+  const system = (a: string) => /^[A-Z_ ]+$/.test(a.replace(/^(OOT|MM) /, ''));
+  /* An area logic hasn't reached still has its rules asked, with another area's time of day. */
+  const stand = [0, 1].map(age => ws.ages[age].areas.values().next().value);
+  for (const [from, area] of Object.entries(world.areas as Record<string, any>)) {
+    for (const [to, expr] of Object.entries(area.exits ?? {})) {
+      let mask = 0;
+      const aid: [Aid | null, Aid | null] = [null, null];
+      for (const age of [0, 1]) {
+        const as = ws.ages[age];
+        const reached = as.areas.has(from);
+        if (!reached && (system(from) || !stand[age])) continue;
+        if (!reached) as.areas.set(from, stand[age]);
+        try {
+          if (pf.evalExpr(0, expr, age, from).result.result) { mask |= 1 << age; aid[age] = aidOf(pf, expr, age, from); }
+        } catch { /* closed */ }
+        finally { if (!reached) as.areas.delete(from); }
+      }
+      if (mask !== 3) pass[from + '\n' + to] = mask;
+      if (aid[0] || aid[1]) aids[from + '\n' + to] = aid;
+    }
+  }
+  const has = (e: string) => [...ws.events].some((x: string) => x === e || x.endsWith('_' + e));
+  const timeTravel = has('TIME_TRAVEL') ? Object.entries(world.areas as Record<string, any>).filter(([, a]) => Object.keys(a.events ?? {}).some(k => /(^|_)TIME_TRAVEL$/.test(k))).map(([n]) => n) : [];
+  const fixedAge = Object.entries(world.areas as Record<string, any>).filter(([, a]) => a.game === 'oot' && !a.ageChange).map(([n]) => n);
+  return { pass, timeTravel, atWill: has('TIME_TRAVEL_AT_WILL'), fixedAge, aids };
+}
 
 const monitor = new Monitor({ onLog: () => {}, onWarn: () => {}, onProgress: () => {} });
 
@@ -328,6 +429,16 @@ async function computeOne(input: LogicInput): Promise<LogicOutput> {
     const { pf, result } = run(assumed, true);
     const reach = [...result.locations].map(l => l.replace(/@\d+$/, ''));
     const ws = pf.state.ws[0];
+    /* Directions count every trick and glitch the game allows (bomb hovers and all), whatever the seed's logic settings
+       say (owner, Nov 22 2026), each only with the items its rule needs. That's its own run of the pathfinder, so
+       reachable checks stay on the seed's logic settings. */
+    let travel: Travel;
+    const g = globalThis as any;
+    g.__checklistAllAids = true;
+    try {
+      const loose = run(assumed, false).pf;
+      travel = travelRules(loose, loose.state.ws[0], world);
+    } finally { g.__checklistAllAids = false; }
 
     /* Which age can get each OoT check, asked of the same rules on the finished run. Tags only start once each age can get something. */
     const ages: Record<string, 'child' | 'adult'> = {};
@@ -375,6 +486,7 @@ async function computeOne(input: LogicInput): Promise<LogicOutput> {
       pricesShuffled: b.pricesShuffled,
       giItems: b.giItems,
       ages,
+      travel,
       next,
       ms: Math.round(performance.now() - t0),
     };
