@@ -13,7 +13,7 @@ import { checklistNormalDungeons } from '@ootmm/logic';
 import { PAGES, alt, slotView } from './cube';
 import { MAX_HEARTS, heartQuarters, heartsText } from './hearts';
 import { menuIcon as drawnIcon } from './menu-icons';
-import { customIcons, iconFolderAvailable, loadIcons, openIconFolder, putIcon, readIconFile, removeAllIcons, removeIcon } from './icon-store';
+import { customIcons, customMaps, iconFolderAvailable, loadIcons, openIconFolder, putIcon, putMap, readIconFile, readMapFile, removeAllIcons, removeIcon, removeMap } from './icon-store';
 import { WORLD, MAP_W, MAP_H } from './mapspots';
 import { drawWorld } from './worldmap';
 import { NAME_STYLES, playerName, type NameStyle } from './names';
@@ -116,6 +116,8 @@ type Seed = {
 type ItemEdit = { name?: string; sub?: string; area?: string; game?: 'oot' | 'mm'; hidden?: boolean; order?: number;
   /** Where the area's name sits on the Map view, in percent across and down; [-1, -1] takes it off the map. */
   spot?: [number, number];
+  /** Where its name sits on the player's own picture of the map, in percent, when they use one. */
+  picSpot?: [number, number];
   /** Older saves: a spot on the old box grid. Only [-1, -1] (off the map) still means anything. */
   map?: [number, number] };
 type Edits = {
@@ -1356,8 +1358,9 @@ function logicBanner() {
 const worldArea = (id: string) => WORLD.oot.areas[id] ?? WORLD.mm.areas[id];
 
 /** Where an area's name sits on the map, on the 1000 x 700 board. The player can move it in Edit mode or take it off. */
-function mapSpot(id: string): [number, number] | undefined {
+function mapSpot(id: string, pic = false): [number, number] | undefined {
   const o = saved.edits.areas[id];
+  if (pic && o?.picSpot) return [o.picSpot[0] / 100 * MAP_W, o.picSpot[1] / 100 * MAP_H];
   if (o?.spot) return o.spot[0] < 0 ? undefined : [o.spot[0] / 100 * MAP_W, o.spot[1] / 100 * MAP_H];
   if (o?.map && o.map[0] < 0) return undefined;
   return worldArea(id)?.at;
@@ -1381,8 +1384,9 @@ function renderMap() {
       <span class="tn">${esc(r.name)}</span>
       <span class="tc">${r.skipped ? '<span>Skipped</span>' : `${r.done}/${r.total}`}${r.reach && !r.skipped ? ` <i class="lg">${r.reach}</i>` : ''}</span>${areaTags(hinted.get(r.id))}
       <span class="bar"><i style="width:${(r.total ? r.done / r.total : 0) * 100}%"></i></span></button>`;
-  const pin = (r: typeof stats[number], at: [number, number]) => {
-    const drawn = !!worldArea(r.id)?.pts && !saved.edits.areas[r.id]?.spot;
+  if (!iconsLoaded) { iconsLoaded = true; loadIcons().then(() => { if (customMaps.size && $('#mapScroll')) renderMap(); }); }
+  const pin = (r: typeof stats[number], at: [number, number], pic: boolean) => {
+    const drawn = !pic && !!worldArea(r.id)?.pts && !saved.edits.areas[r.id]?.spot;
     const tick = r.total && r.done === r.total && !r.skipped ? '✓ ' : '';
     return `<button class="pin ${r.game}${state(r)}${ghost(r.id)}${drawn ? '' : ' dot'}" data-region="${esc(r.id)}" data-edit="area:${esc(r.id)}" style="left:${(at[0] / MAP_W * 100).toFixed(2)}%;top:${(at[1] / MAP_H * 100).toFixed(2)}%;--px:${pinAnchor(at[0] / MAP_W).toFixed(1)}%">
       <span class="tn">${esc(r.name)}</span><span class="tc">${r.skipped ? 'Skipped' : `${tick}${r.done}/${r.total}`}${r.reach && !r.skipped ? ` <i class="lg">${r.reach}</i>` : ''}</span>${areaTags(hinted.get(r.id))}</button>`;
@@ -1391,8 +1395,10 @@ function renderMap() {
     /* Places drawn on the map go on it even when OoTMM counts them as dungeons (Ikana Castle, the spider houses...). */
     const onMap = (r: typeof stats[number]) => !r.dungeon || !!WORLD[game].areas[r.id];
     const over = stats.filter(r => r.game === game && onMap(r) && !['NONE', 'POCKET'].includes(r.id));
-    const placed = over.filter(r => mapSpot(r.id));
-    const loose = over.filter(r => !mapSpot(r.id));
+    const own = customMaps.get(game);
+    const pic = !!own;
+    const placed = over.filter(r => mapSpot(r.id, pic));
+    const loose = over.filter(r => !mapSpot(r.id, pic));
     const dungeons = stats.filter(r => r.game === game && !onMap(r));
     if (!over.length && !dungeons.length) return '';
     const byId = new Map(over.map(r => [r.id, r]));
@@ -1400,8 +1406,18 @@ function renderMap() {
       const r = byId.get(id);
       return r ? { cls: `${state(r)}${ghost(id)}`.trim(), label: r.name } : undefined;
     }, id => ` data-edit="area:${esc(id)}"`);
-    return `<section class="board ${game}"><div class="section-head"><h2>${title}</h2></div>
-      <div class="world-wrap"><div class="world" style="--zoom:${zoom}">${art}${placed.map(r => pin(r, mapSpot(r.id)!)).join('')}</div></div>
+    const other = game === 'oot' ? 'mm' : 'oot';
+    const done = over.reduce((n, r) => n + r.done, 0), total = over.reduce((n, r) => n + r.total, 0);
+    return `<section class="board ${game}" id="board-${game}"><div class="pause">
+      <div class="pause-head">
+        <button class="pause-flip keep" data-map-jump="${other}" aria-label="Go to the ${other === 'oot' ? 'Hyrule' : 'Termina'} map"><span aria-hidden="true">◀</span></button>
+        <h2 class="pause-title">${title}</h2>
+        <button class="pause-flip keep" data-map-jump="${other}" aria-label="Go to the ${other === 'oot' ? 'Hyrule' : 'Termina'} map"><span aria-hidden="true">▶</span></button>
+      </div>
+      ${editMode ? `<div class="pause-edit"><button class="btn alt keep" data-map-pic="${game}">${pic ? 'Change your map picture' : 'Use your own map picture'}</button>${pic ? '<span class="fine">Drag a name to line it up with your picture.</span>' : '<span class="fine">Drag a name to move it.</span>'}</div>` : ''}
+      <div class="world-wrap"><div class="world${pic ? ' own' : ''}" data-game="${game}" style="--zoom:${zoom}">${pic ? `<img class="world-own" src="${own}" alt="" draggable="false">` : art}${placed.map(r => pin(r, mapSpot(r.id, pic)!, pic)).join('')}</div></div>
+      <div class="pause-info" data-info="${game}" aria-live="polite"><span class="pi-name">${title}</span><span class="pi-count">${done}/${total} checks</span></div>
+      </div>
       ${loose.length ? `<div class="group">Not on the map</div><div class="tile-row">${loose.map(r => tile(r)).join('')}</div>` : ''}
       ${dungeons.length ? `<div class="group">Dungeons</div><div class="tile-row">${dungeons.map(r => tile(r)).join('')}</div>` : ''}</section>`;
   };
@@ -1416,7 +1432,7 @@ function renderMap() {
       <div class="seg map-zoom"><button class="keep" data-map-zoom="-1" aria-label="Zoom out"${zoom === ZOOMS[0] ? ' disabled' : ''}>−</button><button class="keep" data-map-zoom="1" aria-label="Zoom in"${zoom === ZOOMS[ZOOMS.length - 1] ? ' disabled' : ''}>+</button></div>
     </div></div>
     <div class="scroll" id="mapScroll">${logicBanner()}
-      <p class="fine map-help">Tap an area on the map to see its checks. Use + and − to zoom. In Edit mode, tap an area to rename it or move its name on the map.</p>
+      <p class="fine map-help">Tap an area on the map to see its checks. Use + and − to zoom. In Edit mode, drag a name to move it, tap an area to rename it, or use your own picture of each map.</p>
       ${board('Hyrule', 'oot')}${board('Termina', 'mm')}
       ${other.length ? `<section class="board"><div class="section-head"><h2>Other</h2></div><div class="tile-row">${other.map(r => tile(r)).join('')}</div></section>` : ''}
       ${!stats.length ? `<div class="empty"><h3>${computing ? 'Reading your settings' : 'No checks yet'}</h3></div>` : ''}
@@ -3313,17 +3329,111 @@ function editDest(id: string) {
   });
 }
 
+/** Edit mode: the player's own picture of a game's map, kept only on their device like swapped icons. */
+function editMapPicture(game: 'oot' | 'mm') {
+  const name = game === 'oot' ? 'Hyrule' : 'Termina';
+  let picked = '';
+  const preview = () => picked || customMaps.get(game) ? `<img class="map-pic-prev" src="${picked || customMaps.get(game)}" alt="">` : '<p class="fine">No picture yet. The drawn map is shown.</p>';
+  openSheet(`Your own ${name} map`, '', `
+    <div id="mapPicPrev">${preview()}</div>
+    <label class="btn alt keep icon-pick">Choose a picture<input type="file" id="mapPicFile" accept="image/png,image/webp,image/jpeg,image/gif" hidden></label>
+    <p class="fine">Any picture of the map works, such as a screenshot of the pause screen. It stays on this device and is never shared, and every later version of the app keeps it.${iconFolderAvailable() ? ' On Windows it is saved in the app\'s icons folder.' : ''} After saving, drag each name in Edit mode to line it up with your picture.</p>
+    <div class="btns">
+      <button class="btn" data-act="save">Save</button>
+      ${customMaps.has(game) ? '<button class="btn alt" data-act="names">Put the names back where they started</button><button class="btn danger" data-act="reset">Go back to the drawn map</button>' : ''}
+    </div>`, {
+    async save() {
+      if (!picked) return toast('Choose a picture first.');
+      try { await putMap(game, picked); } catch { return toast("That picture couldn't be saved."); }
+      closeSheet(); renderMap(); toast('Map picture saved. Drag the names to line them up.', true);
+    },
+    names() {
+      snap();
+      for (const [id, o] of Object.entries(saved.edits.areas)) if (o.picSpot && (WORLD[game].areas[id] || id.startsWith(game === 'oot' ? 'OOT_' : 'MM_'))) delete o.picSpot;
+      save(); closeSheet(); renderMap();
+    },
+    async reset() { await removeMap(game).catch(() => {}); closeSheet(); renderMap(); toast(`The drawn ${name} map is back. Names you lined up are kept for if you use a picture again.`); },
+  });
+  const input = document.getElementById('mapPicFile') as HTMLInputElement;
+  input.onchange = async () => {
+    const f = input.files?.[0];
+    if (!f) return;
+    try { picked = await readMapFile(f); } catch { return toast("That file isn't a picture this app can read."); }
+    $('#mapPicPrev').innerHTML = preview();
+  };
+}
+
+/* Edit mode: drag a name on the map to move it. A drag on the player's own picture moves it there only. */
+let mapDragged = false;
+function hookMapDrag(app: HTMLElement) {
+  let drag: { pin: HTMLElement; world: HTMLElement; x: number; y: number; moved: boolean } | null = null;
+  app.addEventListener('pointerdown', e => {
+    if (!editMode || layers.length) return;
+    const pin = (e.target as HTMLElement).closest<HTMLElement>('.world .pin');
+    if (!pin) return;
+    drag = { pin, world: pin.closest<HTMLElement>('.world')!, x: e.clientX, y: e.clientY, moved: false };
+    pin.setPointerCapture(e.pointerId);
+  });
+  app.addEventListener('pointermove', e => {
+    if (!drag) return;
+    if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6) return;
+    drag.moved = true;
+    const b = drag.world.getBoundingClientRect();
+    const x = Math.min(100, Math.max(0, (e.clientX - b.left) / b.width * 100)), y = Math.min(100, Math.max(0, (e.clientY - b.top) / b.height * 100));
+    drag.pin.style.left = `${x.toFixed(2)}%`; drag.pin.style.top = `${y.toFixed(2)}%`;
+    drag.pin.style.setProperty('--px', `${pinAnchor(x / 100).toFixed(1)}%`);
+    drag.pin.classList.add('dragging');
+  });
+  const end = (e: PointerEvent) => {
+    if (!drag) return;
+    const { pin, world, moved } = drag;
+    drag = null;
+    if (!moved || e.type === 'pointercancel') { pin.classList.remove('dragging'); return; }
+    mapDragged = true;
+    setTimeout(() => { mapDragged = false; }, 400);
+    const id = pin.dataset.region!, x = parseFloat(pin.style.left), y = parseFloat(pin.style.top);
+    snap();
+    const o: ItemEdit = { ...saved.edits.areas[id] };
+    delete o.map;
+    if (world.classList.contains('own')) o.picSpot = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
+    else o.spot = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
+    saved.edits.areas[id] = o;
+    save(); renderMap();
+  };
+  app.addEventListener('pointerup', end);
+  app.addEventListener('pointercancel', end);
+}
+
+/* The bar under each map names the area the pointer or keyboard is on, like a pause screen. */
+function hookMapInfo(app: HTMLElement) {
+  const show = (t: EventTarget | null) => {
+    const el = (t as HTMLElement | null)?.closest?.<Element>('.world [data-region]');
+    const world = el?.closest<HTMLElement>('.world');
+    if (!el || !world) return;
+    const id = (el as HTMLElement).dataset.region!;
+    const r = regionStats().find(x => x.id === id);
+    const bar = document.querySelector<HTMLElement>(`[data-info="${world.dataset.game}"]`);
+    if (!r || !bar) return;
+    bar.innerHTML = `<span class="pi-name">${esc(r.name)}</span><span class="pi-count">${r.skipped ? 'Skipped' : `${r.done}/${r.total} checks`}</span>`;
+    world.querySelectorAll('.cursor').forEach(x => x.classList.remove('cursor'));
+    world.querySelector(`.pin[data-region="${CSS.escape(id)}"]`)?.classList.add('cursor');
+  };
+  app.addEventListener('pointerover', e => show(e.target));
+  app.addEventListener('focusin', e => show(e.target));
+}
+
 function editArea(id: string) {
   const E = saved.edits;
   const o = E.areas[id] ?? {};
   const stats = tab === 'entrances' ? entranceStats().groups : regionStats();
   const me = stats.find(x => x.id === id);
   const fallback = me?.name ?? id.replace(/^custom:/, '');
-  const spotNow = mapSpot(id);
-  const onMap = !me?.dungeon && !['NONE', 'POCKET'].includes(id);
+  const pic = !!me && customMaps.has(me.game);
+  const spotNow = mapSpot(id, pic);
+  const onMap = (!me?.dungeon || !!worldArea(id)) && !['NONE', 'POCKET'].includes(id);
   openSheet('Edit this area', '', `
     ${field('edName', 'Name', fallback)}
-    ${onMap ? field('edSpot', 'Where its name sits on the map: across, down, each from 0 to 100. Leave empty to keep it off the map.', spotNow ? `${Math.round(spotNow[0] / MAP_W * 100)}, ${Math.round(spotNow[1] / MAP_H * 100)}` : '', 'inputmode="numeric"') : ''}
+    ${onMap ? field('edSpot', pic ? 'Where its name sits on your map picture: across, down, each from 0 to 100. Leave empty to keep it off the map.' : 'Where its name sits on the map: across, down, each from 0 to 100. Leave empty to keep it off the map.', spotNow ? `${Math.round(spotNow[0] / MAP_W * 100)}, ${Math.round(spotNow[1] / MAP_H * 100)}` : '', 'inputmode="numeric"') : ''}
     <div class="btns">
       <button class="btn" data-act="save">Save</button>
       <button class="btn alt" data-act="up">Move up</button><button class="btn alt" data-act="down">Move down</button>
@@ -3338,7 +3448,8 @@ function editArea(id: string) {
         const def = worldArea(id)?.at;
         const pct = (a: [number, number]) => [Math.round(a[0] / MAP_W * 100), Math.round(a[1] / MAP_H * 100)];
         delete next.map;
-        if (nums.length >= 2) {
+        if (pic && nums.length >= 2) next.picSpot = [Math.min(100, Math.max(0, nums[0])), Math.min(100, Math.max(0, nums[1]))];
+        else if (nums.length >= 2) {
           const at: [number, number] = [Math.min(100, Math.max(0, nums[0])), Math.min(100, Math.max(0, nums[1]))];
           next.spot = def && pct(def)[0] === Math.round(at[0]) && pct(def)[1] === Math.round(at[1]) ? undefined : at;
         } else if (!nums.length) next.spot = def ? [-1, -1] : undefined;
@@ -3538,6 +3649,7 @@ function editTextAt(e: MouseEvent, t: HTMLElement) {
 
 let bypass = false;
 function editCapture(e: MouseEvent) {
+  if (mapDragged) { mapDragged = false; e.preventDefault(); e.stopPropagation(); return; }
   if (!editMode || bypass) return;
   const t = e.target as HTMLElement;
   if (t.closest('[data-locked]')) return;
@@ -3967,6 +4079,8 @@ function events() {
   let searchTimer = 0;
   new MutationObserver(queueText).observe(app, { childList: true, subtree: true });
   hookRailSize(app);
+  hookMapDrag(app);
+  hookMapInfo(app);
   /* Long-press a check (or right-click it) to rename it without turning on Edit mode. */
   let pressTimer = 0, pressedOpen = false, pressAt = [0, 0];
   const checkAt = (t: EventTarget | null) => (t as HTMLElement | null)?.closest?.<HTMLElement>('.row[data-id] .tick-btn')?.closest<HTMLElement>('.row')?.dataset.id;
@@ -4230,6 +4344,8 @@ function events() {
     if ('hidedone' in d) { saved.ui.hideDone = !saved.ui.hideDone; save(); renderChecks(); return; }
     if (d.type) { if (typeFilter.has(d.type)) typeFilter.delete(d.type); else typeFilter.add(d.type); renderChecks(); return; }
     if (d.goto) { tab = d.goto as typeof tab; renderRail(); renderTabs(); renderPane(); return; }
+    if (d.mapJump) { $(`#board-${d.mapJump}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+    if (d.mapPic) { editMapPicture(d.mapPic as 'oot' | 'mm'); return; }
     if (d.mapZoom) {
       const i = Math.max(0, ZOOMS.indexOf(saved.ui.mapZoom ?? 1));
       saved.ui.mapZoom = ZOOMS[Math.min(ZOOMS.length - 1, Math.max(0, i + Number(d.mapZoom)))];
