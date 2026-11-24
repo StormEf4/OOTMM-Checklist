@@ -62,9 +62,23 @@ export type Travel = {
 /** What a way leans on: the tricks or settings (any one of them when "any"), and the items the rule asks for with them. */
 export type Aid = { use: string[]; items: string[]; any?: boolean };
 
+/*
+ * Bomb hovers (owner, Nov 24 2026): they work in more places than anyone has listed, so for directions, having what a
+ * bomb hover takes (bombs or bombchus, and a shield) counts as if Hookshot Anywhere were on. OoTMM's logic has no bomb
+ * hover, so this adds one to its "anywhere" macros as a checklist-only trick that reachable checks never count.
+ */
+const BOMB_HOVER = 'trick(CHECKLIST_BOMB_HOVER) && has_explosives && has_shield';
+for (const game of ['oot', 'mm'] as const) {
+  const m = (MACROS as any)[game];
+  for (const name of ['hookshot_anywhere', 'longshot_anywhere', 'short_hook_anywhere']) {
+    if (typeof m?.[name] === 'string' && !m[name].includes('CHECKLIST_BOMB_HOVER')) m[name] = `(${m[name]}) || (${BOMB_HOVER})`;
+  }
+}
+
 /** A trick's or setting's name, as OoTMM's settings show it. */
 function aidName(aid: string): string {
   const [kind, key] = aid.split(':');
+  if (key === 'CHECKLIST_BOMB_HOVER') return 'Bomb Hover (glitch)';
   const plain = (n: string) => n.replace(/ \((OoT|MM)\)/i, '');
   if (kind === 'trick') { const t = (TRICKS as any)[key]; return t ? plain(t.name) + (t.glitch ? ' (glitch)' : ' (trick)') : key; }
   return plain((SETTINGS as readonly any[]).find(s => s.key === key)?.name ?? key);

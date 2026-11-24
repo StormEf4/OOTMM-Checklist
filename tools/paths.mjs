@@ -64,13 +64,16 @@ export const plugins = [{
        as before (on when the seed's logic settings turn it on), except:
        - globalThis.__checklistAllAids: directions ask with every trick and glitch on, whatever the seed's logic
          settings say (owner, Nov 22 2026), and Hookshot Anywhere / Climb Most Surfaces whenever the game has them on;
-       - globalThis.__checklistAidsOff: turns single ones off for a moment, so directions can name what a step uses. */
+       - globalThis.__checklistAidsOff: turns single ones off for a moment, so directions can name what a step uses.
+       CHECKLIST_BOMB_HOVER is the checklist's own: never in logic, only in directions (see bombHover in logic.ts). */
     build.onLoad({ filter: /expr[\\/]builder\.ts$/ }, args => {
       const text = readFileSync(args.path, 'utf8');
       const trick = 'return settings.tricks.includes(trick as TrickKey) ? EXPR_TRUE : EXPR_FALSE;';
       const setting = 'return v === value ? EXPR_TRUE : EXPR_FALSE;';
       const cond = 'if (cond === EXPR_TRUE) {';
       const condFalse = 'if (cond === EXPR_FALSE) {';
+      const known = 'if (!TRICKS.hasOwnProperty(trick)) {';
+      if (!text.includes(known)) throw new Error('OoTMM changed how it checks trick names. Update the expr builder patch in tools/paths.mjs to match.');
       if (!text.includes(trick) || !text.includes(setting) || !text.includes(cond) || !text.includes(condFalse)) throw new Error('OoTMM changed how it reads tricks and settings in rules. Update the expr builder patch in tools/paths.mjs to match.');
       const aid = `
 const checklistAids: Record<string, Expr> = {};
@@ -86,6 +89,7 @@ function checklistAid(aid: string, on: boolean, game: boolean): Expr {
 }
 `;
       return { contents: text
+        .replace(known, "if (trick === 'CHECKLIST_BOMB_HOVER') return checklistAid('trick:' + trick, false, true);\n  " + known)
         .replace(trick, "return checklistAid('trick:' + trick, settings.tricks.includes(trick as TrickKey), true);")
         .replace(setting, "return value === 'logical' ? checklistAid('setting:' + setting, v === value, v !== 'off') : v === value ? EXPR_TRUE : EXPR_FALSE;")
         .replace(cond, 'if (cond === EXPR_TRUE || (cond as any).checklistOn === true) {')

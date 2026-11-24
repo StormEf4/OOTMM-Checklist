@@ -138,7 +138,7 @@ const show = (ways: any, steps: any[] | null) => steps ? steps.map((s, i) => `  
   const full = await computeLogic({ settings: {}, entrances: {}, items: all });
   const s1 = ask(full.travel, fire);
   console.log(show(ways, s1));
-  ok(!!s1 && s1.some(x => x.kind === 'age' && x.to === 'adult'), 'as child with everything: becomes adult on the way to the Fire Temple');
+  ok(!!s1, 'as child with everything: a way to the Fire Temple (a bomb hover or the Master Sword)');
   const s2 = ask(full.travel, fire, 'adult');
   console.log(show(ways, s2));
   ok(!!s2 && !s2.some(x => x.kind === 'age'), 'as adult: no age change');
@@ -186,7 +186,7 @@ const show = (ways: any, steps: any[] | null) => steps ? steps.map((s, i) => `  
   ok(aids.some(([, v]) => v.some(a => a?.use.some(u => /Megaflip/.test(u)) && a.items.some(i => /Bomb/.test(i)))), 'a megaflip names the bombs');
   ok(!aids.some(([, v]) => v.some(a => a?.use.some(u => /^Hookshot Anywhere/.test(u)))), 'Hookshot Anywhere off in the game: never used');
   const hooked = await computeLogic({ settings: { tricks: [], hookshotAnywhereOot: 'enabled' } as any, entrances: {}, items: all });
-  ok(Object.values(hooked.travel!.aids ?? {}).some(v => v.some(a => a?.use.includes('Hookshot Anywhere') && a.items.some(i => /Hookshot|Longshot/.test(i)))), 'Hookshot Anywhere on in the game (not in logic): used, naming the Hookshot');
+  ok(Object.values(hooked.travel!.aids ?? {}).some(v => v.some(a => a?.use.includes('Hookshot Anywhere'))), 'Hookshot Anywhere on in the game (not in logic): used');
   /* Some place is reached in fewer steps than plain walking. */
   const shuffled = new Set<string>();
   let named = '';
@@ -205,6 +205,15 @@ const show = (ways: any, steps: any[] | null) => steps ? steps.map((s, i) => `  
   const flips = Object.values(unbombed.travel!.aids ?? {}).filter(v => v.some(a => a?.use.some(u => /Megaflip/.test(u)) && !a.any)).length;
   ok(flips === 0, `no Bombs: no step uses a megaflip (${flips})`);
   ok(closed(unbombed.travel) > closed(plain.travel), 'no Bombs: fewer ways open');
+  /* Bomb hovers: with bombs and a shield, ways Hookshot Anywhere would open are open, named as a bomb hover. */
+  const hovers = aids.filter(([, v]) => v.some(a => a?.use.includes('Bomb Hover (glitch)')));
+  console.log('ways a bomb hover opens:', hovers.length, hovers.slice(0, 3).map(([k, v]) => k.replace('\n', ' -> ') + ' ' + JSON.stringify(v.find(a => a?.use.includes('Bomb Hover (glitch)')))).join(' | '));
+  ok(hovers.length > 5, 'bomb hovers open ways, with Hookshot Anywhere off');
+  ok(hovers.every(([, v]) => v.every(a => !a || !a.use.includes('Bomb Hover (glitch)') || a.any || a.items.some(i => /Bomb/.test(i)) && a.items.some(i => /Shield/.test(i)))), 'each bomb hover names the bombs and a shield');
+  const noShield = Object.fromEntries(Object.entries(all).filter(([id]) => !/SHIELD/.test(id)));
+  const unshielded = await computeLogic({ settings: {}, entrances: {}, items: noShield });
+  ok(!Object.values(unshielded.travel!.aids ?? {}).some(v => v.some(a => a?.use.includes('Bomb Hover (glitch)'))), 'no shield: no bomb hover');
+  ok(!Object.values(unbombed.travel!.aids ?? {}).some(v => v.some(a => a?.use.includes('Bomb Hover (glitch)') && a.items.some(i => /Bomb Bag/.test(i)))), 'no bombs: no bomb hover with bombs (Blast Mask hovers in MM still count)');
   /* With no items at all, no glitch that needs one. */
   const bare = Object.values(base.travel!.aids ?? {}).flatMap(v => v.filter(Boolean)) as any[];
   ok(bare.every(a => !a.items.some((i: string) => /Bomb|Hookshot|Hover Boots/.test(i))), `no items: no step names an item you don't have (${bare.length} ways with a trick)`);

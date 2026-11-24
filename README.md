@@ -126,7 +126,8 @@ Time where your settings allow it. Warp songs and soaring are used when OoTMM's 
 anywhere, a step can send you back to your spawn (save and reset, or a Game Over) for the age you are: the child spawn
 as child, the adult spawn as adult, wherever your settings or your log say it leads. Every trick and glitch OoTMM's
 logic knows counts, whatever your trick and glitch settings say (those only change reachable checks), and Hookshot
-Anywhere or Climb Most Surfaces count when your game has them on. Each one counts only with the items it needs. Any place where you've checked something counts as one you can reach,
+Anywhere or Climb Most Surfaces count when your game has them on. Bomb hovers work in too many places to list, so
+with bombs (or bombchus, or MM's Blast Mask) and a shield, every way Hookshot Anywhere would open counts as open too. Each one counts only with the items it needs. Any place where you've checked something counts as one you can reach,
 whatever it would need. A step that leans on one says which, and what it uses, for example "Uses Megaflips (glitch) with Bomb Bag
 and Deku Shield". When a plain way is just as short, it's picked first. Your age
 comes from the game, or set it with Child and Adult in the panel. When your items don't open any way yet, the
