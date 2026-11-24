@@ -44,7 +44,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
 - `src/engine/`: runs OoTMM's pipeline, entrance pools and spoiler header reading
 - `src/engine/logic.ts`: reachable checks, the item list, age tags, "opens with" and pre-completed dungeons, from
   OoTMM's pathfinder and solver code. It runs in its own worker
-- `src/mapspots.ts`: the Map view's drawn Hyrule and Termina maps (area shapes, terrain, where names sit). `src/worldmap.ts` draws them as SVG. The art is original; never copy the games' map images
+- `src/mapspots.ts`: the Map view's drawn Hyrule and Termina maps (area shapes, terrain, where names sit). `src/worldmap.ts` draws them as SVG, inside an original pause-menu style frame. The art is original; never copy the games' map images. In Edit mode the player can use their own picture of each map instead (kept on their device by `src/icon-store.ts` as `MAP_OOT`/`MAP_MM`, like swapped icons, never in this repository) and drag names to line them up (`picSpot`)
 - `src/main.ts`: the app and Edit mode
 - `src/textlayer.ts`: makes any on-screen text editable
 - `src/skins.ts`: themes
@@ -104,7 +104,7 @@ If npm is blocked, `tools/paths.mjs` also looks in `/opt/npm-tools`. Run the ste
     about an hour over 3 shards. `LOGIC_RETRY=<file of case names>` retries skipped cases with looser placement rules.
   - `node tools/ui-toggles-data.mjs`, then `tools/ui-toggles.cjs`, uses every settings control in the browser.
 - Random shop prices are expected to differ in the logic sweep: the app counts shops at their normal price.
-- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`, `tools/ui-gamefeed-entrances.cjs`, `tools/ui-gamefeed-memory.cjs`, `tools/ui-save-seeds.cjs`, `tools/ui-souls.cjs`, `tools/ui-seg.cjs`, `tools/ui-roads.cjs`, `tools/ui-typing.cjs`, `tools/ui-hearts.cjs`, `tools/ui-shared.cjs`, `tools/ui-clear.cjs`, `tools/ui-here.cjs`: browser tests. Run with
+- `tools/ui-flows.cjs`, `tools/ui-entrances.cjs`, `tools/ui-edit.cjs`, `tools/ui-test.cjs`, `tools/ui-logic.cjs`, `tools/ui-settings.cjs`, `tools/ui-names.cjs`, `tools/ui-notes.cjs`, `tools/ui-live.cjs`, `tools/ui-coop.cjs`, `tools/ui-icons.cjs`, `tools/ui-gamefeed.cjs`, `tools/ui-gamefeed-entrances.cjs`, `tools/ui-gamefeed-memory.cjs`, `tools/ui-save-seeds.cjs`, `tools/ui-souls.cjs`, `tools/ui-seg.cjs`, `tools/ui-roads.cjs`, `tools/ui-typing.cjs`, `tools/ui-hearts.cjs`, `tools/ui-shared.cjs`, `tools/ui-clear.cjs`, `tools/ui-here.cjs`, `tools/ui-mappic.cjs`: browser tests. Run with
   `NODE_PATH=$(npm root -g) node <file>`. `ui-flows` and `ui-entrances` read spoiler logs from `.cache/`. Create them
   with `tools/dump-spoiler-entry.ts` and `tools/er-test.mjs`.
 

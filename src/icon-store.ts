@@ -32,6 +32,10 @@ async function tx<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRe
 
 /** Item id to picture, as data URLs. */
 export const customIcons = new Map<string, string>();
+/* The player's own pictures of each game's map for the Map view, kept the same way as icons under MAP_OOT and MAP_MM. */
+const MAP_KEY = (game: string) => `MAP_${game.toUpperCase()}`;
+/** Game ('oot' or 'mm') to the player's own map picture, as a data URL. */
+export const customMaps = new Map<string, string>();
 export const iconFolderAvailable = () => !!desk();
 
 export async function loadIcons() {
@@ -48,8 +52,11 @@ export async function loadIcons() {
         });
         return out;
       })();
-    customIcons.clear();
-    for (const [k, v] of Object.entries(all)) customIcons.set(k, v);
+    customIcons.clear(); customMaps.clear();
+    for (const [k, v] of Object.entries(all)) {
+      if (/^MAP_(OOT|MM)$/i.test(k)) customMaps.set(k.slice(4).toLowerCase(), v);
+      else customIcons.set(k, v);
+    }
   } catch { /* no storage: the drawn icons stay */ }
 }
 
@@ -67,6 +74,38 @@ export async function removeAllIcons() {
   for (const id of [...customIcons.keys()]) await removeIcon(id);
 }
 export const openIconFolder = () => desk()?.open();
+
+export async function putMap(game: string, dataUrl: string) {
+  if (desk()) await desk()!.put(MAP_KEY(game), dataUrl);
+  else await tx('readwrite', s => s.put(dataUrl, MAP_KEY(game)));
+  customMaps.set(game, dataUrl);
+}
+export async function removeMap(game: string) {
+  if (desk()) await desk()!.remove(MAP_KEY(game));
+  else await tx('readwrite', s => s.delete(MAP_KEY(game)));
+  customMaps.delete(game);
+}
+
+/** Reads a picked map picture, shrunk to at most 2000 pixels a side, kept as a PNG. */
+export function readMapFile(file: File): Promise<string> {
+  return new Promise((ok, fail) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 2000 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+      const g = c.getContext('2d')!;
+      /* Small pixel-art pictures stay sharp; big ones are smoothed as they shrink. */
+      g.imageSmoothingEnabled = k < 1;
+      g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      ok(c.toDataURL('image/png'));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); fail(new Error('not an image')); };
+    img.src = url;
+  });
+}
 
 /** Reads a picked picture and shrinks it to at most 128 pixels a side, kept as a PNG. */
 export function readIconFile(file: File): Promise<string> {
