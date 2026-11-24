@@ -92,7 +92,7 @@ const shot = '.cache/shots/';
   await p.click('.pin[data-region="OOT_KAKARIKO"]'); await wait();
   ok('tapping a name on the map opens that area', (await p.textContent('.section-head h2')).includes('Kakariko'));
   await p.click('[data-checks-view=map]'); await p.waitForSelector('.world .pin');
-  { const sh = p.locator('.rg[data-region="MM_SOUTHERN_SWAMP"] > path:first-child'); const box = await sh.boundingBox(); await sh.click({ position: { x: box.width * .82, y: box.height * .35 } }); }
+  { const sh = p.locator('.rg[data-region="MM_SOUTHERN_SWAMP"]'); const box = await sh.boundingBox(); await sh.click({ position: { x: box.width * .82, y: box.height * .35 } }); }
   await wait();
   ok('tapping an area on the map opens it', (await p.textContent('.section-head h2')).includes('Southern Swamp'));
   await p.click('[data-checks-view=map]'); await p.waitForSelector('.world .pin');
@@ -108,7 +108,7 @@ const shot = '.cache/shots/';
   await p.click('.pin[data-region="OOT_KAKARIKO"] .tc'); await p.waitForSelector('#edSpot');
   await p.fill('#edSpot', '10, 90'); await p.click('.layer:last-child [data-act=save]'); await wait();
   ok('edit mode moves an area on the map', (await p.getAttribute('.pin[data-region="OOT_KAKARIKO"]', 'style')).includes('left:10.00%;top:90.00%'));
-  { const sh = p.locator('.rg[data-region="OOT_LAKE_HYLIA"] > path:first-child'); const box = await sh.boundingBox(); await sh.click({ position: { x: box.width * .3, y: box.height * .3 } }); }
+  { const sh = p.locator('.rg[data-region="OOT_LAKE_HYLIA"]'); const box = await sh.boundingBox(); await sh.click({ position: { x: box.width * .7, y: box.height * .7 } }); }
   await p.waitForSelector('#edSpot');
   await p.fill('#edSpot', ''); await p.click('.layer:last-child [data-act=save]'); await wait();
   ok('edit mode takes an area off the map', !(await p.$('.pin[data-region="OOT_LAKE_HYLIA"]')) && !!(await p.$('.tile[data-region="OOT_LAKE_HYLIA"]')));
@@ -161,7 +161,7 @@ const shot = '.cache/shots/';
   }, KEY);
   await o.reload(); await o.waitForSelector('.row');
   await o.click('[data-checks-view=map]'); await o.waitForSelector('.world .pin');
-  ok('a grid spot from an older save falls back to the drawn spot', (await o.getAttribute('.pin[data-region="OOT_KAKARIKO"]', 'style')).startsWith('left:80.60%'));
+  ok('a grid spot from an older save falls back to the drawn spot', (await o.getAttribute('.pin[data-region="OOT_KAKARIKO"]', 'style')).startsWith('left:81.20%'));
   ok('an area an older save took off the map stays off it', !(await o.$('.pin[data-region="OOT_GRAVEYARD"]')) && (await o.textContent('.tile[data-region="OOT_GRAVEYARD"]')).includes('Old graves'));
   { const s = await o.evaluate(k => JSON.parse(localStorage.getItem(k)), KEY); await o.click('[data-checks-view=list]'); await o.waitForTimeout(400);
     const s2 = await o.evaluate(k => JSON.parse(localStorage.getItem(k)), KEY);
